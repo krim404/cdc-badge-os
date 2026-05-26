@@ -6,6 +6,7 @@ idf_component_register(
         "src/CommandRegistry.cpp"
         "src/Console.cpp"
         "src/SerialCmd.cpp"
+        "src/WifiCommands.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES

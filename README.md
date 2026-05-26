@@ -30,7 +30,7 @@ Modular firmware for the CDC Badge v1.0/v1.1 hardware security key featuring TRO
 | **GPG/CCID** | Working (UI WIP) | OpenPGP smartcard via USB CCID, sign / encrypt / decrypt / SSH end-to-end with GnuPG |
 | **BLE vCard** | WIP | Badge-to-badge contact exchange via BLE |
 | **BLE HID** | WIP | Bluetooth keyboard for auto-type |
-| **WiFi + NTP** | Working | Time synchronization over WiFi |
+| **WiFi + NTP** | Working | Time synchronization over WiFi, serial control (scan, connect, status, ..) |
 | **BLE Serial** | WIP | Bluetooth serial console (Nordic UART Service) |
 | **SAO Detection** | Working | Shitty Add-On port detection and info |
 | **E-Paper Display** | Working | 2.9" low-power display with backlight |

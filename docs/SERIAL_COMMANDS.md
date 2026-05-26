@@ -85,6 +85,20 @@ Home Assistant module surface, and the factory-wipe commands.
 | `TR01_CLEANUP` | Cleanup mismatched slots + rebuild cache `[AUTH]` |
 | `TR01_WIPE CONFIRM` | Factory reset all TR01 data `[AUTH]` |
 
+## WiFi
+
+All WiFi commands require authentication.
+
+| Command | Description |
+|---------|-------------|
+| `WIFI_SCAN` | Scan for available networks `[AUTH]` |
+| `WIFI_STATUS` | Show WiFi state and saved configuration `[AUTH]` |
+| `WIFI_ON [sta\|ap\|sta_ap]` | Enable WiFi radio (default STA). Auto-reconnects if saved config exists. `[AUTH]` |
+| `WIFI_OFF` | Disable WiFi radio `[AUTH]` |
+| `WIFI_CONNECT <ssid> <password>` | Connect to network and persist credentials `[AUTH]` |
+| `WIFI_TIMEOUT [ms]` | Get or set connect timeout (3000–60000 ms, default 15000, persisted in NVS) `[AUTH]` |
+| `WIFI_FORGET` | Clear all saved WiFi configuration `[AUTH]` |
+
 ## TOTP Module
 
 | Command | Description |

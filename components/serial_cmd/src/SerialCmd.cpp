@@ -28,6 +28,11 @@
 
 static const char* TAG = "SERIAL";
 
+// Forward declaration for WiFi serial command registration
+namespace cdc::serial {
+void registerWifiCommands();
+}
+
 namespace cdc::serial {
 
 /**
@@ -1696,6 +1701,9 @@ void SerialCmd::registerBuiltinCommands() {
     reg.registerCommand({"AUTH", "Authenticate with PIN", cmdAuth, "auth", false});
     reg.registerCommand({"LOGOUT", "End authenticated session", cmdLogout, "auth", false});
 #endif
+
+    // WiFi commands
+    registerWifiCommands();
 }
 
 } // namespace cdc::serial
