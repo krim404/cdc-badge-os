@@ -7,6 +7,7 @@
 #include "cdc_os_ui/WifiHandlers.h"
 #include "cdc_hal/IWifiController.h"
 #include "cdc_views/SliderView.h"
+#include "cdc_views/RenderHelpers.h"
 
 #include <cstdio>
 #include <cstring>
@@ -170,7 +171,7 @@ static bool renderWifiRow(Gdey029T94* gfx, const ListItem& item,
     if (item.userData == nullptr) {
         if (item.label) {
             gfx->setCursor(x + 22, baseline);
-            gfx->print(item.label);
+            render::printText(gfx, item.label);
         }
         return true;
     }
@@ -185,7 +186,7 @@ static bool renderWifiRow(Gdey029T94* gfx, const ListItem& item,
     ssidDisplay[sizeof(ssidDisplay) - 1] = '\0';
 
     gfx->setCursor(x + 22, baseline);
-    gfx->print(ssidDisplay);
+    render::printText(gfx, ssidDisplay);
 
     if (net && net->security != hal::WifiSecurity::OPEN) {
         drawWifiLockIcon(gfx, x + w - 15, baseline - 5, selected);

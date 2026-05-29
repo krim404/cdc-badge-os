@@ -846,6 +846,8 @@ void ui_init(const UiDeps& deps) {
     // Serial callbacks
     serial::SerialCmd::setTextCallback([](const char* field, const char* value) {
         if (!s_lockScreen) return;
+        // Serial text arrives already as CP437 (matches T9 and the display
+        // pipeline), so it is stored verbatim.
         if (strcmp(field, "name") == 0) {
             s_lockScreen->setDisplayName(value);
             settings::saveDisplayField("name", value);

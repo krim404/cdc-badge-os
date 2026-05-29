@@ -15,8 +15,10 @@
 #include "nvs_flash.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 namespace cdc::ui {
 
@@ -26,6 +28,61 @@ namespace {
 
 constexpr const char* NVS_NAMESPACE = "i18n";
 constexpr const char* NVS_KEY_LANG_CODE = "langc";
+
+/**
+ * \brief Maps a Unicode codepoint to its CP437 byte for the display font.
+ *        Covers the Western-European set overlay languages use (German umlauts
+ *        plus common accents). ASCII passes through; unmapped codepoints return
+ *        0 (dropped). Canonical/complete map: `unicodeToCp437` in
+ *        cdc_views/RenderHelpers; cdc_ui cannot depend on cdc_views, so this is
+ *        a focused copy.
+ */
+uint8_t uniToCp437(uint32_t cp) {
+    switch (cp) {
+        case 0x00C4: return 0x8E; case 0x00D6: return 0x99;  // Ae Oe
+        case 0x00DC: return 0x9A; case 0x00E4: return 0x84;  // Ue ae
+        case 0x00F6: return 0x94; case 0x00FC: return 0x81;  // oe ue
+        case 0x00DF: return 0xE1;                            // ss
+        case 0x00E9: return 0x82; case 0x00E8: return 0x8A;  // e-acute e-grave
+        case 0x00E0: return 0x85; case 0x00E2: return 0x83;  // a-grave a-circ
+        case 0x00E7: return 0x87; case 0x00EA: return 0x88;  // c-cedilla e-circ
+        case 0x00EE: return 0x8C; case 0x00F4: return 0x93;  // i-circ o-circ
+        case 0x00FB: return 0x96; case 0x00F1: return 0xA4;  // u-circ n-tilde
+        case 0x00D1: return 0xA5;                            // N-tilde
+        default: return (cp < 0x80) ? static_cast<uint8_t>(cp) : 0;
+    }
+}
+
+/**
+ * \brief Converts a UTF-8 string (as stored in lang.json) to the CP437 bytes
+ *        the display pipeline expects. Invalid/unmapped sequences are skipped.
+ */
+std::string utf8ToCp437(const char* s) {
+    std::string out;
+    if (!s) return out;
+    const uint8_t* r = reinterpret_cast<const uint8_t*>(s);
+    while (*r) {
+        uint8_t c = *r;
+        uint32_t cp = 0;
+        uint8_t cont = 0;
+        if ((c & 0x80) == 0) { out.push_back(static_cast<char>(c)); ++r; continue; }
+        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; cont = 1; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; cont = 2; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; cont = 3; }
+        else { ++r; continue; }
+        ++r;
+        bool ok = true;
+        for (uint8_t i = 0; i < cont; ++i) {
+            if ((*r & 0xC0) != 0x80) { ok = false; break; }
+            cp = (cp << 6) | (*r & 0x3F);
+            ++r;
+        }
+        if (!ok) continue;
+        uint8_t mapped = uniToCp437(cp);
+        if (mapped) out.push_back(static_cast<char>(mapped));
+    }
+    return out;
+}
 
 /// Core firmware strings, indexed by StringId. Keys are stable
 /// "core.<snake_case>" identifiers and must match assets/i18n/lang.json.
@@ -364,7 +421,7 @@ bool I18n::loadOverlay(const char* path)
         cJSON* entry = nullptr;
         cJSON_ArrayForEach(entry, lang_obj) {
             if (!cJSON_IsString(entry) || !entry->string || !entry->valuestring) continue;
-            activeOverlay_.push_back({entry->string, entry->valuestring});
+            activeOverlay_.push_back({entry->string, utf8ToCp437(entry->valuestring)});
         }
     }
 

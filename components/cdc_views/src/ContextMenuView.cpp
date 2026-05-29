@@ -185,7 +185,7 @@ void ContextMenuView::render(bool partial) {
     gfx->fillRect(boxX + 2, boxY + 2, boxWidth - 4, TITLE_HEIGHT, EPD_BLACK);
     gfx->setCursor(boxX + BOX_PADDING, boxY + 4);
     if (title_) {
-        gfx->print(title_);
+        render::printText(gfx, title_);
     }
 
     // Draw items
@@ -209,7 +209,7 @@ void ContextMenuView::render(bool partial) {
 
         gfx->setCursor(boxX + BOX_PADDING, itemY + 2);
         if (item.label) {
-            gfx->print(item.label);
+            render::printText(gfx, item.label);
         }
 
         itemY += ITEM_HEIGHT;

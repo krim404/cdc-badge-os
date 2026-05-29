@@ -644,7 +644,7 @@ void LockScreenView::render(bool partial) {
     // === Below clock: Date ===
     gfx->setTextSize(1);
     gfx->setCursor(5, DATE_Y);
-    gfx->print(date_);
+    render::printText(gfx, date_);
 
     // === Top Right: Battery ===
     renderBattery(gfx, BATTERY_X, BATTERY_Y);
@@ -655,25 +655,16 @@ void LockScreenView::render(bool partial) {
     constexpr int FIT_BUDGET = DISPLAY_WIDTH - 10;
 
     auto fitAndDraw = [&](const char* text, int baselineY,
-                          const GFXfont* const* candidates, size_t count,
-                          bool cp437) {
+                          const GFXfont* const* candidates, size_t count) {
         if (!text || !text[0]) return;
         const GFXfont* f = cdc::ui::render::pickFontThatFits(
-            gfx, text, FIT_BUDGET, candidates, count, cp437);
+            gfx, text, FIT_BUDGET, candidates, count, true);
         int16_t x1, y1;
         uint16_t w = 0, h = 0;
-        if (cp437) {
-            cdc::ui::render::measureCp437Text(gfx, text, 0, 0, &x1, &y1, &w, &h);
-        } else {
-            gfx->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-        }
+        cdc::ui::render::measureText(gfx, text, f, 0, 0, &x1, &y1, &w, &h);
         int x = (display->getWidth() - w) / 2;
         gfx->setCursor(x, baselineY);
-        if (cp437 && f) {
-            cdc::ui::render::drawCp437Text(gfx, text);
-        } else {
-            gfx->print(text);
-        }
+        cdc::ui::render::drawText(gfx, text, f);
     };
 
     using cdc::ui::FontId;
@@ -688,13 +679,13 @@ void LockScreenView::render(bool partial) {
     };
 
     // === Center: Name (size 3 = 12pt, fallback to smaller) ===
-    fitAndDraw(name_,  NAME_Y,  NAME_FONTS, std::size(NAME_FONTS), true);
+    fitAndDraw(name_,  NAME_Y,  NAME_FONTS, std::size(NAME_FONTS));
 
     // === Info line 1 (size 2 = 9pt, fallback to 1) ===
-    fitAndDraw(info_,  INFO_Y,  INFO_FONTS, std::size(INFO_FONTS), true);
+    fitAndDraw(info_,  INFO_Y,  INFO_FONTS, std::size(INFO_FONTS));
 
     // === Info line 2 (size 2 = 9pt, fallback to 1) ===
-    fitAndDraw(info2_, INFO2_Y, INFO_FONTS, std::size(INFO_FONTS), false);
+    fitAndDraw(info2_, INFO2_Y, INFO_FONTS, std::size(INFO_FONTS));
 
     // === Bottom: Footer hint (size 1 = built-in 6x8) ===
     gfx->setFont(nullptr);
@@ -706,7 +697,7 @@ void LockScreenView::render(bool partial) {
         gfx->getTextBounds(hint, 0, 0, &x1, &y1, &w, &h);
         int hintX = (display->getWidth() - w) / 2;
         gfx->setCursor(hintX, display->getHeight() - 10);
-        gfx->print(hint);
+        render::printText(gfx, hint);
     }
 
     dirty_ = false;

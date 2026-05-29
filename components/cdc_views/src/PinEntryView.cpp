@@ -296,7 +296,7 @@ void PinEntryView::render(bool partial) {
 
         gfx->getTextBounds(statusStr, 0, 0, &x1, &y1, &w, &h);
         gfx->setCursor((width - w) / 2, RETRIES_Y);
-        gfx->print(statusStr);
+        render::printText(gfx, statusStr);
     }
 
     // Footer hint

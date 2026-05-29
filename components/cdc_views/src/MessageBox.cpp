@@ -188,7 +188,7 @@ void MessageBox::render(bool partial) {
     gfx->setTextColor(EPD_BLACK);
     gfx->setCursor(contentX, contentY);
     if (message_) {
-        gfx->print(message_);
+        render::printText(gfx, message_);
     }
 
     dirty_ = false;

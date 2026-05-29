@@ -201,7 +201,7 @@ void QRCodeView::renderQrCode() {
         LOG_E(TAG, "QR render failed: %s", esp_err_to_name(err));
         gfx->setFont(nullptr);
         gfx->setCursor(10, 64);
-        gfx->print(ui::tr("core.qr_error"));
+        cdc::ui::render::printText(gfx, ui::tr("core.qr_error"));
     }
 }
 
@@ -254,7 +254,7 @@ void QRCodeView::renderText() {
             line[len] = '\0';
 
             gfx->setCursor(textAreaX, y);
-            gfx->print(line);
+            cdc::ui::render::drawText(gfx, line, chosen);
 
             p += len;
             y += lineH;
@@ -279,7 +279,7 @@ void QRCodeView::renderText() {
             line[len] = '\0';
 
             gfx->setCursor(textAreaX, y);
-            gfx->print(line);
+            cdc::ui::render::printText(gfx, line);
             y += 10;
 
             p += len;
@@ -292,7 +292,7 @@ void QRCodeView::renderText() {
     const char* hint = getFooterHint();
     if (hint) {
         gfx->setCursor(textAreaX, 116);
-        gfx->print(hint);
+        cdc::ui::render::printText(gfx, hint);
     }
 }
 
@@ -316,7 +316,7 @@ void QRCodeView::render(bool partial) {
     if (!data_) {
         gfx->setFont(nullptr);
         gfx->setCursor(10, 64);
-        gfx->print(ui::tr("core.no_data"));
+        cdc::ui::render::printText(gfx, ui::tr("core.no_data"));
         dirty_ = false;
         return;
     }

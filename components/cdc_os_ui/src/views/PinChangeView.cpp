@@ -341,7 +341,7 @@ void PinChangeView::render(bool partial) {
     snprintf(stepStr, sizeof(stepStr), "%d/3: %s", static_cast<int>(step_) + 1, stepTitle);
     gfx->getTextBounds(stepStr, 0, 0, &x1, &y1, &w, &h);
     gfx->setCursor((width - w) / 2, STEP_Y);
-    gfx->print(stepStr);
+    render::printText(gfx, stepStr);
 
     int dotsToShow = length_ > 8 ? length_ : 8;
     int totalWidth = dotsToShow * PIN_DOT_SIZE + (dotsToShow - 1) * (PIN_DOT_SPACING - PIN_DOT_SIZE);
@@ -373,7 +373,7 @@ void PinChangeView::render(bool partial) {
         gfx->setTextSize(1);
         gfx->getTextBounds(message_, 0, 0, &x1, &y1, &w, &h);
         gfx->setCursor((width - w) / 2, MESSAGE_Y);
-        gfx->print(message_);
+        render::printText(gfx, message_);
     }
 
     const char* hint = getFooterHint();

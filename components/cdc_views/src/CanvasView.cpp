@@ -120,7 +120,7 @@ void CanvasView::drawText(int16_t x, int16_t y, const char* text) {
     if (!g || !text) return;
     gfxApplyTextState();
     g->setCursor(x, y + bodyTop());
-    g->print(text);
+    render::drawText(g, text, getGfxFont(fontId_));
 }
 
 void CanvasView::drawTextAligned(int16_t x, int16_t y, int16_t w,
@@ -129,9 +129,10 @@ void CanvasView::drawTextAligned(int16_t x, int16_t y, int16_t w,
     if (!g || !text) return;
     gfxApplyTextState();
 
+    const GFXfont* font = getGfxFont(fontId_);
     int16_t bx, by;
     uint16_t bw, bh;
-    g->getTextBounds(text, 0, 0, &bx, &by, &bw, &bh);
+    render::measureText(g, text, font, 0, 0, &bx, &by, &bw, &bh);
 
     int16_t draw_x = x;
     if (align == 1) {
@@ -140,7 +141,7 @@ void CanvasView::drawTextAligned(int16_t x, int16_t y, int16_t w,
         draw_x = x + w - static_cast<int16_t>(bw);
     }
     g->setCursor(draw_x, y + bodyTop());
-    g->print(text);
+    render::drawText(g, text, font);
 }
 
 void CanvasView::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool filled) {

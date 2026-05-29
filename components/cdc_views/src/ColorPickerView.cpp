@@ -357,7 +357,7 @@ void ColorPickerView::render(bool partial) {
     gfx->setTextSize(1);
     gfx->getTextBounds(name, 0, 0, &bx, &by, &bw, &bh);
     gfx->setCursor((width - bw) / 2, NAME_Y);
-    gfx->print(name);
+    render::printText(gfx, name);
 
     render::drawFooterBar(gfx, width, height, nullptr, getFooterHint(), true);
 

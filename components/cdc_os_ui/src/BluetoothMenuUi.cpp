@@ -5,6 +5,7 @@
 
 #include "AppUiInternal.h"
 #include "cdc_hal/IBluetoothController.h"
+#include "cdc_views/RenderHelpers.h"
 
 #include <cstdio>
 #include <cstring>
@@ -89,7 +90,7 @@ static bool renderBleRow(Gdey029T94* gfx, const ListItem& item,
     strncpy(nameDisplay, dev->name, sizeof(nameDisplay) - 1);
     nameDisplay[sizeof(nameDisplay) - 1] = '\0';
     gfx->setCursor(x + 22, baseline);
-    gfx->print(nameDisplay);
+    render::printText(gfx, nameDisplay);
 
     // RSSI value on the right
     char rssiBuf[8];

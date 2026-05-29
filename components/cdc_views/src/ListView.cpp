@@ -209,6 +209,7 @@ void ListView::render(bool partial) {
         gfx->fillScreen(EPD_WHITE);
     }
 
+    gfx->setFont(nullptr);  // 6x8 built-in (CP437): never inherit a leaked GFX font
     gfx->setTextColor(EPD_BLACK);
     gfx->setTextSize(1);
     gfx->setTextWrap(false);
@@ -249,7 +250,7 @@ void ListView::render(bool partial) {
             if (item.icon) {
                 char iconStr[2] = {static_cast<char>(item.icon), '\0'};
                 gfx->setCursor(textX, y + 4);
-                gfx->print(iconStr);
+                render::printText(gfx, iconStr);
                 if (item.iconDisabled) {
                     uint16_t color = isSelected ? EPD_WHITE : EPD_BLACK;
                     gfx->drawLine(textX, y + 10, textX + 6, y + 10, color);
@@ -278,7 +279,7 @@ void ListView::render(bool partial) {
         int x = (width - static_cast<int>(w)) / 2;
         int y = LIST_START_Y + (visibleItems_ * itemHeight_) / 2 - h / 2;
         gfx->setCursor(x < 0 ? 0 : x, y);
-        gfx->print(emptyText_);
+        render::printText(gfx, emptyText_);
     }
 
     // Scroll indicators

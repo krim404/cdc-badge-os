@@ -11,6 +11,21 @@
 
 namespace cdc::ui::render {
 
+namespace {
+/**
+ * \brief Draws CP437 bytes one at a time through write(), bypassing
+ *        Epd::print(const std::string&). That overload assumes UTF-8 input and
+ *        adds 64 to bytes 0x84..0xBE (e.g. ae 0x84 -> 0xC4 box line, oe 0x94 ->
+ *        0xD4), which corrupts our CP437 text. write() routes straight to
+ *        Epd::write(uint8_t) -> drawChar with no transform.
+ */
+void writeRaw(Gdey029T94* gfx, const char* text) {
+    for (const uint8_t* p = reinterpret_cast<const uint8_t*>(text); *p; ++p) {
+        gfx->write(*p);
+    }
+}
+}  // namespace
+
 /**
  * \brief Draws a left-aligned header with optional underline.
  * \param gfx Display drawing context.
@@ -28,7 +43,7 @@ void printTruncated(Gdey029T94* gfx, const char* text, int maxWidthPx) {
     uint16_t w, h;
     gfx->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
     if (static_cast<int>(w) <= maxWidthPx) {
-        gfx->print(text);
+        writeRaw(gfx, text);
         return;
     }
 
@@ -39,7 +54,7 @@ void printTruncated(Gdey029T94* gfx, const char* text, int maxWidthPx) {
 
     const int budget = maxWidthPx - static_cast<int>(ew);
     if (budget <= 0) {
-        gfx->print(ELLIPSIS);
+        writeRaw(gfx, ELLIPSIS);
         return;
     }
 
@@ -56,8 +71,8 @@ void printTruncated(Gdey029T94* gfx, const char* text, int maxWidthPx) {
         --len;
     }
 
-    gfx->print(buf);
-    gfx->print(ELLIPSIS);
+    writeRaw(gfx, buf);
+    writeRaw(gfx, ELLIPSIS);
 }
 
 void drawHeaderLeft(Gdey029T94* gfx, const char* title, int x, int y,
@@ -66,7 +81,7 @@ void drawHeaderLeft(Gdey029T94* gfx, const char* title, int x, int y,
 
     if (title && title[0] != '\0') {
         gfx->setCursor(x, y);
-        gfx->print(title);
+        writeRaw(gfx, title);
     }
     gfx->drawFastHLine(0, y + underlineOffset, width, EPD_BLACK);
 }
@@ -86,7 +101,7 @@ void drawHeaderCentered(Gdey029T94* gfx, const char* title, int y, uint16_t widt
     uint16_t w, h;
     gfx->getTextBounds(title, 0, 0, &x1, &y1, &w, &h);
     gfx->setCursor((width - w) / 2, y);
-    gfx->print(title);
+    writeRaw(gfx, title);
 }
 
 /**
@@ -110,10 +125,10 @@ void drawFooterBar(Gdey029T94* gfx, uint16_t width, uint16_t height,
     gfx->setCursor(4, height - 12);
 
     if (prefix) {
-        gfx->print(prefix);
+        writeRaw(gfx, prefix);
     }
     if (hint) {
-        gfx->print(hint);
+        writeRaw(gfx, hint);
     }
 }
 
@@ -458,6 +473,44 @@ void drawCp437Text(Gdey029T94* gfx, const char* text) {
     if (!gfx || !text) return;
     for (const uint8_t* p = reinterpret_cast<const uint8_t*>(text); *p; ++p) {
         gfx->write(cp437ToLatin1(*p));
+    }
+}
+
+void drawText(Gdey029T94* gfx, const char* text, const GFXfont* font) {
+    if (!gfx || !text) return;
+    // Make the active font match the encoding chosen below: the built-in
+    // glcdfont (font == nullptr) is CP437-indexed and gets raw bytes; Latin-1
+    // GFX fonts get CP437->Latin1 mapping. Setting it here prevents a stale
+    // font from mismatching the bytes we emit.
+    gfx->setFont(font);
+    if (!font) {
+        writeRaw(gfx, text);       // built-in glcdfont: raw CP437 bytes
+    } else {
+        drawCp437Text(gfx, text);  // Latin-1 GFX font: CP437->Latin1 per byte
+    }
+}
+
+void printText(Gdey029T94* gfx, const char* text) {
+    if (!gfx || !text) return;
+    gfx->setFont(nullptr);  // built-in glcdfont (CP437-indexed)
+    writeRaw(gfx, text);
+}
+
+void measureText(Gdey029T94* gfx, const char* text, const GFXfont* font,
+                 int16_t x0, int16_t y0, int16_t* x1, int16_t* y1,
+                 uint16_t* w, uint16_t* h) {
+    if (!gfx || !text) {
+        if (x1) *x1 = x0;
+        if (y1) *y1 = y0;
+        if (w) *w = 0;
+        if (h) *h = 0;
+        return;
+    }
+    gfx->setFont(font);
+    if (!font) {
+        gfx->getTextBounds(text, x0, y0, x1, y1, w, h);
+    } else {
+        measureCp437Text(gfx, text, x0, y0, x1, y1, w, h);
     }
 }
 

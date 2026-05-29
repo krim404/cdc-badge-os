@@ -42,7 +42,7 @@ void PasswordT9View::render(bool partial) {
 
     if (len_ == 0 && placeholder_) {
         gfx->setTextColor(EPD_DARKGREY);
-        gfx->print(placeholder_);
+        render::printText(gfx, placeholder_);
         gfx->setTextColor(EPD_BLACK);
     } else {
         for (uint16_t i = 0; i < len_; i++) {

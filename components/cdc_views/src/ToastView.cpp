@@ -182,7 +182,7 @@ void ToastView::render(bool partial) {
             memcpy(lineBuf, lineStart, len);
             lineBuf[len] = '\0';
             gfx->setCursor(textX, lineY);
-            gfx->print(lineBuf);
+            render::printText(gfx, lineBuf);
             if (*p == '\0') break;
             lineStart = p + 1;
             lineY += kLineHeight;

@@ -194,6 +194,7 @@ void InfoView::render(bool partial) {
         gfx->fillScreen(EPD_WHITE);
     }
 
+    gfx->setFont(nullptr);  // 6x8 built-in (CP437): never inherit a leaked GFX font
     gfx->setTextColor(EPD_BLACK);
     gfx->setTextSize(1);
 

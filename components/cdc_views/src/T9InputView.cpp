@@ -341,7 +341,7 @@ void T9InputView::render(bool partial) {
     if (len_ == 0 && placeholder_) {
         // Show placeholder when empty
         gfx->setTextColor(EPD_DARKGREY);
-        gfx->print(placeholder_);
+        render::printText(gfx, placeholder_);
         gfx->setTextColor(EPD_BLACK);
     } else {
         // Show text with cursor

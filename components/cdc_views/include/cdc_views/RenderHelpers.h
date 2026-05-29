@@ -95,6 +95,49 @@ void decodeWebText(const char* in, char* out, size_t out_size,
 void drawCp437Text(Gdey029T94* gfx, const char* text);
 
 /**
+ * \brief Draws CP437-encoded text correctly for the given font: the built-in
+ *        glcdfont (`font == nullptr`) is CP437-indexed and receives the bytes
+ *        raw; TTF-derived GFX fonts are Latin-1-indexed and receive a per-byte
+ *        CP437->Latin1 mapping. This is the single point where the in-memory
+ *        CP437 canonical form is adapted to the active font's index space.
+ *        The caller must have set \p font on \p gfx and positioned the cursor.
+ * \param gfx Target display.
+ * \param text CP437-encoded null-terminated string.
+ * \param font Active font (`nullptr` for the built-in glcdfont).
+ */
+void drawText(Gdey029T94* gfx, const char* text, const GFXfont* font);
+
+/**
+ * \brief Draws CP437 text with the built-in 6x8 glyph font, byte-for-byte.
+ *
+ * Use this instead of `gfx->print(const char*)` for any user/i18n string: the
+ * CalEPD `Epd::print(const std::string&)` overload assumes UTF-8 and adds 64 to
+ * bytes 0x84..0xBE, corrupting CP437 umlauts (ae 0x84 -> 0xC4 etc.). This forces
+ * the built-in font and writes each byte straight through, bypassing that.
+ * \param gfx Display drawing context.
+ * \param text CP437-encoded null-terminated string.
+ */
+void printText(Gdey029T94* gfx, const char* text);
+
+/**
+ * \brief Measures CP437 text exactly as \ref drawText would render it with
+ *        \p font, so width-based layout (centering, fitting, truncation)
+ *        matches the drawn glyphs.
+ * \param gfx Target display.
+ * \param text CP437-encoded null-terminated string.
+ * \param font Active font (`nullptr` for the built-in glcdfont).
+ * \param x0 Starting x for measurement.
+ * \param y0 Starting y for measurement.
+ * \param x1 Output: top-left x of the rendered bounds.
+ * \param y1 Output: top-left y of the rendered bounds.
+ * \param w  Output: rendered width.
+ * \param h  Output: rendered height.
+ */
+void measureText(Gdey029T94* gfx, const char* text, const GFXfont* font,
+                 int16_t x0, int16_t y0, int16_t* x1, int16_t* y1,
+                 uint16_t* w, uint16_t* h);
+
+/**
  * \brief Picks the largest font from \p candidates whose rendered width of
  *        \p text fits within \p maxWidthPx. Candidates are evaluated in array
  *        order; pass them sorted from largest to smallest so the first match

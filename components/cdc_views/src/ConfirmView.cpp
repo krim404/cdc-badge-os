@@ -153,7 +153,7 @@ void ConfirmView::render(bool partial) {
             if (lineLen > 0) {
                 lineBuf[lineLen] = '\0';
                 gfx->setCursor(textX, lineY);
-                gfx->print(lineBuf);
+                render::printText(gfx, lineBuf);
                 lineY += 12;
                 lineLen = 0;
             }
@@ -168,7 +168,7 @@ void ConfirmView::render(bool partial) {
             // Force line break
             lineBuf[lineLen] = '\0';
             gfx->setCursor(textX, lineY);
-            gfx->print(lineBuf);
+            render::printText(gfx, lineBuf);
             lineY += 12;
             lineLen = 0;
             ptr++;
@@ -179,13 +179,13 @@ void ConfirmView::render(bool partial) {
     if (lineLen > 0) {
         lineBuf[lineLen] = '\0';
         gfx->setCursor(textX, lineY);
-        gfx->print(lineBuf);
+        render::printText(gfx, lineBuf);
     }
 
     const char* hint = ui::tr("core.hint_approve_deny");
     int hintWidth = static_cast<int>(std::strlen(hint)) * 6;
     gfx->setCursor(boxX + BOX_WIDTH / 2 - hintWidth / 2, boxY + BOX_HEIGHT - 12);
-    gfx->print(hint);
+    render::printText(gfx, hint);
 
     dirty_ = false;
 }
