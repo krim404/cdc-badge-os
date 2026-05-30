@@ -20,6 +20,7 @@
 #include "cdc_log.h"
 #include "plugin_manager/PluginGpioPolicy.h"
 #include "serial_cmd/ICommandRegistry.h"
+#include "HexUtil.h"
 
 #include "driver/gpio.h"
 #include "driver/i2c.h"
@@ -217,13 +218,6 @@ void i2cDispatch(const char* args)
 
 constexpr uint8_t    SAO_EEPROM_ADDR = 0x50;
 constexpr i2c_port_t SAO_I2C_PORT    = static_cast<i2c_port_t>(1);
-
-int hex_val(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
 
 void sao_read(const char* args)
 {

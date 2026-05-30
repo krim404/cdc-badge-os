@@ -6,9 +6,14 @@
  * Architecture:
  *  - English fallbacks live in code as `I18nEntry` tables registered by each
  *    module at startup. They sit in rodata and are always available.
- *  - All other languages live in `/plugins/i18n/lang.json` on the plugins
- *    FAT partition. The file is parsed at boot into PSRAM-backed key-value
- *    tables, one per language code.
+ *  - Every other language lives in its own flat file
+ *    `/plugins/i18n/lang_<code>.json` on the plugins FAT partition, e.g.
+ *    `lang_de.json`. The file is a flat `{ "<key>": "<value>", ... }` object
+ *    and its `core.lang_name` value is the language's own display name
+ *    (endonym). Adding a language is just dropping a new `lang_<code>.json`;
+ *    it appears in the picker automatically.
+ *  - The active language's file is parsed into a PSRAM-backed key-value table;
+ *    the set of selectable languages is discovered by scanning the directory.
  *  - Plugin manifest strings keep their own `i18n_strings` map and are
  *    queried via `host_i18n_tr_key` - unchanged by this rewrite.
  *
@@ -19,6 +24,8 @@
  */
 
 #pragma once
+
+#include "cdc_core/Raii.h"
 
 #include <cstdint>
 #include <cstddef>
@@ -50,10 +57,16 @@ struct I18nEntry {
  * Thread safety: registration is expected to happen single-threaded during
  * module init. `tr()` is read-only after all modules have registered.
  */
+/// One selectable overlay language: ISO code plus its own display name.
+struct OverlayLanguage {
+    std::string code;   ///< Language code, e.g. "de" (lower-case).
+    std::string name;   ///< Endonym for the picker (CP437-encoded), e.g. "Deutsch".
+};
+
 class I18n {
 public:
-    /// Default path to the overlay file on the plugins FAT.
-    static constexpr const char* DEFAULT_OVERLAY_PATH = "/plugins/i18n/lang.json";
+    /// Directory on the plugins FAT holding the per-language files.
+    static constexpr const char* OVERLAY_DIR = "/plugins/i18n";
 
     /// Singleton accessor.
     static I18n& instance();
@@ -65,21 +78,20 @@ public:
     bool init();
 
     /**
-     * \brief Load overlay translations from a JSON file at \p path.
+     * \brief Rescan available languages and (re)load the active overlay.
      *
-     * The file format is:
+     * Scans `OVERLAY_DIR` for `lang_<code>.json` files to populate the picker
+     * list, then parses the file for the current language into the active
+     * table. A `lang_<code>.json` is a flat object:
      * \code
-     * { "version": 1,
-     *   "translations": {
-     *     "de": {"core.save": "Speichern", ...},
-     *     "fr": {"core.save": "Enregistrer", ...}
-     *   }
-     * }
+     * { "core.lang_name": "Deutsch", "core.save": "Speichern", ... }
      * \endcode
+     * Safe to call when the current language is "en" (just rescans).
      *
-     * \return true on success, false on missing/invalid file (caller falls back to English).
+     * \return true if the active overlay loaded (or language is "en"), false
+     *         if the active language's file was missing/invalid.
      */
-    bool loadOverlay(const char* path = DEFAULT_OVERLAY_PATH);
+    bool loadOverlay();
 
     /**
      * \brief Append English entries to the lookup table.
@@ -129,8 +141,20 @@ public:
      */
     bool setLanguageCode(const char* code);
 
-    /// List of language codes present in the loaded overlay (does not include "en").
-    const std::vector<std::string>& availableOverlayLanguages() const { return overlayLangs_; }
+    /// Languages discovered on the plugins FAT (does not include "en").
+    const std::vector<OverlayLanguage>& availableOverlayLanguages() const { return overlayLangs_; }
+
+    /**
+     * \brief Display name (endonym) for a language code, for the picker.
+     *
+     * "en" returns the in-code English name ("English"); any other code
+     * returns the `core.lang_name` read from its `lang_<code>.json`, falling
+     * back to the code itself if unknown.
+     *
+     * \param code Language code (e.g. "en", "de").
+     * \return CP437-encoded name; stable until the next rescan.
+     */
+    const char* languageName(const char* code) const;
 
     /**
      * \brief Callback invoked whenever the active translation table changes.
@@ -157,16 +181,23 @@ private:
     void loadLanguageFromNvs();
     void saveLanguageToNvs();
 
+    /// Scan OVERLAY_DIR for `lang_<code>.json` files into `overlayLangs_`.
+    void scanAvailableLanguages();
+    /// Parse `lang_<currentLang_>.json` into `activeOverlay_`. \return false on error.
+    bool loadActiveOverlayFile();
+
     mutable std::vector<I18nEntry> en_;
     mutable bool                   enSorted_ = false;
 
-    struct OverlayEntry {
-        std::string key;
-        std::string value;
-    };
-    std::vector<OverlayEntry> activeOverlay_;
-    std::vector<std::string>  overlayLangs_;
-    std::string               overlayJsonPath_;
+    // Active-language overlay stored entirely in PSRAM: a packed
+    // "key\0value\0..." blob plus a key-sorted reference index for binary
+    // search. Keeps the (potentially large) translation table off the scarce
+    // internal heap, which WiFi/BLE need for contiguous allocations.
+    struct OverlayRef { const char* key; const char* value; };
+    cdc::core::PsramUniquePtr<char>       overlayBlob_;
+    cdc::core::PsramUniquePtr<OverlayRef> overlayRefs_;
+    std::size_t                           overlayCount_ = 0;
+    std::vector<OverlayLanguage>          overlayLangs_;
 
     std::string currentLang_ = "en";
 

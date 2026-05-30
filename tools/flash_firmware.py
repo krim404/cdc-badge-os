@@ -31,11 +31,12 @@ FLASH_MODE = "dio"
 FLASH_FREQ = "80m"
 FLASH_SIZE = "16MB"
 
-# Flash layout (address -> filename pattern)
+# Flash layout (address -> filename pattern). Offsets must match partitions.csv
+# (app0 lives at 0x50000, not the ESP-IDF default 0x10000).
 FLASH_MAP = {
-    0x0:     "bootloader",
-    0x8000:  "partitions",
-    0x10000: "firmware",
+    0x0:      "bootloader",
+    0x8000:   "partitions",
+    0x50000:  "firmware",
 }
 
 GITHUB_REPO = "krim404/cdc-badge-os"

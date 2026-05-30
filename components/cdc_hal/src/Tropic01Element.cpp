@@ -19,6 +19,7 @@
 #include "cdc_hal/libtropic_port_esp32.h"
 #include "cdc_hal/hw_config.h"
 #include "cdc_core/SystemLock.h"
+#include "cdc_spi_lock.h"
 #include "cdc_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -230,12 +231,25 @@ bool Tropic01Element::acquireBus() {
             "SPI device handle null");
         return false;
     }
+    // Serialize the WHOLE secure-element operation against the e-paper display,
+    // which shares this SPI bus. A TROPIC01 op is many CS-framed transfers; the
+    // display (CalEPD) takes the same recursive lock around each of its
+    // transfers, so a display transfer can never slip between two TR01 frames
+    // (CS asserted) and corrupt the transaction (which would latch a chip
+    // tamper alarm). Held for the whole op, released in releaseBus().
+    SemaphoreHandle_t spiLock = cdc::hal::sharedSpiLock();
+    if (spiLock) {
+        xSemaphoreTakeRecursive(spiLock, portMAX_DELAY);
+    }
     // ESP-IDF requires portMAX_DELAY for spi_device_acquire_bus; other timeouts
     // return ESP_ERR_INVALID_ARG. Operations run under a busy display+TR01 bus
     // are short, so blocking is acceptable here.
     esp_err_t err = spi_device_acquire_bus(device_.spi, portMAX_DELAY);
     if (err != ESP_OK) {
         LOG_E(TAG, "acquireBus failed: %d", err);
+        if (spiLock) {
+            xSemaphoreGiveRecursive(spiLock);
+        }
         core::SystemLock::instance().triggerLockdown(
             core::LockdownReason::TR01_UNREACHABLE,
             "SPI bus acquire failed");
@@ -250,6 +264,10 @@ bool Tropic01Element::acquireBus() {
 void Tropic01Element::releaseBus() {
     if (device_.spi) {
         spi_device_release_bus(device_.spi);
+    }
+    SemaphoreHandle_t spiLock = cdc::hal::sharedSpiLock();
+    if (spiLock) {
+        xSemaphoreGiveRecursive(spiLock);
     }
 }
 

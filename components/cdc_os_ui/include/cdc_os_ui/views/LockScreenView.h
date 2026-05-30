@@ -30,6 +30,7 @@ enum class StatusIcon : uint16_t {
     CHARGING     = (1 << 8),   // Battery charging
     NO_BATTERY   = (1 << 9),   // No battery connected
     CAFFEINATED  = (1 << 10),  // Sleep inhibited (coffee cup)
+    BACKGROUND   = (1 << 11),  // Background plugin running
 };
 
 // Allow bitwise operations

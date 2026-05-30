@@ -80,9 +80,7 @@ void BleSerialModule::unregisterConsoleHooks() {
 }
 
 /**
- * \brief Pairing confirmation is now handled by AppUi via the shared
- *        numeric-comparison callback. This module no longer registers its own
- *        prompt so that callbacks do not clobber one another.
+ * \brief No-op: AppUi owns the shared numeric-comparison pairing callback.
  */
 void BleSerialModule::registerPairingCallback() {
 }

@@ -12,6 +12,7 @@
 #include "plugin_manager/host_api.h"
 #include "cdc_core/Raii.h"
 #include "cdc_views/ListView.h"
+#include "cdc_views/ContextMenuView.h"
 
 extern "C" {
 #include "wasm_export.h"
@@ -113,12 +114,47 @@ static int32_t w_host_ui_set_view_empty(wasm_exec_env_t, const char* text)
     return host_ui_set_view_empty(text);
 }
 
+static int32_t w_host_ui_update_list_item(wasm_exec_env_t exec_env, uint32_t index,
+                                          const ui_item_t* item)
+{
+    if (!item) return HOST_ERR_INVALID_ARG;
+    wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
+    ui_item_t native = *item;
+    uint32_t off = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(item->label));
+    if (off != 0 && wasm_runtime_validate_app_addr(inst, off, 1)) {
+        native.label = static_cast<const char*>(wasm_runtime_addr_app_to_native(inst, off));
+    } else {
+        native.label = "";
+    }
+    return host_ui_update_list_item(static_cast<uint16_t>(index), &native);
+}
+
+static int32_t w_host_ui_insert_list_item(wasm_exec_env_t exec_env, uint32_t index,
+                                          const ui_item_t* item)
+{
+    if (!item) return HOST_ERR_INVALID_ARG;
+    wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
+    ui_item_t native = *item;
+    uint32_t off = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(item->label));
+    if (off != 0 && wasm_runtime_validate_app_addr(inst, off, 1)) {
+        native.label = static_cast<const char*>(wasm_runtime_addr_app_to_native(inst, off));
+    } else {
+        native.label = "";
+    }
+    return host_ui_insert_list_item(static_cast<uint16_t>(index), &native);
+}
+
+static int32_t w_host_ui_remove_list_item(wasm_exec_env_t, uint32_t index)
+{
+    return host_ui_remove_list_item(static_cast<uint16_t>(index));
+}
+
 static int32_t w_host_ui_push_context_menu(wasm_exec_env_t exec_env, const char* title,
                                             const ui_item_t* items, uint32_t count, uint32_t sel)
 {
     if (count == 0 || !items) return host_ui_push_context_menu(title, items, 0, sel);
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
-    constexpr uint32_t kMaxItems = 8;
+    constexpr uint32_t kMaxItems = cdc::ui::ContextMenuView::MAX_ITEMS;
     if (count > kMaxItems) count = kMaxItems;
     ui_item_t native[kMaxItems];
     for (uint32_t i = 0; i < count; ++i) {
@@ -300,6 +336,36 @@ static int32_t w_host_nvs_set_str(wasm_exec_env_t, const char* key, const char* 
 
 static int32_t w_host_nvs_erase(wasm_exec_env_t, const char* key) { return host_nvs_erase(key); }
 
+// -- vFAT (sandboxed plugin file storage) -----------------------------------
+
+static int32_t w_host_fs_write(wasm_exec_env_t, const char* name, const uint8_t* data, uint32_t len)
+{ return host_fs_write(name, data, len); }
+
+static int32_t w_host_fs_read(wasm_exec_env_t, const char* name, uint8_t* buf, uint32_t buf_size)
+{
+    size_t len = buf_size;
+    int rc = host_fs_read(name, buf, &len);
+    return rc == HOST_OK ? static_cast<int32_t>(len) : rc;
+}
+
+static int32_t w_host_fs_remove(wasm_exec_env_t, const char* name) { return host_fs_remove(name); }
+
+static int32_t w_host_fs_size(wasm_exec_env_t, const char* name)
+{
+    size_t sz = 0;
+    int rc = host_fs_size(name, &sz);
+    return rc == HOST_OK ? static_cast<int32_t>(sz) : rc;
+}
+
+static int32_t w_host_fs_list(wasm_exec_env_t, char* out, uint32_t out_size)
+{
+    size_t len = out_size;
+    int rc = host_fs_list(out, &len);
+    return rc == HOST_OK ? static_cast<int32_t>(len) : rc;
+}
+
+static int32_t w_host_fs_view(wasm_exec_env_t, const char* name) { return host_fs_view(name); }
+
 // -- Crypto -----------------------------------------------------------------
 
 static int32_t w_host_random(wasm_exec_env_t, uint8_t* buf, uint32_t len)
@@ -376,8 +442,20 @@ static int32_t w_host_rmem_name_used(wasm_exec_env_t, const char* name)
 static uint32_t w_host_rmem_slot_size(wasm_exec_env_t)
 { return host_rmem_slot_size(); }
 
-static int32_t w_host_ecdsa_sign(wasm_exec_env_t, uint32_t slot, const uint8_t* msg, uint32_t len, uint8_t* sig)
-{ return host_ecdsa_sign(static_cast<uint8_t>(slot), msg, len, sig); }
+static int32_t w_host_ecc_generate(wasm_exec_env_t, const char* name, uint32_t curve)
+{ return host_ecc_generate(name, static_cast<uint8_t>(curve)); }
+static int32_t w_host_ecc_import(wasm_exec_env_t, const char* name, const uint8_t* priv, uint32_t curve)
+{ return host_ecc_import(name, priv, static_cast<uint8_t>(curve)); }
+static int32_t w_host_ecc_pubkey(wasm_exec_env_t, const char* name, uint8_t* pub, uint32_t curve)
+{ return host_ecc_pubkey(name, pub, static_cast<uint8_t>(curve)); }
+static int32_t w_host_ecc_delete(wasm_exec_env_t, const char* name)
+{ return host_ecc_delete(name); }
+static int32_t w_host_ecc_exists(wasm_exec_env_t, const char* name)
+{ return host_ecc_exists(name) ? 1 : 0; }
+static int32_t w_host_ecdsa_sign(wasm_exec_env_t, const char* name, const uint8_t* msg, uint32_t len, uint8_t* sig)
+{ return host_ecdsa_sign(name, msg, len, sig); }
+static int32_t w_host_eddsa_sign(wasm_exec_env_t, const char* name, const uint8_t* msg, uint32_t len, uint8_t* sig)
+{ return host_eddsa_sign(name, msg, len, sig); }
 
 // -- EventBus ---------------------------------------------------------------
 
@@ -425,6 +503,9 @@ static int32_t w_host_str_to_display(wasm_exec_env_t, const char* in, char* out,
                                      uint32_t out_size, uint32_t target)
 { return host_str_to_display(in, out, out_size, target); }
 
+static int32_t w_host_str_to_utf8(wasm_exec_env_t, const char* in, char* out, uint32_t out_size)
+{ return host_str_to_utf8(in, out, out_size); }
+
 static int32_t w_host_get_build_profile(wasm_exec_env_t, char* out, uint32_t out_size)
 { return host_get_build_profile(out, out_size); }
 
@@ -471,6 +552,181 @@ static int32_t w_host_lockscreen_register_action(wasm_exec_env_t,
 static int32_t w_host_lockscreen_unregister_action(wasm_exec_env_t)
 { return host_lockscreen_unregister_action(); }
 
+// -- Additional crypto ------------------------------------------------------
+
+static int32_t w_host_random_strict(wasm_exec_env_t, uint8_t* buf, uint32_t len)
+{ return host_random_strict(buf, len); }
+static int32_t w_host_base64_encode(wasm_exec_env_t, const uint8_t* in, uint32_t in_len, char* out, uint32_t out_size)
+{ return host_base64_encode(in, in_len, out, out_size); }
+static int32_t w_host_base64_decode(wasm_exec_env_t, const char* in, uint32_t in_len, uint8_t* out, uint32_t out_size)
+{ return host_base64_decode(in, in_len, out, out_size); }
+static int32_t w_host_hex_decode(wasm_exec_env_t, const char* in, uint32_t in_len, uint8_t* out, uint32_t out_size)
+{ return host_hex_decode(in, in_len, out, out_size); }
+static int32_t w_host_aes_gcm_encrypt(wasm_exec_env_t, const uint8_t* key, const uint8_t* iv,
+                                      const uint8_t* aad, uint32_t aad_len,
+                                      const uint8_t* pt, uint32_t pt_len, uint8_t* ct, uint8_t* tag)
+{ return host_aes_gcm_encrypt(key, iv, aad, aad_len, pt, pt_len, ct, tag); }
+static int32_t w_host_aes_gcm_decrypt(wasm_exec_env_t, const uint8_t* key, const uint8_t* iv,
+                                      const uint8_t* aad, uint32_t aad_len,
+                                      const uint8_t* ct, uint32_t ct_len, const uint8_t* tag, uint8_t* pt)
+{ return host_aes_gcm_decrypt(key, iv, aad, aad_len, ct, ct_len, tag, pt); }
+
+// -- Additional time / logging / nvs / sysinfo ------------------------------
+
+static int32_t w_host_local_time(wasm_exec_env_t, void* out)
+{ return host_local_time(reinterpret_cast<struct host_tm*>(out)); }
+
+static void w_host_log_hex(wasm_exec_env_t, const char* tag, const char* label,
+                           const uint8_t* data, uint32_t len)
+{ host_log_hex(tag, label, data, len); }
+
+static int32_t w_host_nvs_erase_all(wasm_exec_env_t) { return host_nvs_erase_all(); }
+static int32_t w_host_nvs_list_keys(wasm_exec_env_t, char* out, uint32_t* out_len)
+{
+    size_t len = *out_len;
+    int rc = host_nvs_list_keys(out, &len);
+    *out_len = static_cast<uint32_t>(len);
+    return rc;
+}
+
+// -- Additional wifi --------------------------------------------------------
+
+static int32_t w_host_wifi_mac(wasm_exec_env_t, uint8_t* out)  { return host_wifi_mac(out); }
+static int32_t w_host_wifi_rssi(wasm_exec_env_t)               { return host_wifi_rssi(); }
+static int32_t w_host_wifi_start_scan(wasm_exec_env_t)         { return host_wifi_start_scan(); }
+static int32_t w_host_wifi_scan_done(wasm_exec_env_t)          { return host_wifi_scan_done() ? 1 : 0; }
+static int32_t w_host_wifi_scan_results(wasm_exec_env_t, void* out, uint32_t* count)
+{
+    size_t c = *count;
+    int rc = host_wifi_scan_results(reinterpret_cast<wifi_scan_result_t*>(out), &c);
+    *count = static_cast<uint32_t>(c);
+    return rc;
+}
+
+// -- Additional gpio / adc / i2c / sao --------------------------------------
+
+static int32_t w_host_gpio_pwm_set_duty(wasm_exec_env_t, uint32_t pin, uint32_t duty)
+{ return host_gpio_pwm_set_duty(static_cast<uint8_t>(pin), static_cast<uint16_t>(duty)); }
+static int32_t w_host_adc_read(wasm_exec_env_t, uint32_t pin, uint16_t* raw, uint16_t* mv)
+{ return host_adc_read(static_cast<uint8_t>(pin), raw, mv); }
+
+static int32_t w_host_i2c_write(wasm_exec_env_t, uint32_t bus, uint32_t addr, const uint8_t* data, uint32_t len)
+{ return host_i2c_write(static_cast<uint8_t>(bus), static_cast<uint8_t>(addr), data, len); }
+static int32_t w_host_i2c_read(wasm_exec_env_t, uint32_t bus, uint32_t addr, uint8_t* data, uint32_t len)
+{ return host_i2c_read(static_cast<uint8_t>(bus), static_cast<uint8_t>(addr), data, len); }
+static int32_t w_host_i2c_write_read(wasm_exec_env_t, uint32_t bus, uint32_t addr,
+                                     const uint8_t* wr, uint32_t wr_len, uint8_t* rd, uint32_t rd_len)
+{ return host_i2c_write_read(static_cast<uint8_t>(bus), static_cast<uint8_t>(addr), wr, wr_len, rd, rd_len); }
+static int32_t w_host_i2c_scan(wasm_exec_env_t, uint32_t bus, uint8_t* found, uint32_t* count)
+{
+    size_t c = *count;
+    int rc = host_i2c_scan(static_cast<uint8_t>(bus), found, &c);
+    *count = static_cast<uint32_t>(c);
+    return rc;
+}
+static int32_t w_host_sao_eeprom_read(wasm_exec_env_t, uint32_t off, uint8_t* buf, uint32_t len)
+{ return host_sao_eeprom_read(static_cast<uint16_t>(off), buf, len); }
+static int32_t w_host_sao_eeprom_write(wasm_exec_env_t, uint32_t off, const uint8_t* buf, uint32_t len)
+{ return host_sao_eeprom_write(static_cast<uint16_t>(off), buf, len); }
+
+// -- Additional http / event / secure element ------------------------------
+
+static uint32_t w_host_http_content_length(wasm_exec_env_t, int32_t h)
+{ return static_cast<uint32_t>(host_http_content_length(h)); }
+
+static int32_t w_host_event_publish(wasm_exec_env_t, uint32_t subtype, uint32_t value)
+{ return host_event_publish(subtype, value); }
+
+static int32_t w_host_se_chip_id(wasm_exec_env_t, uint8_t* serial, uint32_t* len)
+{
+    size_t l = *len;
+    int rc = host_se_chip_id(serial, &l);
+    *len = static_cast<uint32_t>(l);
+    return rc;
+}
+static int32_t w_host_se_fw_version(wasm_exec_env_t, uint8_t* riscv, uint8_t* spect)
+{ return host_se_fw_version(riscv, spect); }
+
+// -- Display (low-level GFX) ------------------------------------------------
+
+static uint32_t w_host_display_width(wasm_exec_env_t)  { return host_display_width(); }
+static uint32_t w_host_display_height(wasm_exec_env_t) { return host_display_height(); }
+static int32_t  w_host_display_clear(wasm_exec_env_t)  { return host_display_clear(); }
+static int32_t  w_host_display_draw_pixel(wasm_exec_env_t, int32_t x, int32_t y, uint32_t color)
+{ return host_display_draw_pixel(static_cast<int16_t>(x), static_cast<int16_t>(y), static_cast<uint16_t>(color)); }
+static int32_t  w_host_display_draw_line(wasm_exec_env_t, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t color)
+{ return host_display_draw_line(static_cast<int16_t>(x0), static_cast<int16_t>(y0),
+                                static_cast<int16_t>(x1), static_cast<int16_t>(y1), static_cast<uint16_t>(color)); }
+static int32_t  w_host_display_draw_rect(wasm_exec_env_t, int32_t x, int32_t y, int32_t w, int32_t h, uint32_t color)
+{ return host_display_draw_rect(static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                static_cast<int16_t>(w), static_cast<int16_t>(h), static_cast<uint16_t>(color)); }
+static int32_t  w_host_display_fill_rect(wasm_exec_env_t, int32_t x, int32_t y, int32_t w, int32_t h, uint32_t color)
+{ return host_display_fill_rect(static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                static_cast<int16_t>(w), static_cast<int16_t>(h), static_cast<uint16_t>(color)); }
+static int32_t  w_host_display_draw_text(wasm_exec_env_t, int32_t x, int32_t y, const char* text, uint32_t size, uint32_t color)
+{ return host_display_draw_text(static_cast<int16_t>(x), static_cast<int16_t>(y), text,
+                                static_cast<uint8_t>(size), static_cast<uint16_t>(color)); }
+static int32_t  w_host_display_flush(wasm_exec_env_t, uint32_t mode) { return host_display_flush(static_cast<uint8_t>(mode)); }
+static int32_t  w_host_display_is_busy(wasm_exec_env_t) { return host_display_is_busy() ? 1 : 0; }
+
+// -- Keypad / USB -----------------------------------------------------------
+
+static int32_t w_host_key_pressed(wasm_exec_env_t, uint32_t key) { return host_key_pressed(static_cast<uint8_t>(key)) ? 1 : 0; }
+static int32_t w_host_key_consume_next(wasm_exec_env_t, uint8_t* out) { return host_key_consume_next(out); }
+static int32_t w_host_usb_cdc_write(wasm_exec_env_t, const uint8_t* data, uint32_t len) { return host_usb_cdc_write(data, len); }
+
+// -- BLE --------------------------------------------------------------------
+
+static int32_t  w_host_ble_is_enabled(wasm_exec_env_t) { return host_ble_is_enabled() ? 1 : 0; }
+static int32_t  w_host_ble_mac(wasm_exec_env_t, uint8_t* out) { return host_ble_mac(out); }
+static int32_t  w_host_ble_device_name(wasm_exec_env_t, char* out, uint32_t size) { return host_ble_device_name(out, size); }
+static int32_t  w_host_ble_rssi(wasm_exec_env_t) { return host_ble_rssi(); }
+
+static int32_t  w_host_ble_register_service(wasm_exec_env_t, void* def, void* chars, uint32_t num)
+{ return host_ble_register_service(reinterpret_cast<ble_service_def_t*>(def),
+                                   reinterpret_cast<ble_char_def_t*>(chars), num); }
+static int32_t  w_host_ble_unregister_service(wasm_exec_env_t, uint32_t h) { return host_ble_unregister_service(h); }
+static int32_t  w_host_ble_send_notification(wasm_exec_env_t, uint32_t ch, const uint8_t* data, uint32_t len)
+{ return host_ble_send_notification(ch, data, len); }
+static int32_t  w_host_ble_send_indication(wasm_exec_env_t, uint32_t ch, const uint8_t* data, uint32_t len)
+{ return host_ble_send_indication(ch, data, len); }
+static int32_t  w_host_ble_consume_write(wasm_exec_env_t, uint32_t ch, uint8_t* buf, uint32_t size)
+{ return host_ble_consume_write(ch, buf, size); }
+
+static int32_t  w_host_ble_scan_start(wasm_exec_env_t, uint32_t dur) { return host_ble_scan_start(dur); }
+static int32_t  w_host_ble_scan_done(wasm_exec_env_t) { return host_ble_scan_done() ? 1 : 0; }
+static int32_t  w_host_ble_scan_results(wasm_exec_env_t, void* out, uint32_t* count)
+{
+    size_t c = *count;
+    int rc = host_ble_scan_results(reinterpret_cast<ble_scan_result_t*>(out), &c);
+    *count = static_cast<uint32_t>(c);
+    return rc;
+}
+static int32_t  w_host_ble_connect(wasm_exec_env_t, const uint8_t* addr, uint32_t type)
+{ return host_ble_connect(addr, static_cast<uint8_t>(type)); }
+static uint32_t w_host_ble_conn_handle(wasm_exec_env_t) { return host_ble_conn_handle(); }
+static int32_t  w_host_ble_disconnect(wasm_exec_env_t, uint32_t conn) { return host_ble_disconnect(conn); }
+static int32_t  w_host_ble_discover(wasm_exec_env_t, uint32_t conn, const uint8_t* uuid, uint32_t aid)
+{ return host_ble_discover(conn, uuid, aid); }
+static int32_t  w_host_ble_consume_discovery(wasm_exec_env_t, void* out, uint32_t* count)
+{
+    size_t c = *count;
+    int rc = host_ble_consume_discovery(reinterpret_cast<ble_remote_char_t*>(out), &c);
+    *count = static_cast<uint32_t>(c);
+    return rc;
+}
+static int32_t  w_host_ble_read_char(wasm_exec_env_t, uint32_t conn, uint32_t vh, uint32_t aid)
+{ return host_ble_read_char(conn, static_cast<uint16_t>(vh), aid); }
+static int32_t  w_host_ble_consume_read(wasm_exec_env_t, uint8_t* buf, uint32_t size)
+{ return host_ble_consume_read(buf, size); }
+static int32_t  w_host_ble_write_char(wasm_exec_env_t, uint32_t conn, uint32_t vh,
+                                      const uint8_t* data, uint32_t len, uint32_t wr)
+{ return host_ble_write_char(conn, static_cast<uint16_t>(vh), data, len, static_cast<uint8_t>(wr)); }
+static int32_t  w_host_ble_subscribe(wasm_exec_env_t, uint32_t conn, uint32_t cccd, uint32_t aid)
+{ return host_ble_subscribe(conn, static_cast<uint16_t>(cccd), aid); }
+static int32_t  w_host_ble_consume_notification(wasm_exec_env_t, uint16_t* vh_out, uint8_t* buf, uint32_t size)
+{ return host_ble_consume_notification(vh_out, buf, size); }
+
 // -- Symbol table -----------------------------------------------------------
 
 static NativeSymbol s_symbols[] = {
@@ -495,6 +751,9 @@ static NativeSymbol s_symbols[] = {
     W("host_ui_push_list",       w_host_ui_push_list,       "($*~ii)i"),
     W("host_ui_replace_list",    w_host_ui_replace_list,    "($*~ii)i"),
     W("host_ui_set_view_footer", w_host_ui_set_view_footer, "($)i"),
+    W("host_ui_update_list_item", w_host_ui_update_list_item, "(i*)i"),
+    W("host_ui_insert_list_item", w_host_ui_insert_list_item, "(i*)i"),
+    W("host_ui_remove_list_item", w_host_ui_remove_list_item, "(i)i"),
     W("host_ui_set_view_empty",  w_host_ui_set_view_empty,  "($)i"),
     W("host_ui_push_context_menu", w_host_ui_push_context_menu, "($*~i)i"),
     W("host_ui_push_t9_input",   w_host_ui_push_t9_input,   "($$ii)i"),
@@ -549,6 +808,13 @@ static NativeSymbol s_symbols[] = {
     W("host_nvs_set_str",        w_host_nvs_set_str,        "($$)i"),
     W("host_nvs_erase",          w_host_nvs_erase,          "($)i"),
 
+    W("host_fs_write",           w_host_fs_write,           "($*~)i"),
+    W("host_fs_read",            w_host_fs_read,            "($*~)i"),
+    W("host_fs_remove",          w_host_fs_remove,          "($)i"),
+    W("host_fs_size",            w_host_fs_size,            "($)i"),
+    W("host_fs_list",            w_host_fs_list,            "(*~)i"),
+    W("host_fs_view",            w_host_fs_view,            "($)i"),
+
     W("host_random",             w_host_random,             "(*~)i"),
     W("host_sha256",             w_host_sha256,             "(*~*)i"),
     W("host_hmac_sha256",        w_host_hmac_sha256,        "(*~*~*)i"),
@@ -575,7 +841,13 @@ static NativeSymbol s_symbols[] = {
     W("host_rmem_erase_named",   w_host_rmem_erase_named,   "($)i"),
     W("host_rmem_name_used",     w_host_rmem_name_used,     "($)i"),
     W("host_rmem_slot_size",     w_host_rmem_slot_size,     "()i"),
-    W("host_ecdsa_sign",         w_host_ecdsa_sign,         "(i*~*)i"),
+    W("host_ecc_generate",       w_host_ecc_generate,       "($i)i"),
+    W("host_ecc_import",         w_host_ecc_import,         "($*i)i"),
+    W("host_ecc_pubkey",         w_host_ecc_pubkey,         "($*i)i"),
+    W("host_ecc_delete",         w_host_ecc_delete,         "($)i"),
+    W("host_ecc_exists",         w_host_ecc_exists,         "($)i"),
+    W("host_ecdsa_sign",         w_host_ecdsa_sign,         "($*~*)i"),
+    W("host_eddsa_sign",         w_host_eddsa_sign,         "($*~*)i"),
 
     W("host_event_subscribe",    w_host_event_subscribe,    "(ii)i"),
     W("host_event_unsubscribe",  w_host_event_unsubscribe,  "(i)i"),
@@ -593,6 +865,7 @@ static NativeSymbol s_symbols[] = {
 
     W("host_get_firmware_version", w_host_get_firmware_version, "(*~)i"),
     W("host_str_to_display",        w_host_str_to_display,        "($*~i)i"),
+    W("host_str_to_utf8",           w_host_str_to_utf8,           "($*~)i"),
     W("host_get_build_profile",    w_host_get_build_profile,    "(*~)i"),
     W("host_feature_enabled",      w_host_feature_enabled,      "(i)i"),
     W("host_cmd_consume",          w_host_cmd_consume,          "(*~)i"),
@@ -612,6 +885,76 @@ static NativeSymbol s_symbols[] = {
 
     W("host_lockscreen_register_action",   w_host_lockscreen_register_action,   "($i)i"),
     W("host_lockscreen_unregister_action", w_host_lockscreen_unregister_action, "()i"),
+
+    W("host_random_strict",      w_host_random_strict,      "(*~)i"),
+    W("host_base64_encode",      w_host_base64_encode,      "(*~*~)i"),
+    W("host_base64_decode",      w_host_base64_decode,      "(*~*~)i"),
+    W("host_hex_decode",         w_host_hex_decode,         "(*~*~)i"),
+    W("host_aes_gcm_encrypt",    w_host_aes_gcm_encrypt,    "(***~*~**)i"),
+    W("host_aes_gcm_decrypt",    w_host_aes_gcm_decrypt,    "(***~*~**)i"),
+
+    W("host_local_time",         w_host_local_time,         "(*)i"),
+    W("host_log_hex",            w_host_log_hex,            "($$*~)"),
+    W("host_nvs_erase_all",      w_host_nvs_erase_all,      "()i"),
+    W("host_nvs_list_keys",      w_host_nvs_list_keys,      "(**)i"),
+
+    W("host_wifi_mac",           w_host_wifi_mac,           "(*)i"),
+    W("host_wifi_rssi",          w_host_wifi_rssi,          "()i"),
+    W("host_wifi_start_scan",    w_host_wifi_start_scan,    "()i"),
+    W("host_wifi_scan_done",     w_host_wifi_scan_done,     "()i"),
+    W("host_wifi_scan_results",  w_host_wifi_scan_results,  "(**)i"),
+
+    W("host_gpio_pwm_set_duty",  w_host_gpio_pwm_set_duty,  "(ii)i"),
+    W("host_adc_read",           w_host_adc_read,           "(i**)i"),
+    W("host_i2c_write",          w_host_i2c_write,          "(ii*~)i"),
+    W("host_i2c_read",           w_host_i2c_read,           "(ii*~)i"),
+    W("host_i2c_write_read",     w_host_i2c_write_read,     "(ii*~*~)i"),
+    W("host_i2c_scan",           w_host_i2c_scan,           "(i**)i"),
+    W("host_sao_eeprom_read",    w_host_sao_eeprom_read,    "(i*~)i"),
+    W("host_sao_eeprom_write",   w_host_sao_eeprom_write,   "(i*~)i"),
+
+    W("host_http_content_length",w_host_http_content_length,"(i)i"),
+    W("host_event_publish",      w_host_event_publish,      "(ii)i"),
+    W("host_se_chip_id",         w_host_se_chip_id,         "(**)i"),
+    W("host_se_fw_version",      w_host_se_fw_version,      "(**)i"),
+
+    W("host_display_width",      w_host_display_width,      "()i"),
+    W("host_display_height",     w_host_display_height,     "()i"),
+    W("host_display_clear",      w_host_display_clear,      "()i"),
+    W("host_display_draw_pixel", w_host_display_draw_pixel, "(iii)i"),
+    W("host_display_draw_line",  w_host_display_draw_line,  "(iiiii)i"),
+    W("host_display_draw_rect",  w_host_display_draw_rect,  "(iiiii)i"),
+    W("host_display_fill_rect",  w_host_display_fill_rect,  "(iiiii)i"),
+    W("host_display_draw_text",  w_host_display_draw_text,  "(ii$ii)i"),
+    W("host_display_flush",      w_host_display_flush,      "(i)i"),
+    W("host_display_is_busy",    w_host_display_is_busy,    "()i"),
+
+    W("host_key_pressed",        w_host_key_pressed,        "(i)i"),
+    W("host_key_consume_next",   w_host_key_consume_next,   "(*)i"),
+    W("host_usb_cdc_write",      w_host_usb_cdc_write,      "(*~)i"),
+
+    W("host_ble_is_enabled",        w_host_ble_is_enabled,        "()i"),
+    W("host_ble_mac",               w_host_ble_mac,               "(*)i"),
+    W("host_ble_device_name",       w_host_ble_device_name,       "(*~)i"),
+    W("host_ble_rssi",              w_host_ble_rssi,              "()i"),
+    W("host_ble_register_service",  w_host_ble_register_service,  "(**i)i"),
+    W("host_ble_unregister_service",w_host_ble_unregister_service,"(i)i"),
+    W("host_ble_send_notification", w_host_ble_send_notification, "(i*~)i"),
+    W("host_ble_send_indication",   w_host_ble_send_indication,   "(i*~)i"),
+    W("host_ble_consume_write",     w_host_ble_consume_write,     "(i*~)i"),
+    W("host_ble_scan_start",        w_host_ble_scan_start,        "(i)i"),
+    W("host_ble_scan_done",         w_host_ble_scan_done,         "()i"),
+    W("host_ble_scan_results",      w_host_ble_scan_results,      "(**)i"),
+    W("host_ble_connect",           w_host_ble_connect,           "(*i)i"),
+    W("host_ble_conn_handle",       w_host_ble_conn_handle,       "()i"),
+    W("host_ble_disconnect",        w_host_ble_disconnect,        "(i)i"),
+    W("host_ble_discover",          w_host_ble_discover,          "(i*i)i"),
+    W("host_ble_consume_discovery", w_host_ble_consume_discovery, "(**)i"),
+    W("host_ble_read_char",         w_host_ble_read_char,         "(iii)i"),
+    W("host_ble_consume_read",      w_host_ble_consume_read,      "(*~)i"),
+    W("host_ble_write_char",        w_host_ble_write_char,        "(ii*~i)i"),
+    W("host_ble_subscribe",         w_host_ble_subscribe,         "(iii)i"),
+    W("host_ble_consume_notification", w_host_ble_consume_notification, "(**~)i"),
 };
 
 bool register_host_imports()

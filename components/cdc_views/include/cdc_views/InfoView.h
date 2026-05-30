@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cdc_ui/IView.h"
+#include "cdc_core/Raii.h"
 #include <cstdint>
 
 namespace cdc::ui {
@@ -48,6 +49,7 @@ public:
     // IView implementation
     void render(bool partial) override;
     InputResult onKey(char key) override;
+    InputResult onLongPress(char key) override;
     const char* getName() const override { return "InfoView"; }
     const char* getFooterHint() const override;
 
@@ -55,7 +57,10 @@ private:
     static constexpr uint16_t MAX_TITLE_LEN = 64;
 
     char titleBuf_[MAX_TITLE_LEN];
-    char textBuf_[MAX_TEXT_LEN];
+    // Body text lives in PSRAM (allocated lazily on first init); the buffer is
+    // large and only touched from the main/UI task, so it must not sit in the
+    // scarce internal heap.
+    cdc::core::PsramUniquePtr<char> textBuf_;
     const char* customHint_ = nullptr;
     uint16_t scrollLine_ = 0;
     uint16_t totalLines_ = 0;

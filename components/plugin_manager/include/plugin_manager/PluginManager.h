@@ -4,9 +4,10 @@
  *
  * One PluginManager instance, registered as a cdc_core service. At most one
  * foreground plugin (the one the user is currently looking at) runs at any
- * given time. Any number of background plugins - declared via
- * `capabilities.background = true` - are auto-loaded at boot and tick in
- * parallel with the foreground.
+ * given time. A plugin declaring `capabilities.background = true` keeps
+ * running (and ticking in parallel with the foreground) after the user leaves
+ * its view, instead of being unloaded. It is never auto-started at boot: the
+ * user starts it manually and can force-stop it again via \ref unloadFromRam.
  */
 
 #pragma once
@@ -51,9 +52,9 @@ public:
     [[nodiscard]] StartResult startPlugin(const std::string& id);
     bool                      stopActivePlugin();
     /// Unload a plugin from RAM regardless of foreground/background slot,
-    /// keeping its files on disk. Background plugins are re-loaded on the
-    /// next boot or via a subsequent call. Returns true if the plugin was
-    /// found and unloaded.
+    /// keeping its files on disk. This is the forced-stop entry point for a
+    /// resident background plugin. Returns true if the plugin was found and
+    /// unloaded.
     bool                      unloadFromRam(const std::string& id);
     /// Force a background plugin to be re-loaded from disk. Called after an
     /// upload overwrites the WASM so the running instance picks up the new
@@ -67,6 +68,19 @@ public:
     [[nodiscard]] std::string activePluginId()  const;
     /// True if a plugin with `id` is loaded in RAM (foreground or background).
     [[nodiscard]] bool        isLoaded(const std::string& id) const;
+    /// True if a plugin with `id` is currently resident in the background slot.
+    [[nodiscard]] bool        isRunningInBackground(const std::string& id) const;
+    /// True if at least one plugin is currently resident in the background slot.
+    [[nodiscard]] bool        hasBackgroundPlugin() const noexcept;
+    /// True if the foreground plugin declares `capabilities.background`, i.e. it
+    /// keeps running after the user leaves its view instead of being unloaded.
+    [[nodiscard]] bool        activePluginIsBackground() const;
+    /// True if the foreground plugin declares `capabilities.prevent_sleep`,
+    /// meaning it must stay permanently in the foreground: the idle auto-lock
+    /// must not fire while it runs. Derived from the live `active_` slot, so it
+    /// reverts to false on its own the moment the plugin leaves the foreground
+    /// (no inhibitor flag that could leak).
+    [[nodiscard]] bool        activePluginPreventsSleep() const;
 
     void dispatchButton(uint32_t button_code);
     void dispatchAction(uint32_t action_id, uint32_t idx, uint32_t user_data);
@@ -121,14 +135,23 @@ private:
     PluginManager(const PluginManager&) = delete;
     PluginManager& operator=(const PluginManager&) = delete;
 
-    void loadBackgroundPlugins();
     void startTickTask();
     void stopTickTask();
     static void tickTaskTrampoline(void* arg);
     void tickTaskLoop();
 
+    /// Load, init and run prerequisites for a plugin straight into the
+    /// background slot (headless: no foreground view, no plugin_on_enter).
+    /// Caller must hold call_mutex_. Returns true on success.
+    bool loadIntoBackground(const std::string& id, const PluginManifest& mf);
+
+    /// At boot, start every installed plugin whose manifest declares
+    /// `capabilities.autoload` as a resident background instance. Plugins
+    /// without the flag stay unloaded until the user starts them manually.
+    void loadAutoloadPlugins();
+
     std::unique_ptr<Plugin>              active_;       // foreground (user-visible)
-    std::vector<std::unique_ptr<Plugin>> background_;   // auto-loaded resident plugins
+    std::vector<std::unique_ptr<Plugin>> background_;   // manually-started resident plugins
     std::string                          pending_cmd_;  // buffered for plugin_on_cmd pull
     void*                                tick_task_  = nullptr;  // FreeRTOS TaskHandle_t
     void*                                call_mutex_ = nullptr;  // FreeRTOS SemaphoreHandle_t

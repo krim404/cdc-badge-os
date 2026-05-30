@@ -55,13 +55,14 @@ namespace cdc::ui {
 /** \brief Menu sizing and inactivity timeout constants. */
 
 static constexpr uint8_t MAIN_MENU_MAX_ITEMS = 16;
-static constexpr uint8_t MAIN_MENU_FIXED_COUNT = 3;  // Plugins + Tools + Settings
-static constexpr uint8_t TOOLS_FIXED_COUNT = 4;       // Modules, WiFi, Bluetooth, Expert
+// Fixed main-menu entries appended after the dynamic module items; the
+// trailing MAIN_MENU_FIXED_COUNT is their number, derived automatically.
+enum MainMenuFixed : uint8_t { MM_PLUGINS, MM_TOOLS, MM_SETTINGS, MAIN_MENU_FIXED_COUNT };
 static constexpr uint8_t TOOLS_MAX_ITEMS = 16;
 
 static constexpr uint32_t INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** \brief Index enums for fixed settings and language menus. */
+/** \brief Index enum for the fixed settings menu. */
 
 enum SettingsMenuIdx {
     SETTINGS_IDX_BRIGHTNESS = 0,
@@ -75,11 +76,8 @@ enum SettingsMenuIdx {
     SETTINGS_IDX_COUNT
 };
 
-enum LanguageMenuIdx {
-    LANG_IDX_ENGLISH = 0,
-    LANG_IDX_GERMAN,
-    LANG_IDX_COUNT
-};
+/// Upper bound on languages shown in the picker (English + overlay files).
+static constexpr uint16_t MAX_LANGUAGES = 16;
 
 /** \brief Static UI state and lazily constructed view pointers. */
 static LockScreenView* s_lockScreen = nullptr;
@@ -124,8 +122,10 @@ static uint8_t s_toolsModuleCount = 0;
 /** \brief Settings menu backing storage. */
 static ListItem s_settingsItems[SETTINGS_IDX_COUNT];
 
-/** \brief Language menu backing storage. */
-static ListItem s_languageItems[LANG_IDX_COUNT];
+/** \brief Language menu backing storage (filled dynamically from overlay files). */
+static ListItem s_languageItems[MAX_LANGUAGES];
+static char     s_languageCodes[MAX_LANGUAGES][8];
+static uint16_t s_languageCount = 0;
 
 /** \brief Last rendered minute for lock-screen clock throttling. */
 static int8_t s_lastMinute = -1;
@@ -135,6 +135,7 @@ static bool s_lastUsbConnected = false;
 static bool s_lastCharging = false;
 static bool s_lastWifiConnected = false;
 static bool s_lastBleEnabled = false;
+static bool s_lastBackgroundPlugin = false;
 static bool s_lastBatteryPresent = false;
 
 // Throttle for the battery-percent ADC sample on the lockscreen. The BQ25895
@@ -149,11 +150,11 @@ static uint32_t s_lastBatterySampleMs = 0;
 static bool s_ignoreKeyUntilRelease = false;
 
 /** \brief Returns main-menu index of the fixed "Plugins" item. */
-static inline uint8_t getPluginsIndex()  { return s_mainMenuPluginCount; }
+static inline uint8_t getPluginsIndex()  { return s_mainMenuPluginCount + MM_PLUGINS; }
 /** \brief Returns main-menu index of the fixed "Tools" item. */
-static inline uint8_t getToolsIndex()    { return s_mainMenuPluginCount + 1; }
+static inline uint8_t getToolsIndex()    { return s_mainMenuPluginCount + MM_TOOLS; }
 /** \brief Returns main-menu index of the fixed "Settings" item. */
-static inline uint8_t getSettingsIndex() { return s_mainMenuPluginCount + 2; }
+static inline uint8_t getSettingsIndex() { return s_mainMenuPluginCount + MM_SETTINGS; }
 /** \brief Returns effective main-menu item count including fixed entries. */
 static inline uint8_t getMainMenuCount() { return s_mainMenuPluginCount + MAIN_MENU_FIXED_COUNT; }
 
@@ -171,6 +172,8 @@ static void onToolsSelect(uint16_t index, void* userData);
 static void onSettingsSelect(uint16_t index, void* userData);
 /** \brief Handles language-menu item selection. */
 static void onLanguageSelect(uint16_t index, void* userData);
+/** \brief Rebuilds the language picker from the overlay files present. */
+static void rebuildLanguageMenu();
 /** \brief Rebuilds labels for translatable menus after language change. */
 static void rebuildMenuLabels();
 /** \brief Callback invoked when inactivity timeout is reached. */
@@ -285,10 +288,14 @@ void updatePowerStatusIcons() {
     auto* ble = hal::getBluetoothControllerInstance();
     const bool bleEnabled = ble && ble->isEnabled();
 
+    const bool backgroundPlugin =
+        cdc::plugin_manager::PluginManager::instance().hasBackgroundPlugin();
+
     updateStatusIcon(StatusIcon::USB, usbConnected, s_lastUsbConnected);
     updateStatusIcon(StatusIcon::CHARGING, charging, s_lastCharging);
     updateStatusIcon(StatusIcon::WIFI, wifiConnected, s_lastWifiConnected);
     updateStatusIcon(StatusIcon::BLE, bleEnabled, s_lastBleEnabled);
+    updateStatusIcon(StatusIcon::BACKGROUND, backgroundPlugin, s_lastBackgroundPlugin);
 
     updateBatteryIndicator();
 }
@@ -355,7 +362,15 @@ static void onPinSuccess() {
  * \brief Locks UI back to root lock-screen state on inactivity timeout.
  */
 static void onInactivityTimeout() {
-    // Lock screen
+    auto& pm = cdc::plugin_manager::PluginManager::instance();
+    // No auto-lock while a prevent_sleep plugin holds the foreground.
+    if (pm.activePluginPreventsSleep()) {
+        ViewStack::instance().resetInactivityTimer();
+        return;
+    }
+    // A non-background foreground plugin is unloaded on lock; a background
+    // plugin is demoted and keeps running.
+    pm.requestStopActivePlugin();
     while (ViewStack::instance().depth() > 1) {
         ViewStack::instance().pop();
     }
@@ -388,16 +403,36 @@ void rebuildMainMenu() {
     }
 }
 
+/// One fixed (non-module) menu entry. The fixed count is derived from the
+/// table size, so adding or removing a row needs no separate counter update.
+struct FixedMenuEntry {
+    const char* labelKey;   // i18n key
+    uint8_t (*icon)();      // optional status icon getter (nullptr -> none)
+    void (*action)();       // invoked when the entry is selected
+};
+
+static uint8_t toolsBluetoothIcon() {
+    auto* ble = hal::getBluetoothControllerInstance();
+    return static_cast<uint8_t>(ble && ble->isEnabled() ? '*' : 0);
+}
+
+static const FixedMenuEntry kToolsFixed[] = {
+    {"core.wifi_menu", nullptr,            showWifiMainMenu},
+    {"core.bluetooth", toolsBluetoothIcon, showBluetoothMenu},
+    {"core.expert",    nullptr,            showExpertMenu},
+};
+static constexpr uint8_t TOOLS_FIXED_COUNT =
+    static_cast<uint8_t>(sizeof(kToolsFixed) / sizeof(kToolsFixed[0]));
+
 /**
  * \brief Rebuilds tools menu entries including dynamic module tools.
  */
 void rebuildToolsMenu() {
-    // Fixed items
-    s_toolsItems[0] = {ui::tr("core.modules"), 0, false, nullptr};
-    s_toolsItems[1] = {ui::tr("core.wifi_menu"), 0, false, nullptr};
-    auto* ble = hal::getBluetoothControllerInstance();
-    s_toolsItems[2] = {ui::tr("core.bluetooth"), static_cast<uint8_t>(ble && ble->isEnabled() ? '*' : 0), false, nullptr};
-    s_toolsItems[3] = {ui::tr("core.expert"), 0, false, nullptr};
+    for (uint8_t i = 0; i < TOOLS_FIXED_COUNT; i++) {
+        s_toolsItems[i] = {ui::tr(kToolsFixed[i].labelKey),
+                           kToolsFixed[i].icon ? kToolsFixed[i].icon() : uint8_t{0},
+                           false, nullptr};
+    }
 
     auto& moduleReg = core::ModuleRegistry::instance();
     s_toolsModuleCount = moduleReg.getMenuItems(
@@ -474,10 +509,9 @@ static void onToolsSelect(uint16_t index, void* userData) {
     (void)userData;
 
     switch (index) {
-        case 0: showModulesView(); return;
-        case 1: showWifiMainMenu(); return;
-        case 2: showBluetoothMenu(); return;
-        case 3: showExpertMenu(); return;
+        case 0: showWifiMainMenu(); return;
+        case 1: showBluetoothMenu(); return;
+        case 2: showExpertMenu(); return;
     }
 
     uint8_t moduleIdx = index - TOOLS_FIXED_COUNT;
@@ -503,6 +537,7 @@ static void onSettingsSelect(uint16_t index, void* userData) {
             ViewStack::instance().push(s_brightnessSlider);
             break;
         case SETTINGS_IDX_LANGUAGE:
+            rebuildLanguageMenu();
             ViewStack::instance().push(s_languageMenu);
             break;
         case SETTINGS_IDX_TIMEZONE:
@@ -530,19 +565,52 @@ static void onSettingsSelect(uint16_t index, void* userData) {
 }
 
 /**
- * \brief Applies new UI language and rebuilds translated menus.
+ * \brief Rebuilds the language picker from the overlay files on the plugins FAT.
+ *
+ * The list always starts with English (in-code) followed by one entry per
+ * `lang_<code>.json` discovered by I18n, each labelled with the file's own
+ * `core.lang_name`. With no overlay files present only English is shown.
+ */
+static void rebuildLanguageMenu() {
+    if (!s_languageMenu) return;
+    auto& i18n = I18n::instance();
+
+    s_languageCount = 0;
+    auto addLanguage = [&](const char* code) {
+        if (s_languageCount >= MAX_LANGUAGES) return;
+        std::strncpy(s_languageCodes[s_languageCount], code,
+                     sizeof(s_languageCodes[0]) - 1);
+        s_languageCodes[s_languageCount][sizeof(s_languageCodes[0]) - 1] = '\0';
+        s_languageItems[s_languageCount] = {i18n.languageName(code), 0, false, nullptr};
+        ++s_languageCount;
+    };
+
+    addLanguage("en");
+    for (const auto& lang : i18n.availableOverlayLanguages()) {
+        addLanguage(lang.code.c_str());
+    }
+
+    s_languageMenu->init(ui::tr("core.language"), s_languageItems, s_languageCount);
+    s_languageMenu->setOnSelect(onLanguageSelect);
+
+    for (uint16_t i = 0; i < s_languageCount; ++i) {
+        if (i18n.getLanguageCode() == s_languageCodes[i]) {
+            s_languageMenu->setSelection(i);
+            break;
+        }
+    }
+}
+
+/**
+ * \brief Applies the selected UI language and rebuilds translated menus.
  * \param index Selected language item index.
  * \param userData Optional callback user data.
  */
 static void onLanguageSelect(uint16_t index, void* userData) {
     (void)userData;
+    if (index >= s_languageCount) return;
 
-    const char* code = "en";
-    switch (index) {
-        case LANG_IDX_ENGLISH: code = "en"; break;
-        case LANG_IDX_GERMAN:  code = "de"; break;
-    }
-    I18n::instance().setLanguageCode(code);
+    I18n::instance().setLanguageCode(s_languageCodes[index]);
     cdc::plugin_manager::PluginManager::instance().reloadActiveLangOverlay();
     ViewStack::instance().pop();
 }
@@ -788,12 +856,10 @@ void ui_init(const UiDeps& deps) {
         s_timezoneSlider->setOnSave(settings::onTimezoneSave);
     }
 
-    // Language Menu
-    s_languageItems[LANG_IDX_ENGLISH] = {"English", 0, false, nullptr};
-    s_languageItems[LANG_IDX_GERMAN]  = {"Deutsch", 0, false, nullptr};
+    // Language Menu - populated from the overlay files present (English only
+    // until the plugins FAT is mounted and the overlay scan runs at boot).
     s_languageMenu = new ListView();
-    s_languageMenu->init(ui::tr("core.language"), s_languageItems, LANG_IDX_COUNT);
-    s_languageMenu->setOnSelect(onLanguageSelect);
+    rebuildLanguageMenu();
 
     // Date/Time Input Views
     time_t now = time(nullptr);

@@ -39,6 +39,7 @@
 #include "cdc_hal/hw_config.h"
 #include "cdc_hal/IRtc.h"
 #include "cdc_os_ui/AppUi.h"
+#include "cdc_os_ui/WifiHandlers.h"
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
 #include "esp_system.h"
@@ -147,6 +148,28 @@ static bool initNvs() {
     return ret == ESP_OK;
 }
 
+// Build-profile marker persisted in NVS; gates the one-time factory reset on a
+// firmware-profile change. Seeded only after the reset fully completes.
+static constexpr const char* kBootProfileNs  = "boot_profile";
+static constexpr const char* kBootProfileKey = "profile";
+
+/**
+ * \brief Persists the current build-profile byte, marking the factory reset
+ *        complete.
+ *
+ * Must be called only after both NVS and TROPIC01 have been wiped, so that an
+ * interrupted reset (reset/power loss, or an unavailable SE session) re-runs
+ * cleanly on the next boot instead of leaving stale TROPIC01 state behind.
+ */
+static void seedBuildProfile() {
+    nvs_handle_t handle = 0;
+    if (nvs_open(kBootProfileNs, NVS_READWRITE, &handle) == ESP_OK) {
+        nvs_set_u8(handle, kBootProfileKey, BUILD_PROFILE_BYTE);
+        nvs_commit(handle);
+        nvs_close(handle);
+    }
+}
+
 /**
  * \brief Compares the persisted build profile byte against the compiled-in
  *        value and triggers a NVS wipe on mismatch.
@@ -155,17 +178,15 @@ static bool initNvs() {
  *         once its session is available.
  */
 static bool checkBuildProfileAndWipeNvs() {
-    constexpr const char* NS  = "boot_profile";
-    constexpr const char* KEY = "profile";
     constexpr uint8_t expected = BUILD_PROFILE_BYTE;
     constexpr uint8_t kMaxValid = 0x03;
 
     nvs_handle_t handle = 0;
     uint8_t stored = 0;
-    esp_err_t openErr = nvs_open(NS, NVS_READONLY, &handle);
+    esp_err_t openErr = nvs_open(kBootProfileNs, NVS_READONLY, &handle);
     esp_err_t readErr = ESP_ERR_NVS_NOT_FOUND;
     if (openErr == ESP_OK) {
-        readErr = nvs_get_u8(handle, KEY, &stored);
+        readErr = nvs_get_u8(handle, kBootProfileKey, &stored);
         nvs_close(handle);
     }
 
@@ -206,28 +227,30 @@ static bool checkBuildProfileAndWipeNvs() {
     }
     ESP_ERROR_CHECK(cdc::core::wipeNvs());
 
-    if (nvs_open(NS, NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u8(handle, KEY, expected);
-        nvs_commit(handle);
-        nvs_close(handle);
-    }
+    // The profile byte is seeded only after the TROPIC01 wipe completes (see
+    // seedBuildProfile / wipeTropicForFactoryReset), so an interrupted reset
+    // re-runs on the next boot instead of being marked done prematurely.
     return true;
 }
 
 /**
- * \brief Wipes all TROPIC01 R-Memory and ECC slots used by application code.
- *        Called after a build-profile change has already wiped NVS so the
- *        TROPIC01 state matches the cleared flash state.
+ * \brief Wipes all TROPIC01 R-Memory and ECC slots used by application code,
+ *        then seeds the build-profile byte to mark the factory reset complete.
+ *
+ * Called after a build-profile change has already wiped NVS. The profile byte
+ * is only persisted on a successful wipe; if the SE session is unavailable the
+ * reset stays pending and re-runs on the next boot.
  */
 static void wipeTropicForFactoryReset() {
     LOG_W(TAG, "Build profile change: wiping TROPIC01 ECC and R-Memory slots");
     auto result = cdc::core::wipeTropic(cdc::hal::getSecureElementInstance());
     if (!result.sessionReady) {
-        LOG_E(TAG, "TROPIC01 factory wipe skipped (SE session unavailable)");
+        LOG_E(TAG, "TROPIC01 factory wipe skipped (SE session unavailable), reset stays pending");
         return;
     }
     LOG_W(TAG, "TROPIC01 factory wipe: deleted %u ECC keys, %u R-Memory slots",
           result.eccDeleted, result.rmemDeleted);
+    seedBuildProfile();
 }
 
 /**
@@ -503,12 +526,10 @@ static void initPluginSystem() {
     }
     cdc::plugin_manager::registerPluginSerialCommands();
 
-    if (cdc::ui::I18n::instance().getLanguageCode() != "en") {
-        // Triggers the language-changed callback registered in ui_init(),
-        // which rebuilds menu labels so cached `tr()` pointers track the
-        // newly loaded overlay.
-        cdc::ui::I18n::instance().loadOverlay();
-    }
+    // Scan the plugins FAT for available language files (fills the picker) and
+    // load the persisted language's overlay. Fires the language-changed
+    // callback registered in ui_init(), which rebuilds cached menu labels.
+    cdc::ui::I18n::instance().loadOverlay();
 }
 
 /**
@@ -596,6 +617,9 @@ extern "C" void app_main(void)
 
     // STAGE 6: Modules
     initModules();
+
+    // Restore persisted WiFi intent: reconnect if WiFi was on before reboot.
+    cdc::ui::WifiHandlers::instance().restoreOnBoot();
 
     // STAGE 6b: Plugin system (WAMR + plugins partition)
     initPluginSystem();

@@ -232,4 +232,34 @@ private:
     bool              locked_ = true;
 };
 
+/**
+ * \brief Scoped guard for a FreeRTOS recursive mutex.
+ *
+ * Takes the recursive semaphore on construction and gives it back on
+ * destruction. Tolerates a `nullptr` handle (no-op), so it can guard an
+ * optional/opt-in lock. The same task may nest acquisitions, which a plain
+ * MutexGuard would self-deadlock on.
+ *
+ * Not safe to call from ISR context.
+ */
+class RecursiveMutexGuard {
+public:
+    /// Take \p sem blocking until acquired; no-op when \p sem is nullptr.
+    explicit RecursiveMutexGuard(SemaphoreHandle_t sem) noexcept : sem_(sem)
+    {
+        if (sem_) xSemaphoreTakeRecursive(sem_, portMAX_DELAY);
+    }
+
+    ~RecursiveMutexGuard() noexcept
+    {
+        if (sem_) xSemaphoreGiveRecursive(sem_);
+    }
+
+    RecursiveMutexGuard(const RecursiveMutexGuard&) = delete;
+    RecursiveMutexGuard& operator=(const RecursiveMutexGuard&) = delete;
+
+private:
+    SemaphoreHandle_t sem_ = nullptr;
+};
+
 }  // namespace cdc::core

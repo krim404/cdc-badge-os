@@ -126,6 +126,7 @@ void WifiHandlers::clearConfig() {
     }
     config_ = {};
     config_.valid = false;
+    userEnabled_ = false;
 }
 
 /**
@@ -136,8 +137,13 @@ void WifiHandlers::loadConfig() {
     nvs_handle_t nvs;
     if (nvs_open("wifi", NVS_READONLY, &nvs) != ESP_OK) {
         config_.valid = false;
+        userEnabled_ = false;
         return;
     }
+
+    uint8_t ena = 0;
+    nvs_get_u8(nvs, "ena", &ena);
+    userEnabled_ = (ena != 0);
 
     size_t len = sizeof(config_.ssid);
     if (nvs_get_str(nvs, "ssid", config_.ssid, &len) != ESP_OK || len <= 1) {
@@ -390,6 +396,75 @@ bool WifiHandlers::ensureConnected() {
     }
     syncTimeIfNeeded();
     return true;
+}
+
+/**
+ * \brief Persists the user/system WiFi intent flag (NVS key "ena").
+ */
+void WifiHandlers::persistUserEnabled(bool enabled) {
+    nvs_handle_t nvs;
+    if (nvs_open("wifi", NVS_READWRITE, &nvs) != ESP_OK) return;
+    nvs_set_u8(nvs, "ena", enabled ? 1 : 0);
+    nvs_commit(nvs);
+    nvs_close(nvs);
+}
+
+/**
+ * \brief Tears WiFi down only when no holder remains and intent is off.
+ */
+void WifiHandlers::maybeRelease() {
+    if (!userEnabled_ && holdCount_ <= 0) {
+        disconnect();
+    }
+}
+
+/**
+ * \brief Applies and persists the user/system WiFi intent.
+ */
+bool WifiHandlers::setUserEnabled(bool enabled) {
+    userEnabled_ = enabled;
+    persistUserEnabled(enabled);
+
+    if (enabled) {
+        if (isConnected()) return true;
+        if (!config_.valid) loadConfig();
+        if (!config_.valid) {
+            lastError_ = "No WLAN configured";
+            return false;
+        }
+        return connect();
+    }
+
+    maybeRelease();
+    return true;
+}
+
+/**
+ * \brief Acquires a plugin/host hold and ensures WiFi is connected.
+ */
+bool WifiHandlers::acquire() {
+    ++holdCount_;
+    if (ensureConnected()) return true;
+    if (holdCount_ > 0) --holdCount_;
+    return false;
+}
+
+/**
+ * \brief Releases a plugin/host hold and tears WiFi down if appropriate.
+ */
+void WifiHandlers::release() {
+    if (holdCount_ > 0) --holdCount_;
+    maybeRelease();
+}
+
+/**
+ * \brief Reconnects at boot if WiFi intent was persisted as enabled.
+ */
+void WifiHandlers::restoreOnBoot() {
+    loadConfig();
+    if (userEnabled_ && config_.valid) {
+        connect();
+    }
 }
 
 } // namespace cdc::ui

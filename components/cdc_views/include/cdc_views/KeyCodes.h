@@ -44,6 +44,6 @@ static constexpr char KEY_YES = 'Y';
 static constexpr char KEY_NO = 'N';
 
 /** \brief Open context menu / digit '3'. */
-static constexpr char KEY_BACK = '3';
+static constexpr char KEY_MENU = '3';
 
 } // namespace cdc::ui

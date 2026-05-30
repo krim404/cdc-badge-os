@@ -131,6 +131,12 @@ public:
     virtual int8_t getRssi() const = 0;
 
     /**
+     * Maximum number of scan results retained/returned. Single source of truth
+     * for both the controller's result buffer and any caller-side buffers.
+     */
+    static constexpr uint8_t MAX_SCAN_RESULTS = 32;
+
+    /**
      * Start a WiFi scan
      * @return true if scan started
      */

@@ -6,6 +6,8 @@
 #include "cdc_hal/II2cBus.h"
 #include "cdc_hal/hw_config.h"
 #include "driver/i2c.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "cdc_log.h"
 
 static const char* TAG = "I2cBus";
@@ -45,6 +47,13 @@ public:
                        const uint8_t* data, size_t len) override;
     esp_err_t readReg(I2cDeviceHandle dev, uint8_t reg,
                       uint8_t* data, size_t len) override;
+    esp_err_t writeRaw(uint8_t addr, const uint8_t* data, size_t len) override;
+    esp_err_t readRaw(uint8_t addr, uint8_t* data, size_t len) override;
+    esp_err_t writeReadRaw(uint8_t addr, const uint8_t* wr, size_t wr_len,
+                           uint8_t* rd, size_t rd_len) override;
+    bool probe(uint8_t addr) override;
+    esp_err_t eepromRead(uint8_t addr, uint16_t offset, uint8_t* buf, size_t len) override;
+    esp_err_t eepromWrite(uint8_t addr, uint16_t offset, const uint8_t* buf, size_t len) override;
 
 private:
     i2c_port_t port_;
@@ -177,6 +186,82 @@ esp_err_t I2cBusImpl::readReg(I2cDeviceHandle handle, uint8_t reg,
     i2c_cmd_link_delete(cmd);
 
     return err;
+}
+
+esp_err_t I2cBusImpl::writeRaw(uint8_t addr, const uint8_t* data, size_t len) {
+    if (!data && len > 0) return ESP_ERR_INVALID_ARG;
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+    if (len > 0) i2c_master_write(cmd, data, len, true);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(port_, cmd, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
+    i2c_cmd_link_delete(cmd);
+    return err;
+}
+
+esp_err_t I2cBusImpl::readRaw(uint8_t addr, uint8_t* data, size_t len) {
+    if (!data || len == 0) return ESP_ERR_INVALID_ARG;
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_READ, true);
+    i2c_master_read(cmd, data, len, I2C_MASTER_LAST_NACK);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(port_, cmd, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
+    i2c_cmd_link_delete(cmd);
+    return err;
+}
+
+esp_err_t I2cBusImpl::writeReadRaw(uint8_t addr, const uint8_t* wr, size_t wr_len,
+                                   uint8_t* rd, size_t rd_len) {
+    if ((!wr && wr_len > 0) || !rd || rd_len == 0) return ESP_ERR_INVALID_ARG;
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+    if (wr_len > 0) i2c_master_write(cmd, wr, wr_len, true);
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_READ, true);
+    i2c_master_read(cmd, rd, rd_len, I2C_MASTER_LAST_NACK);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(port_, cmd, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
+    i2c_cmd_link_delete(cmd);
+    return err;
+}
+
+bool I2cBusImpl::probe(uint8_t addr) {
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(port_, cmd, pdMS_TO_TICKS(20));
+    i2c_cmd_link_delete(cmd);
+    return err == ESP_OK;
+}
+
+esp_err_t I2cBusImpl::eepromRead(uint8_t addr, uint16_t offset, uint8_t* buf, size_t len) {
+    if (!buf || len == 0) return ESP_ERR_INVALID_ARG;
+    uint8_t reg[2] = { static_cast<uint8_t>(offset >> 8), static_cast<uint8_t>(offset & 0xff) };
+    return writeReadRaw(addr, reg, sizeof(reg), buf, len);
+}
+
+esp_err_t I2cBusImpl::eepromWrite(uint8_t addr, uint16_t offset, const uint8_t* buf, size_t len) {
+    if (!buf || len == 0) return ESP_ERR_INVALID_ARG;
+    constexpr size_t PAGE = 16;  // 24Cxx page; a write must not cross a page boundary
+    size_t written = 0;
+    while (written < len) {
+        uint16_t cur = static_cast<uint16_t>(offset + written);
+        size_t room = PAGE - (cur % PAGE);
+        size_t chunk = (len - written < room) ? (len - written) : room;
+        uint8_t frame[2 + PAGE];
+        frame[0] = static_cast<uint8_t>(cur >> 8);
+        frame[1] = static_cast<uint8_t>(cur & 0xff);
+        for (size_t i = 0; i < chunk; ++i) frame[2 + i] = buf[written + i];
+        esp_err_t err = writeRaw(addr, frame, 2 + chunk);
+        if (err != ESP_OK) return err;
+        vTaskDelay(pdMS_TO_TICKS(5));  // EEPROM self-timed write cycle
+        written += chunk;
+    }
+    return ESP_OK;
 }
 
 /** \brief Singleton instances for both hardware I2C ports. */

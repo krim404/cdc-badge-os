@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-\file run_flasher.py
+\file start_webflasher.py
 \brief Local CDC Badge web-flasher.
 
 Serves the contents of `web-flasher/` together with the firmware binaries
@@ -10,8 +10,8 @@ image is present) and opens the default browser at the resulting URL.
 
 Usage:
 
-    python tools/run_flasher.py [--port 8000] [--no-browser]
-                                 [--build] [--lang]
+    python tools/start_webflasher.py [--port 8000] [--no-browser]
+                                     [--build] [--lang]
 
 The Web Serial API used by esp-web-tools accepts plain HTTP on localhost,
 so no TLS setup is required.
@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB_FLASHER = ROOT / "web-flasher"
 BUILD_DIR = ROOT / ".pio" / "build" / "cdc_badge_usb"
 PLUGINS_INITIAL = ROOT / "build" / "plugins_initial.bin"
-LANG_JSON = ROOT / "assets" / "i18n" / "lang.json"
+LANG_DIR = ROOT / "assets" / "i18n"
 
 # Flash offsets must match partitions.csv.
 OFFSET_BOOTLOADER = 0x0
@@ -83,7 +83,7 @@ def build_lang_image() -> None:
     PLUGINS_INITIAL.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         sys.executable, str(ROOT / "tools" / "build_lang_image.py"),
-        "--lang-json", str(LANG_JSON),
+        "--lang-dir", str(LANG_DIR),
         "--output", str(PLUGINS_INITIAL),
     ]
     print(f"Running: {' '.join(cmd)}")
@@ -158,7 +158,7 @@ def main() -> int:
     p.add_argument("--build", action="store_true",
                    help="run `pio run` before serving")
     p.add_argument("--lang", action="store_true",
-                   help="also build plugins_initial.bin from assets/i18n/lang.json")
+                   help="also build plugins_initial.bin from assets/i18n/lang_*.json")
     args = p.parse_args()
 
     if args.build:

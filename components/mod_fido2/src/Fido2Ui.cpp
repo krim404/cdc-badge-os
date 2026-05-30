@@ -571,6 +571,11 @@ fido2_user_presence_result_t fido2_ui_user_presence_callback(
     s_promptReturnView = stack.current();
     s_promptWasLocked = (s_promptReturnDepth <= 1) && (action != FIDO2_ACTION_SELECT);
 
+    // A WebAuthn request takes priority: dismiss any open modal (e.g. the
+    // lock-screen actions menu), which would otherwise overlay the prompt and
+    // swallow all key input.
+    stack.hideModal();
+
     auto* display = cdc::hal::getDisplayInstance();
     if (display) {
         s_promptBacklightWasOn = display->isBacklightOn();

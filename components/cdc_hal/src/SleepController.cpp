@@ -15,6 +15,7 @@
 #include "cdc_log.h"
 #include "esp_sleep.h"
 #include "esp_attr.h"
+#include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "driver/gpio.h"
 #include "nvs_flash.h"
@@ -39,6 +40,12 @@ static constexpr size_t MAX_CALLBACKS = 8;
 
 /** \brief RTC-retained flag indicating previous deep-sleep state. */
 RTC_DATA_ATTR static bool g_was_in_deep_sleep = false;
+
+// RTC-retained diagnostic counters. Survive deep-sleep wake and external
+// (EN) reset; cleared only on true power loss. Used to distinguish a
+// spurious-wake/reset loop from a never-firing wake source after long sleeps.
+RTC_DATA_ATTR static uint32_t g_diag_boot_count = 0;
+RTC_DATA_ATTR static uint32_t g_diag_deep_sleep_count = 0;
 
 class Esp32SleepController : public ISleepController {
 public:
@@ -102,8 +109,17 @@ bool Esp32SleepController::init() {
 
     // Check if we woke from deep sleep
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+
+    // Single-line boot diagnostic (no per-loop logging). reset/wake are the
+    // ESP-IDF enum values; boot/deep counters are RTC-retained across wake and
+    // EN reset, so a value jump after an unattended sleep reveals a
+    // spurious-wake/reset loop versus a wake source that never fired.
+    ++g_diag_boot_count;
+    LOG_W(TAG, "DeepSleep-Diag: boot#%lu reset=%d wake=%d deepEntries=%lu wasDeep=%d",
+          (unsigned long)g_diag_boot_count, (int)esp_reset_reason(), (int)cause,
+          (unsigned long)g_diag_deep_sleep_count, (int)g_was_in_deep_sleep);
+
     if (cause == ESP_SLEEP_WAKEUP_EXT0 || cause == ESP_SLEEP_WAKEUP_EXT1) {
-        LOG_I(TAG, "Woke from deep sleep (GPIO)");
         // g_was_in_deep_sleep is already set in RTC memory
     } else if (g_was_in_deep_sleep) {
         // Reset occurred but not from deep sleep wakeup
@@ -178,6 +194,7 @@ void Esp32SleepController::enterLightSleep() {
 
     // Mark that we're in deep sleep mode (survives reset)
     g_was_in_deep_sleep = true;
+    ++g_diag_deep_sleep_count;
 
     // Configure GPIO wakeup only (no timer)
     // Use EXT1 instead of EXT0 - less RTC GPIO issues on ESP32-S3

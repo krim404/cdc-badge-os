@@ -8,6 +8,7 @@
 #include "serial_cmd/ICommandRegistry.h"
 #include "serial_cmd/SubCommand.h"
 #include "cdc_core/feature_flags.h"
+#include "cdc_core/Cp437.h"
 #include "cdc_core/PinManager.h"
 #include "cdc_core/TropicSlotMap.h"
 #include "cdc_core/TropicStorage.h"
@@ -1571,7 +1572,7 @@ void SerialCmd::handleSpecialChar(int c, bool& commandReady) {
                 if ((c & 0xC0) == 0x80) {
                     utf8Cp = (utf8Cp << 6) | (c & 0x3F);
                     if (--utf8Pending == 0) {
-                        uint8_t cp437 = cdc::ui::render::unicodeToCp437(utf8Cp);
+                        uint8_t cp437 = cdc::core::cp437::fromUnicode(utf8Cp);
                         if (cp437) appendByte(cp437);
                     }
                 } else {
@@ -1784,7 +1785,7 @@ char* SerialCmd::trim(char* str) {
  */
 
 static constexpr uint32_t WIFI_SCAN_POLL_MS     = 100;
-static constexpr uint8_t  WIFI_MAX_SCAN_RESULTS = 20;
+static constexpr uint8_t  WIFI_MAX_SCAN_RESULTS = hal::IWifiController::MAX_SCAN_RESULTS;
 
 static const char* wifiSecurityName(hal::WifiSecurity sec) {
     switch (sec) {
@@ -2002,7 +2003,7 @@ static void cmdWifiOn(const char* args) {
     if (!wh.config().valid) return;
 
     Console::printf("Reconnecting to %s...\r\n", wh.config().ssid);
-    if (!wh.connect()) {
+    if (!wh.setUserEnabled(true)) {
         wifi->disable();
         const char* err = wh.getLastError();
         Console::printf("ERROR: Reconnect failed (%s)\r\n", err ? err : "?");
@@ -2029,7 +2030,7 @@ static void cmdWifiOff(const char* args) {
         Console::printf("OK: already off\r\n");
         return;
     }
-    ui::WifiHandlers::instance().disconnect();
+    ui::WifiHandlers::instance().setUserEnabled(false);
     Console::printf("OK: WiFi disabled\r\n");
 }
 
@@ -2074,7 +2075,7 @@ static void cmdWifiConnect(const char* args) {
     Console::printf("Connecting to %s (timeout: %lu ms)...\r\n",
                     ssid, static_cast<unsigned long>(wh.getConnectTimeoutMs()));
 
-    if (!wh.connect()) {
+    if (!wh.setUserEnabled(true)) {
         const char* err = wh.getLastError();
         Console::printf("ERROR: Connection failed (%s)\r\n", err ? err : "?");
         return;

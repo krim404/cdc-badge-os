@@ -316,7 +316,6 @@ bool WifiController::enable(WifiMode mode) {
         return false;
     }
 
-    // Start WiFi (like legacy wifi_manager_init)
     LOG_I(TAG, "Calling esp_wifi_start...");
     LOG_I(TAG, "Task: %s, stack free: %lu", pcTaskGetName(nullptr),
           (unsigned long)uxTaskGetStackHighWaterMark(nullptr));

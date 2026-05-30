@@ -7,6 +7,7 @@
 #include "mod_fido2/fido2_common.h"
 #include "cdc_hal/ISecureElement.h"
 #include "cdc_log.h"
+#include "esp_attr.h"
 #include <mbedtls/sha256.h>
 #include <nvs_flash.h>
 #include <nvs.h>
@@ -55,7 +56,7 @@ typedef struct {
 
 /** \brief Runtime storage/cache state. */
 
-static struct {
+EXT_RAM_BSS_ATTR static struct {
     bool initialized;
     uint32_t auth_counter;
     bool counter_loaded;

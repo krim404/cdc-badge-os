@@ -24,6 +24,7 @@ idf_component_register(
         nvs_flash
         freertos
         CalEPD
+        cdc_spi_lock
         libtropic_sdk
         mbedtls
         esp_wifi

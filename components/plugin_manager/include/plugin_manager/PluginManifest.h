@@ -27,10 +27,30 @@ struct PluginCapabilities {
     bool sao = false;
     bool grove = false;
     bool pixel_strip = false;
+    /**
+     * \brief Keep running and ticking in the background after the user leaves
+     * the plugin's view, instead of being unloaded. Not a boot flag: the user
+     * still starts the plugin manually. See \ref autoload for boot loading.
+     */
     bool background = false;
+    bool usb_cdc = false;
+    bool prevent_sleep = false;
+    /**
+     * \brief Allow sandboxed file access on the plugins FAT partition via the
+     * host_fs_* API. The plugin can only touch files in its own private folder
+     * (/plugins/data/<id>/); paths are confined host-side.
+     */
+    bool vfat = false;
+    /**
+     * \brief Start this plugin as a resident background instance at badge boot.
+     * Plugins without this flag stay unloaded until started manually.
+     * Orthogonal to \ref background, which only governs survival after the user
+     * leaves the view.
+     */
+    bool autoload = false;
 
     std::vector<std::string> rmem;
-    std::vector<uint8_t> ecc_slots;
+    std::vector<std::string> ecc;
     std::vector<std::string> ble_service_uuids;
     std::vector<uint8_t> gpio_pins;
     std::vector<uint8_t> pwm_pins;

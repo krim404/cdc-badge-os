@@ -71,14 +71,18 @@ void InfoView::init(const char* title, const char* text) {
         titleBuf_[0] = '\0';
     }
 
-    if (text) {
-        strncpy(textBuf_, text, MAX_TEXT_LEN - 1);
-        textBuf_[MAX_TEXT_LEN - 1] = '\0';
-    } else {
-        textBuf_[0] = '\0';
+    if (!textBuf_) {
+        textBuf_ = cdc::core::psramAlloc<char>(MAX_TEXT_LEN);
     }
-
-    wrapInPlace(textBuf_, WRAP_COLS);
+    if (textBuf_) {
+        if (text) {
+            strncpy(textBuf_.get(), text, MAX_TEXT_LEN - 1);
+            textBuf_.get()[MAX_TEXT_LEN - 1] = '\0';
+        } else {
+            textBuf_.get()[0] = '\0';
+        }
+        wrapInPlace(textBuf_.get(), WRAP_COLS);
+    }
 
     scrollLine_ = 0;
     totalLines_ = countLines();
@@ -93,10 +97,10 @@ void InfoView::init(const char* title, const char* text) {
  * \return Number of text lines.
  */
 uint16_t InfoView::countLines() const {
-    if (textBuf_[0] == '\0') return 0;
+    if (!textBuf_ || textBuf_.get()[0] == '\0') return 0;
 
     uint16_t lines = 1;
-    const char* p = textBuf_;
+    const char* p = textBuf_.get();
     while (*p) {
         if (*p == '\n') lines++;
         p++;
@@ -165,6 +169,20 @@ InputResult InfoView::onKey(char key) {
 }
 
 /**
+ * \brief Long-press jumps to the first (KEY_UP) or last (KEY_DOWN) page.
+ * \param key Pressed key code.
+ * \return Input handling result for the view stack.
+ */
+InputResult InfoView::onLongPress(char key) {
+    if (totalLines_ <= VISIBLE_LINES) return InputResult::IGNORED;
+    switch (key) {
+        case KEY_UP:   scrollLine_ = 0; dirty_ = true; return InputResult::CONSUMED;
+        case KEY_DOWN: scrollLine_ = totalLines_ - VISIBLE_LINES; dirty_ = true; return InputResult::CONSUMED;
+        default:       return InputResult::IGNORED;
+    }
+}
+
+/**
  * \brief Returns the footer hint text.
  * \return Footer hint string.
  */
@@ -210,8 +228,8 @@ void InfoView::render(bool partial) {
     gfx->fillRect(TEXT_MARGIN, TEXT_START_Y, textAreaWidth, textAreaHeight, EPD_WHITE);
 
     // Render visible lines
-    if (textBuf_[0] != '\0') {
-        const char* lineStart = textBuf_;
+    if (textBuf_ && textBuf_.get()[0] != '\0') {
+        const char* lineStart = textBuf_.get();
         uint16_t currentLine = 0;
         int y = TEXT_START_Y;
 

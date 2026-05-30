@@ -22,7 +22,7 @@ using namespace cdc::ui;
 
 /** \brief Wi-Fi menu size limits. */
 
-static constexpr uint8_t WIFI_MAX_NETWORKS = 20;
+static constexpr uint8_t WIFI_MAX_NETWORKS = hal::IWifiController::MAX_SCAN_RESULTS;
 static constexpr uint8_t WIFI_MENU_MAX_ITEMS = 16;
 
 /** \brief One scanned Wi-Fi network entry displayed in the scan list. */
@@ -304,7 +304,7 @@ static void wifiConnect() {
     snprintf(msg, sizeof(msg), "%s\n%s", ui::tr("core.wifi_connecting"), wifiHandlers.config().ssid);
     showToastInfo(msg, 0);
 
-    bool connected = wifiHandlers.connect();
+    bool connected = wifiHandlers.setUserEnabled(true);
     ViewStack::instance().hideModal();
 
     if (connected) {
@@ -325,7 +325,7 @@ static void wifiConnect() {
  * \brief Disconnects current Wi-Fi connection and refreshes menu state.
  */
 static void wifiDisconnect() {
-    WifiHandlers::instance().disconnect();
+    WifiHandlers::instance().setUserEnabled(false);
     showToastInfo(ui::tr("core.wifi_disconnected"));
     rebuildWifiMainMenu();
 }
@@ -693,7 +693,7 @@ static void wifiNtpSync() {
 
     if (!wasConnected) {
         showToastTask(ui::tr("core.wifi_connecting"), 0);
-        if (!wifiHandlers.connect()) {
+        if (!wifiHandlers.setUserEnabled(true)) {
             ViewStack::instance().hideModal();
             showToastError(ui::tr("core.wifi_failed"));
             return;

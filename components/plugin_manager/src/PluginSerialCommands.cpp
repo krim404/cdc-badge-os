@@ -30,8 +30,6 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 
-#include <sys/stat.h>
-
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -269,7 +267,62 @@ void cmdInfo(const char* args)
     sendf("author:       %s", mf->author.c_str());
     sendf("api_level:    %s", mf->host_api_level_min.c_str());
     sendf("linear_kb:    %u", static_cast<unsigned>(mf->linear_memory_kb));
+
+    const auto& c = mf->capabilities;
+
+    // Boolean capabilities: list only the requested (true) ones.
+    std::string caps;
+    auto addCap = [&caps](bool on, const char* name) {
+        if (on) { if (!caps.empty()) caps += ' '; caps += name; }
+    };
+    addCap(c.wifi, "wifi");
+    addCap(c.ble, "ble");
+    addCap(c.http, "http");
+    addCap(c.ui_exclusive, "ui_exclusive");
+    addCap(c.display_lowlevel, "display_lowlevel");
+    addCap(c.sao, "sao");
+    addCap(c.grove, "grove");
+    addCap(c.pixel_strip, "pixel_strip");
+    addCap(c.background, "background");
+    addCap(c.usb_cdc, "usb_cdc");
+    addCap(c.prevent_sleep, "prevent_sleep");
+    sendf("caps:         %s", caps.empty() ? "-" : caps.c_str());
+
+    auto joinPins = [](const std::vector<uint8_t>& v) {
+        std::string s;
+        char num[8];
+        for (uint8_t p : v) {
+            if (!s.empty()) s += ',';
+            snprintf(num, sizeof(num), "%u", static_cast<unsigned>(p));
+            s += num;
+        }
+        return s;
+    };
+    auto joinStr = [](const std::vector<std::string>& v) {
+        std::string s;
+        for (const auto& e : v) { if (!s.empty()) s += ','; s += e; }
+        return s;
+    };
+
+    // Concrete resource requests (printed only when present).
+    if (!c.gpio_pins.empty())         sendf("gpio_pins:    %s", joinPins(c.gpio_pins).c_str());
+    if (!c.pwm_pins.empty())          sendf("pwm_pins:     %s", joinPins(c.pwm_pins).c_str());
+    if (!c.adc_pins.empty())          sendf("adc_pins:     %s", joinPins(c.adc_pins).c_str());
+    if (!c.i2c_bus.empty())           sendf("i2c_bus:      %s", joinPins(c.i2c_bus).c_str());
+    if (!c.rmem.empty())              sendf("rmem:         %s", joinStr(c.rmem).c_str());
+    if (!c.ecc.empty())               sendf("ecc:          %s", joinStr(c.ecc).c_str());
+    if (!c.ble_service_uuids.empty()) sendf("ble_uuids:    %s", joinStr(c.ble_service_uuids).c_str());
+    if (!c.nvs_namespace.empty())     sendf("nvs_ns:       %s", c.nvs_namespace.c_str());
+
+    // Prerequisites: name + on-fail policy.
     sendf("prereqs:      %u", static_cast<unsigned>(mf->prerequisites.size()));
+    for (const auto& p : mf->prerequisites) {
+        if (p.on_fail.empty()) {
+            sendf("  - %s", p.name.c_str());
+        } else {
+            sendf("  - %s (on_fail=%s)", p.name.c_str(), p.on_fail.c_str());
+        }
+    }
 }
 
 void cmdDelete(const char* args)
@@ -336,9 +389,28 @@ void cmdCmd(const char* args)
 
 enum class PluginUploadKind { Wasm, Aot, Meta, Lang };
 
-// Parses "<id> <total_size> <crc32_hex>" or the legacy "<id> <total_size>"
-// (CRC then 0 -> CRC check skipped). Sets up the partial file, installs the
-// byte interceptor and answers READY.
+// Shared by every upload path (plugin wasm/meta/lang, core lang overlay,
+// generic file): the caller fills s_upload.target_path + the post-finalize
+// flags, then this opens the .partial temp, resets the byte counters, installs
+// the streaming interceptor and answers READY. It is all one vFAT file write.
+void arm_upload(uint32_t crc)
+{
+    s_upload.received     = 0;
+    s_upload.running_crc  = 0xffffffffu;
+    s_upload.expected_crc = crc;
+    s_upload.tmp_path     = s_upload.target_path + ".partial";
+    s_upload.fp = ::cdc::core::openFile(s_upload.tmp_path.c_str(), "wb");
+    if (!s_upload.fp) { send("ERR cannot_open"); return; }
+    s_byte_buffer_pos = 0;
+    s_upload.active = true;
+    touch_upload_activity();
+    rearm_upload_timeout();
+    cdc::serial::getCommandRegistry().setByteInterceptor(upload_byte);
+    send("READY");
+}
+
+// Parses "<id> <total_size> <crc32_hex>". Derives the target path from the
+// kind, then arms the shared upload.
 void start_upload(const char* args, PluginUploadKind kind)
 {
     if (s_upload.active) { send("ERR upload_in_progress"); return; }
@@ -360,13 +432,10 @@ void start_upload(const char* args, PluginUploadKind kind)
         }
     }
 
-    s_upload.id           = id_buf;
-    s_upload.total_size   = static_cast<size_t>(total_size);
-    s_upload.received     = 0;
-    s_upload.running_crc  = 0xffffffffu;
-    s_upload.expected_crc = static_cast<uint32_t>(crc_arg);
-    s_upload.was_lang     = (kind == PluginUploadKind::Lang);
-    s_upload.was_wasm     = (kind == PluginUploadKind::Wasm || kind == PluginUploadKind::Aot);
+    s_upload.id       = id_buf;
+    s_upload.total_size = static_cast<size_t>(total_size);
+    s_upload.was_lang = (kind == PluginUploadKind::Lang);
+    s_upload.was_wasm = (kind == PluginUploadKind::Wasm || kind == PluginUploadKind::Aot);
     switch (kind) {
         case PluginUploadKind::Wasm:
             s_upload.target_path = PluginStorage::wasmPath(s_upload.id);
@@ -383,17 +452,8 @@ void start_upload(const char* args, PluginUploadKind kind)
             s_upload.target_path = PluginStorage::langPath(s_upload.id);
             break;
     }
-    s_upload.tmp_path = s_upload.target_path + ".partial";
 
-    s_upload.fp = ::cdc::core::openFile(s_upload.tmp_path.c_str(), "wb");
-    if (!s_upload.fp) { send("ERR cannot_open"); return; }
-
-    s_byte_buffer_pos = 0;
-    s_upload.active = true;
-    touch_upload_activity();
-    rearm_upload_timeout();
-    cdc::serial::getCommandRegistry().setByteInterceptor(upload_byte);
-    send("READY");
+    arm_upload(static_cast<uint32_t>(crc_arg));
 }
 
 void cmdUpload    (const char* args) { start_upload(args, PluginUploadKind::Wasm); }
@@ -439,47 +499,20 @@ void cmdDebug(const char*)
     sendf("upload_active:    %s", s_upload.active ? "yes" : "no");
 }
 
-constexpr const char* LANG_TARGET_PATH = "/plugins/i18n/lang.json";
-
-void cmdLangUpload(const char* args)
-{
-    if (s_upload.active) { send("ERR upload_in_progress"); return; }
-
-    unsigned long total_size = 0;
-    if (std::sscanf(args, "%lu", &total_size) != 1 || total_size == 0) {
-        send("ERR usage_LANG_UPLOAD_size");
-        return;
-    }
-
-    mkdir("/plugins/i18n", 0755);
-
-    s_upload.id          = "lang";
-    s_upload.total_size  = static_cast<size_t>(total_size);
-    s_upload.received    = 0;
-    s_upload.target_path = LANG_TARGET_PATH;
-    s_upload.tmp_path    = s_upload.target_path + ".partial";
-
-    s_upload.fp = ::cdc::core::openFile(s_upload.tmp_path.c_str(), "wb");
-    if (!s_upload.fp) { send("ERR cannot_open"); return; }
-
-    s_upload.active = true;
-    send("READY");
-}
-
 void cmdLangInfo(const char*)
 {
     auto& i18n = cdc::ui::I18n::instance();
     sendf("lang:    %s", i18n.getLanguageCode().c_str());
-    sendf("path:    %s", LANG_TARGET_PATH);
+    sendf("dir:     %s", cdc::ui::I18n::OVERLAY_DIR);
     sendf("avail:   %u", static_cast<unsigned>(i18n.availableOverlayLanguages().size()));
     for (const auto& c : i18n.availableOverlayLanguages()) {
-        sendf("  - %s", c.c_str());
+        sendf("  - %s", c.code.c_str());
     }
 }
 
 void cmdLangReload(const char*)
 {
-    if (cdc::ui::I18n::instance().loadOverlay(LANG_TARGET_PATH)) send("OK");
+    if (cdc::ui::I18n::instance().loadOverlay()) send("OK");
     else send("ERR reload_failed");
 }
 
@@ -503,9 +536,8 @@ void cmdPluginDispatch(const char* args) {
 }
 
 const cdc::serial::SubCommand kLangSubs[] = {
-    {"UPLOAD", "<size>", "Upload lang.json overlay (binary stream)",        cmdLangUpload},
     {"INFO",   "",       "Show active language and available overlays",     cmdLangInfo},
-    {"RELOAD", "",       "Reload lang.json overlay from /plugins/i18n/",    cmdLangReload},
+    {"RELOAD", "",       "Rescan + reload overlays from /plugins/i18n/",    cmdLangReload},
     {nullptr, nullptr, nullptr, nullptr},
 };
 void cmdLangDispatch(const char* args) {
@@ -514,6 +546,19 @@ void cmdLangDispatch(const char* args) {
 
 }  // namespace
 
+bool beginFileReceive(const char* abs_path, size_t size, uint32_t crc)
+{
+    if (!abs_path || size == 0) { send("ERR bad_args"); return false; }
+    if (s_upload.active)        { send("ERR upload_in_progress"); return false; }
+    s_upload.id          = "";
+    s_upload.total_size  = size;
+    s_upload.was_lang    = false;
+    s_upload.was_wasm    = false;
+    s_upload.target_path = abs_path;
+    arm_upload(crc);
+    return s_upload.active;
+}
+
 void registerPluginSerialCommands()
 {
     auto& reg = cdc::serial::getCommandRegistry();
@@ -521,7 +566,7 @@ void registerPluginSerialCommands()
                          "Plugin manager: LIST/INFO/START/STOP/DELETE/UPLOAD/UPLOAD_META/UPLOAD_LANG/ABORT/DEBUG",
                          cmdPluginDispatch, CMD_MODULE, true, kPluginSubs});
     reg.registerCommand({"LANG",
-                         "i18n overlay: UPLOAD/INFO/RELOAD",
+                         "i18n overlay: INFO/RELOAD",
                          cmdLangDispatch, CMD_MODULE, true, kLangSubs});
     LOG_I(TAG, "PLUGIN and LANG serial commands registered");
 }

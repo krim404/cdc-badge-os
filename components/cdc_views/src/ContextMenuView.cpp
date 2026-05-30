@@ -25,6 +25,9 @@ static constexpr int ITEM_HEIGHT = 16;
 static constexpr int MIN_BOX_WIDTH = 120;
 static constexpr int MAX_BOX_WIDTH = 200;
 
+/** \brief Auto-dismiss timeout after the last interaction (ms). */
+static constexpr uint32_t kMenuTimeoutMs = 60000;
+
 namespace cdc::ui {
 
 /**
@@ -42,6 +45,7 @@ void ContextMenuView::init(const char* title, const ContextMenuItem* items, uint
     }
     selection_ = 0;
     scrollPos_ = 0;
+    lastActivityMs_ = 0;
     dirty_ = true;
 
     LOG_D(TAG, "init: title='%s', items=%d", title ? title : "(null)", itemCount_);
@@ -54,6 +58,9 @@ void ContextMenuView::init(const char* title, const ContextMenuItem* items, uint
  */
 void ContextMenuView::navigate(bool down) {
     if (itemCount_ == 0) return;
+
+    // Restart the inactivity timeout on navigation.
+    lastActivityMs_ = 0;
 
     if (down) {
         if (selection_ < itemCount_ - 1) {
@@ -126,6 +133,21 @@ InputResult ContextMenuView::onKey(char key) {
 
         default:
             return InputResult::IGNORED;
+    }
+}
+
+/**
+ * \brief Auto-dismisses the menu after a period of inactivity.
+ * \param nowMs Current uptime in milliseconds.
+ * \return void
+ */
+void ContextMenuView::onTick(uint32_t nowMs) {
+    if (lastActivityMs_ == 0) {
+        lastActivityMs_ = nowMs;
+        return;
+    }
+    if (nowMs - lastActivityMs_ >= kMenuTimeoutMs) {
+        hideContextMenu();
     }
 }
 

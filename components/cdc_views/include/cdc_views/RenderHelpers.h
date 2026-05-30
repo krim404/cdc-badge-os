@@ -48,12 +48,6 @@ void printTruncated(Gdey029T94* gfx, const char* text, int maxWidthPx);
 uint8_t cp437ToLatin1(uint8_t c);
 
 /**
- * \brief Maps a Unicode codepoint to the equivalent CP437 byte.
- *        ASCII passes through; codepoints without a CP437 mapping return 0.
- */
-uint8_t unicodeToCp437(uint32_t cp);
-
-/**
  * \brief Decodes a UTF-8 string in place to CP437 single bytes. Truncates if
  *        the buffer is too small. Unmapped codepoints are dropped silently.
  * \param buf Mutable null-terminated UTF-8 buffer; written back as CP437.

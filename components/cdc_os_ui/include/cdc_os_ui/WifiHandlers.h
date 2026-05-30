@@ -103,6 +103,54 @@ public:
     bool ensureConnected();
 
     /**
+     * \brief Sets the user/system WiFi intent and applies it immediately.
+     *
+     * Persists the intent flag (NVS key "ena") and either brings WiFi up
+     * (using the saved configuration) or tears it down. Tear-down is deferred
+     * while plugin holders are still active (see \ref acquire); the radio only
+     * goes down once no holder remains and the user intent is off.
+     *
+     * \param enabled `true` to turn WiFi on, `false` to turn it off.
+     * \return When enabling, `true` if WiFi is connected on return; when
+     *         disabling, always `true`.
+     */
+    bool setUserEnabled(bool enabled);
+
+    /**
+     * \brief Returns the persisted user/system WiFi intent.
+     * \return `true` if WiFi was last turned on by the user/system.
+     */
+    bool isUserEnabled() const { return userEnabled_; }
+
+    /**
+     * \brief Acquires a hold on the WiFi connection for a plugin/host caller.
+     *
+     * Increments the holder count and ensures WiFi is connected. While at
+     * least one holder is active, \ref release and \ref setUserEnabled(false)
+     * will not tear the connection down. Pairs with \ref release.
+     *
+     * \return `true` if WiFi is connected on return.
+     */
+    bool acquire();
+
+    /**
+     * \brief Releases a previously acquired WiFi hold.
+     *
+     * Decrements the holder count and tears the connection down only when no
+     * holder remains and the user intent is off. Safe to call when the count
+     * is already zero.
+     */
+    void release();
+
+    /**
+     * \brief Restores the persisted WiFi intent at boot.
+     *
+     * Reloads the configuration and, if the user had WiFi enabled before the
+     * last reboot and a valid configuration exists, reconnects.
+     */
+    void restoreOnBoot();
+
+    /**
      * \brief Synchronizes system time via NTP.
      *
      * When `disconnectAfter` is `true` (default), the function reproduces the
@@ -129,8 +177,14 @@ private:
     WifiWizard wizard_;
     const char* lastError_ = nullptr;
 
+    bool userEnabled_ = false;
+    int holdCount_ = 0;
+
     static bool isValidIpOctet(int val);
     uint32_t parseIpAddress(const char* ip) const;
+
+    void persistUserEnabled(bool enabled);
+    void maybeRelease();
 };
 
 } // namespace cdc::ui

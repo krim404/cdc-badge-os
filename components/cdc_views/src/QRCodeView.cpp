@@ -2,7 +2,7 @@
  * QRCodeView Implementation
  *
  * QR code display with two-pass rendering for optimal sizing.
- * Layout matches legacy implementation: QR on left, text on right.
+ * Layout: QR on left, text on right.
  */
 
 #include "cdc_views/QRCodeView.h"

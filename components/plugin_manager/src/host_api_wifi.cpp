@@ -1,16 +1,16 @@
 /**
  * \file host_api_wifi.cpp
- * \brief WiFi host API - reference-counted ensureConnected/disconnect.
+ * \brief WiFi host API - hold-counted acquire/release.
  *
  * Plugins call host_wifi_request() to ask the host to establish a connection,
- * and host_wifi_release() to give it back. The host counts outstanding
- * requesters so concurrent users (PluginManager prerequisites + plugin code)
- * don't accidentally tear down the connection.
+ * and host_wifi_release() to give it back. WifiHandlers tracks outstanding
+ * holders (plugin code + PluginManager prerequisites) and the user/system
+ * WiFi intent, so concurrent users don't tear down a connection another holder
+ * or the user still needs.
  *
- * The prerequisite system also calls into these functions, so a plugin that
- * declares `wifi_connected` as a prerequisite gets WiFi up before
- * `plugin_on_enter` is called - and does not need to call host_wifi_request
- * itself.
+ * The prerequisite system also acquires a hold for a plugin that declares
+ * `wifi_connected`, so such a plugin gets WiFi up before `plugin_on_enter`
+ * without calling host_wifi_request itself.
  */
 
 #include "cdc_hal/IWifiController.h"
@@ -23,8 +23,6 @@ extern "C" void plg_log_warn(const char* msg);
 
 namespace {
 
-int s_refcount = 0;
-
 cdc::hal::IWifiController* wifi() {
     return cdc::hal::getWifiControllerInstance();
 }
@@ -35,17 +33,12 @@ extern "C" {
 
 int host_wifi_request(uint32_t /*timeout_ms*/)
 {
-    if (cdc::ui::WifiHandlers::instance().ensureConnected()) {
-        ++s_refcount;
-        return HOST_OK;
-    }
-    return HOST_ERR_TIMEOUT;
+    return cdc::ui::WifiHandlers::instance().acquire() ? HOST_OK : HOST_ERR_TIMEOUT;
 }
 
 int host_wifi_release(void)
 {
-    if (s_refcount > 0) --s_refcount;
-    if (s_refcount == 0) cdc::ui::WifiHandlers::instance().disconnect();
+    cdc::ui::WifiHandlers::instance().release();
     return HOST_OK;
 }
 
@@ -86,8 +79,37 @@ int host_wifi_mac(uint8_t* out)
     return w->getMacAddress(out) ? HOST_OK : HOST_ERR_GENERIC;
 }
 
-int host_wifi_start_scan(void)        { return HOST_ERR_NOT_SUPPORTED; }
-bool host_wifi_scan_done(void)        { return false; }
-int host_wifi_scan_results(wifi_scan_result_t*, size_t*) { return HOST_ERR_NOT_SUPPORTED; }
+int host_wifi_start_scan(void)
+{
+    auto* w = wifi();
+    if (!w) return HOST_ERR_NOT_FOUND;
+    return w->startScan() ? HOST_OK : HOST_ERR_GENERIC;
+}
+
+bool host_wifi_scan_done(void)
+{
+    auto* w = wifi();
+    return w ? w->isScanComplete() : false;
+}
+
+int host_wifi_scan_results(wifi_scan_result_t* out, size_t* count)
+{
+    if (!out || !count) return HOST_ERR_INVALID_ARG;
+    auto* w = wifi();
+    if (!w) return HOST_ERR_NOT_FOUND;
+    constexpr uint8_t MAX_SCAN = cdc::hal::IWifiController::MAX_SCAN_RESULTS;
+    uint8_t cap = (*count > MAX_SCAN) ? MAX_SCAN : static_cast<uint8_t>(*count);
+    cdc::hal::WifiScanResult tmp[MAX_SCAN];
+    uint8_t n = w->getScanResults(tmp, cap);
+    for (uint8_t i = 0; i < n; ++i) {
+        std::memcpy(out[i].ssid, tmp[i].ssid, sizeof(out[i].ssid));
+        std::memcpy(out[i].bssid, tmp[i].bssid, sizeof(out[i].bssid));
+        out[i].rssi = tmp[i].rssi;
+        out[i].channel = tmp[i].channel;
+        out[i].auth_mode = static_cast<uint8_t>(tmp[i].security);
+    }
+    *count = n;
+    return HOST_OK;
+}
 
 }  // extern "C"

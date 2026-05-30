@@ -25,7 +25,7 @@ int as_int(const std::map<std::string, std::string>& params,
 PrereqResult prereq_wifi_connected(const PrerequisiteSpec& spec)
 {
     (void)spec;
-    bool ok = cdc::ui::WifiHandlers::instance().ensureConnected();
+    bool ok = cdc::ui::WifiHandlers::instance().acquire();
     return ok ? PrereqResult::Ok : PrereqResult::HardFailed;
 }
 
@@ -100,7 +100,7 @@ PrereqResult check_one(const PrerequisiteSpec& spec)
 void release_one(const std::string& prereq_name)
 {
     if (prereq_name == "wifi_connected") {
-        cdc::ui::WifiHandlers::instance().disconnect();
+        cdc::ui::WifiHandlers::instance().release();
     }
     // Other prerequisites are read-only - no cleanup.
 }

@@ -44,6 +44,12 @@ public:
     [[nodiscard]] int pushList   (const char* title, const ui_item_t* items, uint16_t count,
                                   uint32_t select_action_id, uint32_t menu_action_id,
                                   bool replace_top = false);
+    /// Redraw a single row of the current plugin list in place (partial refresh).
+    [[nodiscard]] int updateListItem(uint16_t index, const ui_item_t* item);
+    /// Insert a row at `index` into the current plugin list (rebuild + partial refresh).
+    [[nodiscard]] int insertListItem(uint16_t index, const ui_item_t* item);
+    /// Remove the row at `index` from the current plugin list (rebuild + partial refresh).
+    [[nodiscard]] int removeListItem(uint16_t index);
     [[nodiscard]] int pushContextMenu(const char* title, const ui_item_t* items, uint16_t count,
                                        uint32_t select_action_id);
     [[nodiscard]] int pushConfirm(const char* text, uint8_t icon, uint32_t action_id);
@@ -85,15 +91,19 @@ private:
 
     struct ListState {
         std::unique_ptr<cdc::ui::ListView> view;
-        PsramUniquePtr<cdc::ui::ListItem>  items;
-        PsramUniquePtr<char>               string_pool;
+        PsramUniquePtr<cdc::ui::ListItem>  items;      // capacity-sized
         PsramUniquePtr<char>               title_buf;
         PsramUniquePtr<char>               footer_buf;
         PsramUniquePtr<char>               empty_buf;
-        PsramUniquePtr<uint32_t>           item_ids;
+        PsramUniquePtr<uint32_t>           item_ids;   // capacity-sized
+        // One owned label buffer per row (size == count); items[i].label points
+        // at labels[i]. Kept aligned with items on insert/remove so rows move in
+        // place without rebuilding a packed string pool or re-init'ing the view.
+        std::vector<PsramUniquePtr<char>>  labels;
         uint32_t                           select_action_id = 0;
         uint32_t                           menu_action_id   = 0;
         uint16_t                           count            = 0;
+        uint16_t                           capacity         = 0;
     };
     struct ContextMenuState {
         std::unique_ptr<cdc::ui::ContextMenuView> view;
@@ -122,6 +132,7 @@ private:
         uint32_t                                   action_id = 0;
         std::string                                last_text;
         int32_t                                    last_int  = 0;
+        bool                                       has_int   = false;
         uint32_t                                   last_date = 0;
         uint16_t                                   last_time = 0;
     };
@@ -148,6 +159,10 @@ private:
     static void onInactivity();
     static void onCanvasKey   (char key, uint32_t focused_widget);
     static void onCanvasWidget(uint32_t widget_id, cdc::ui::CanvasView::WidgetEvent event);
+
+    /// Grow the active list's capacity arrays (and re-point the view) so an
+    /// insert has room. Returns false on OOM. Caller must hold listEditMutex.
+    bool growList(uint16_t need);
 
 public:
     void dispatchContextSelect(uint8_t idx);

@@ -8,8 +8,6 @@ namespace cdc::plugin_manager {
 
 namespace {
 
-const uint8_t  RESERVED_ECC_SLOTS[] = {0, 4};         // Attestation + CA
-
 // ESP-IDF NVS namespace identifier is bounded to 15 chars + NUL.
 constexpr size_t NVS_NAMESPACE_MAX_LEN = 15;
 
@@ -67,12 +65,11 @@ CapabilityCheckResult CapabilityChecker::validate(const PluginManifest& m)
         }
     }
 
-    for (uint8_t slot : m.capabilities.ecc_slots) {
-        for (uint8_t r : RESERVED_ECC_SLOTS) {
-            if (slot == r) {
-                return { CapabilityResult::ReservedEccSlot,
-                         "ECC slot " + std::to_string(slot) + " reserved" };
-            }
+    for (const std::string& name : m.capabilities.ecc) {
+        if (name.empty() || name.size() > HOST_ECC_NAME_MAX) {
+            return { CapabilityResult::EccNameInvalid,
+                     "ecc name '" + name + "' must be 1-" +
+                         std::to_string(HOST_ECC_NAME_MAX) + " chars" };
         }
     }
 

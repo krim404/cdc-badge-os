@@ -62,6 +62,29 @@ static TaskHandle_t s_renderTask = nullptr;
 static volatile bool s_renderPending = false;
 static volatile bool s_renderFull = false;
 
+// Serialises the actual SSD1680 SPI transfer. The render task and any
+// synchronous flushSync() caller (e.g. a plugin host edit running on the
+// plg_tick task) may both drive the panel; the driver is not reentrant.
+static SemaphoreHandle_t s_panelMutex = nullptr;
+
+// The SSD1680 accumulates ghosting across consecutive partial updates and
+// eventually stops applying new partials cleanly. After this many partials a
+// refresh is promoted to a FULL update to reset the panel. Guarded by
+// s_panelMutex.
+static uint16_t s_partialsSinceFull = 0;
+static constexpr uint16_t kMaxPartialsBeforeFull = 8;
+
+// Decide the effective refresh mode, promoting to FULL periodically to clear
+// ghosting. Caller must hold s_panelMutex.
+static bool resolveFullRefresh(bool wantFull) {
+    if (wantFull || s_partialsSinceFull >= kMaxPartialsBeforeFull) {
+        s_partialsSinceFull = 0;
+        return true;
+    }
+    ++s_partialsSinceFull;
+    return false;
+}
+
 /**
  * \brief Applies backlight PWM duty level.
  * \param level Duty value in LEDC resolution units.
@@ -115,7 +138,8 @@ static void renderTask(void* arg) {
         }
 
         if (s_epd_display) {
-            if (doFull) {
+            cdc::core::MutexGuard guard(s_panelMutex);
+            if (resolveFullRefresh(doFull)) {
                 s_epd_display->update();
             } else {
                 // updateWindow takes physical coordinates (128 x 296). HAL
@@ -228,7 +252,8 @@ bool EpaperDisplay::init() {
 
     // Create render task
     s_renderMutex = xSemaphoreCreateMutex();
-    if (!s_renderMutex) {
+    s_panelMutex = xSemaphoreCreateMutex();
+    if (!s_renderMutex || !s_panelMutex) {
         LOG_E(TAG, "Failed to create render mutex");
         state_ = core::ServiceState::ERROR;
         return false;
@@ -311,7 +336,8 @@ void EpaperDisplay::flush(RefreshMode mode) {
  */
 void EpaperDisplay::flushSync(RefreshMode mode) {
     if (!s_epd_display) return;
-    if (mode == RefreshMode::FULL) {
+    cdc::core::MutexGuard guard(s_panelMutex);
+    if (resolveFullRefresh(mode == RefreshMode::FULL)) {
         s_epd_display->update();
     } else {
         // updateWindow takes physical coordinates (128 x 296). HAL WIDTH/HEIGHT

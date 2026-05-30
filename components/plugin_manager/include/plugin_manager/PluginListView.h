@@ -3,8 +3,11 @@
  * \brief Main-menu entry "Plugins" - lists all installed WASM plugins.
  *
  * Y starts the highlighted plugin (delegated to PluginManager::startPlugin).
- * 3 opens a context menu with Start / Info / Delete.
+ * 3 opens a context menu; for a background-running plugin it offers Stop
+ * (force-unload via PluginManager::unloadFromRam).
  * N pops back to the previous menu.
+ *
+ * A background-running plugin is marked with a leading sun icon in the list.
  */
 
 #pragma once
@@ -35,6 +38,10 @@ public:
 
     /// Currently-mounted PluginListView instance, or nullptr if none.
     [[nodiscard]] static PluginListView* active() noexcept;
+
+    /// Rebuild the item list from installed plugins and request a redraw.
+    /// Called after a context-menu Stop changes a plugin's running state.
+    void refresh();
 
 private:
     void rebuildItems();

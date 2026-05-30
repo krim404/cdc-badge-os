@@ -18,10 +18,14 @@
 #include "plugin_manager/PluginListView.h"
 #include "plugin_manager/PluginUiState.h"
 #include "cdc_ui/ViewStack.h"
+#include "cdc_os_ui/SleepManager.h"
 
 extern "C" {
 #include "bh_log.h"
 }
+
+extern "C" void plg_ble_pump(void);
+extern "C" void plg_ble_on_unload(void* plugin);
 
 #include <algorithm>
 #include <cstdio>
@@ -46,6 +50,20 @@ void invokeDeinit(Plugin& plugin)
     } else if (rc != 0) {
         LOG_W(TAG, "plugin_deinit returned %ld for %s",
               static_cast<long>(rc), plugin.id().c_str());
+    }
+}
+
+// Reflect a plugin's `prevent_sleep` capability into the SleepManager. The id
+// string (stable for the plugin's lifetime in RAM) is used as the inhibitor
+// reason, so it must be released before the plugin is unloaded.
+void applySleepInhibitor(const Plugin& plugin, bool on)
+{
+    if (!plugin.manifest().capabilities.prevent_sleep) return;
+    auto& sm = cdc::ui::SleepManager::instance();
+    if (on) {
+        sm.addSleepInhibitor(plugin.id().c_str());
+    } else {
+        sm.removeSleepInhibitor(plugin.id().c_str());
     }
 }
 
@@ -87,8 +105,8 @@ bool PluginManager::init()
           static_cast<unsigned>(ids.size()));
 
     initialised_ = true;
-    loadBackgroundPlugins();
     startTickTask();
+    loadAutoloadPlugins();
     return true;
 }
 
@@ -102,6 +120,7 @@ void PluginManager::deinit()
         for (auto& p : background_) {
             (void)p->callI("plugin_on_exit");
             clearLockscreenRegistrationFor(p.get());
+            plg_ble_on_unload(p.get());
             invokeDeinit(*p);
             Prerequisites::release(*p);
             p->unload();
@@ -143,48 +162,6 @@ PluginManager::getManifest(const std::string& id) const
     return out;
 }
 
-void PluginManager::loadBackgroundPlugins()
-{
-    auto ids = PluginStorage::listPluginIds();
-    for (const auto& id : ids) {
-        auto mf_opt = getManifest(id);
-        if (!mf_opt || !mf_opt->capabilities.background) continue;
-
-        const auto& mf = *mf_opt;
-        auto check = CapabilityChecker::validate(mf);
-        if (!check.ok()) {
-            LOG_W(TAG, "bg %s: capability check failed: %s",
-                  id.c_str(), check.detail.c_str());
-            continue;
-        }
-
-        auto plugin = std::make_unique<Plugin>();
-        if (!plugin->load(id, mf)) { LOG_E(TAG, "bg %s: load failed", id.c_str()); continue; }
-        plugin->loadLangOverlay();
-
-        int32_t init_rc = 0;
-        if (!plugin->callI("plugin_init", {}, &init_rc) || init_rc != 0) {
-            LOG_E(TAG, "bg %s: plugin_init failed (rc=%ld)", id.c_str(),
-                  static_cast<long>(init_rc));
-            plugin->unload();
-            continue;
-        }
-
-        std::string failed_name, on_fail;
-        PrereqResult pr = Prerequisites::walk(*plugin, failed_name, on_fail);
-        if (pr == PrereqResult::HardFailed) {
-            LOG_E(TAG, "bg %s: prereq '%s' aborted", id.c_str(), failed_name.c_str());
-            Prerequisites::release(*plugin);
-            invokeDeinit(*plugin);
-            plugin->unload();
-            continue;
-        }
-
-        background_.push_back(std::move(plugin));
-        LOG_I(TAG, "background plugin %s loaded", id.c_str());
-    }
-}
-
 StartResult PluginManager::startPlugin(const std::string& id_ref)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
@@ -201,6 +178,7 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
             background_.push_back(std::move(active_));
         } else {
             clearLockscreenRegistrationFor(active_.get());
+            plg_ble_on_unload(active_.get());
             invokeDeinit(*active_);
             Prerequisites::release(*active_);
             active_->unload();
@@ -315,6 +293,7 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
     }
 
     active_ = std::move(plugin);
+    applySleepInhibitor(*active_, true);
     LOG_I(TAG, "plugin %s started", id.c_str());
     return StartResult::Ok;
 }
@@ -339,6 +318,7 @@ bool PluginManager::stopActivePlugin()
         return true;
     }
 
+    applySleepInhibitor(*active_, false);
     clearLockscreenRegistrationFor(active_.get());
     invokeDeinit(*active_);
     Prerequisites::release(*active_);
@@ -358,6 +338,7 @@ bool PluginManager::unloadFromRam(const std::string& id)
             cdc::ui::ViewStack::instance().pop();
         }
         PluginUiState::instance().resetForPluginStop();
+        applySleepInhibitor(*active_, false);
         clearLockscreenRegistrationFor(active_.get());
         invokeDeinit(*active_);
         Prerequisites::release(*active_);
@@ -371,7 +352,9 @@ bool PluginManager::unloadFromRam(const std::string& id)
                            });
     if (it == background_.end()) return false;
     LOG_I(TAG, "unloading background plugin %s from RAM", id.c_str());
+    applySleepInhibitor(**it, false);
     clearLockscreenRegistrationFor(it->get());
+    plg_ble_on_unload(it->get());
     invokeDeinit(**it);
     Prerequisites::release(**it);
     (*it)->unload();
@@ -384,18 +367,30 @@ bool PluginManager::reloadBackgroundPlugin(const std::string& id)
     auto manifest = getManifest(id);
     if (!manifest || !manifest->capabilities.background) return false;
 
+    // background:true is not "start at boot": only refresh an instance that is
+    // already running in the background so it picks up a freshly uploaded
+    // binary. An idle plugin stays unloaded until the user starts it manually.
+    if (!isRunningInBackground(id)) return false;
+
     (void)unloadFromRam(id);
 
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!loadIntoBackground(id, *manifest)) return false;
+    LOG_I(TAG, "background plugin %s reloaded", id.c_str());
+    return true;
+}
+
+bool PluginManager::loadIntoBackground(const std::string& id, const PluginManifest& mf)
+{
     auto plugin = std::make_unique<Plugin>();
-    if (!plugin->load(id, *manifest)) {
-        LOG_E(TAG, "reload %s: load failed", id.c_str());
+    if (!plugin->load(id, mf)) {
+        LOG_E(TAG, "bg load %s: load failed", id.c_str());
         return false;
     }
     plugin->loadLangOverlay();
     int32_t init_rc = 0;
     if (!plugin->callI("plugin_init", {}, &init_rc) || init_rc != 0) {
-        LOG_E(TAG, "reload %s: plugin_init failed (rc=%ld)", id.c_str(),
+        LOG_E(TAG, "bg load %s: plugin_init failed (rc=%ld)", id.c_str(),
               static_cast<long>(init_rc));
         plugin->unload();
         return false;
@@ -403,15 +398,37 @@ bool PluginManager::reloadBackgroundPlugin(const std::string& id)
     std::string failed_name, on_fail;
     PrereqResult pr = Prerequisites::walk(*plugin, failed_name, on_fail);
     if (pr == PrereqResult::HardFailed) {
-        LOG_E(TAG, "reload %s: prereq '%s' aborted", id.c_str(), failed_name.c_str());
+        LOG_E(TAG, "bg load %s: prereq '%s' aborted", id.c_str(), failed_name.c_str());
         Prerequisites::release(*plugin);
         invokeDeinit(*plugin);
         plugin->unload();
         return false;
     }
     background_.push_back(std::move(plugin));
-    LOG_I(TAG, "background plugin %s reloaded", id.c_str());
+    applySleepInhibitor(*background_.back(), true);
     return true;
+}
+
+void PluginManager::loadAutoloadPlugins()
+{
+    auto ids = PluginStorage::listPluginIds();
+    ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    for (const auto& id : ids) {
+        auto mf = getManifest(id);
+        if (!mf || !mf->capabilities.autoload) continue;
+        if (isLoaded(id)) continue;
+
+        auto check = CapabilityChecker::validate(*mf);
+        if (!check.ok()) {
+            LOG_W(TAG, "autoload %s rejected: %s", id.c_str(), check.detail.c_str());
+            continue;
+        }
+        if (loadIntoBackground(id, *mf)) {
+            LOG_I(TAG, "autoloaded plugin %s (resident)", id.c_str());
+        } else {
+            LOG_W(TAG, "autoload of %s failed", id.c_str());
+        }
+    }
 }
 
 uint8_t PluginManager::getLockscreenItems(LockscreenItem* out, uint8_t max) const
@@ -467,6 +484,27 @@ bool PluginManager::isLoaded(const std::string& id) const
     return false;
 }
 
+bool PluginManager::isRunningInBackground(const std::string& id) const
+{
+    for (const auto& p : background_) if (p->id() == id) return true;
+    return false;
+}
+
+bool PluginManager::activePluginIsBackground() const
+{
+    return active_ && active_->manifest().capabilities.background;
+}
+
+bool PluginManager::activePluginPreventsSleep() const
+{
+    return active_ && active_->manifest().capabilities.prevent_sleep;
+}
+
+bool PluginManager::hasBackgroundPlugin() const noexcept
+{
+    return !background_.empty();
+}
+
 void PluginManager::dispatchButton(uint32_t button_code)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
@@ -516,6 +554,7 @@ void PluginManager::dispatchTick(uint64_t uptime_ms)
     for (auto& p : background_) {
         (void)p->callI("plugin_on_tick", {lo, hi}, &rc);
     }
+    plg_ble_pump();
 }
 
 void PluginManager::dispatchEventAll(uint32_t event_type, uint32_t value)

@@ -7,16 +7,21 @@
 #include "cdc_ui/I18n.h"
 
 #include "cdc_core/Raii.h"
+#include "cdc_core/Cp437.h"
 #include "cdc_log.h"
 
 #include "cJSON.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+
+#include <dirent.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -29,63 +34,23 @@ namespace {
 constexpr const char* NVS_NAMESPACE = "i18n";
 constexpr const char* NVS_KEY_LANG_CODE = "langc";
 
-/**
- * \brief Maps a Unicode codepoint to its CP437 byte for the display font.
- *        Covers the Western-European set overlay languages use (German umlauts
- *        plus common accents). ASCII passes through; unmapped codepoints return
- *        0 (dropped). Canonical/complete map: `unicodeToCp437` in
- *        cdc_views/RenderHelpers; cdc_ui cannot depend on cdc_views, so this is
- *        a focused copy.
- */
-uint8_t uniToCp437(uint32_t cp) {
-    switch (cp) {
-        case 0x00C4: return 0x8E; case 0x00D6: return 0x99;  // Ae Oe
-        case 0x00DC: return 0x9A; case 0x00E4: return 0x84;  // Ue ae
-        case 0x00F6: return 0x94; case 0x00FC: return 0x81;  // oe ue
-        case 0x00DF: return 0xE1;                            // ss
-        case 0x00E9: return 0x82; case 0x00E8: return 0x8A;  // e-acute e-grave
-        case 0x00E0: return 0x85; case 0x00E2: return 0x83;  // a-grave a-circ
-        case 0x00E7: return 0x87; case 0x00EA: return 0x88;  // c-cedilla e-circ
-        case 0x00EE: return 0x8C; case 0x00F4: return 0x93;  // i-circ o-circ
-        case 0x00FB: return 0x96; case 0x00F1: return 0xA4;  // u-circ n-tilde
-        case 0x00D1: return 0xA5;                            // N-tilde
-        default: return (cp < 0x80) ? static_cast<uint8_t>(cp) : 0;
-    }
+void* psramCjsonMalloc(std::size_t sz) {
+    return heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 }
 
-/**
- * \brief Converts a UTF-8 string (as stored in lang.json) to the CP437 bytes
- *        the display pipeline expects. Invalid/unmapped sequences are skipped.
- */
-std::string utf8ToCp437(const char* s) {
-    std::string out;
-    if (!s) return out;
-    const uint8_t* r = reinterpret_cast<const uint8_t*>(s);
-    while (*r) {
-        uint8_t c = *r;
-        uint32_t cp = 0;
-        uint8_t cont = 0;
-        if ((c & 0x80) == 0) { out.push_back(static_cast<char>(c)); ++r; continue; }
-        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; cont = 1; }
-        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; cont = 2; }
-        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; cont = 3; }
-        else { ++r; continue; }
-        ++r;
-        bool ok = true;
-        for (uint8_t i = 0; i < cont; ++i) {
-            if ((*r & 0xC0) != 0x80) { ok = false; break; }
-            cp = (cp << 6) | (*r & 0x3F);
-            ++r;
-        }
-        if (!ok) continue;
-        uint8_t mapped = uniToCp437(cp);
-        if (mapped) out.push_back(static_cast<char>(mapped));
+/// Routes cJSON allocations to PSRAM for the lifetime of the scope so a parse
+/// tree never touches (or fragments) the scarce internal heap. cJSON hooks are
+/// global; i18n parsing is single-threaded, so swap-and-restore is safe.
+struct PsramCjsonScope {
+    PsramCjsonScope() {
+        cJSON_Hooks hooks{psramCjsonMalloc, std::free};
+        cJSON_InitHooks(&hooks);
     }
-    return out;
-}
+    ~PsramCjsonScope() { cJSON_InitHooks(nullptr); }
+};
 
 /// Core firmware strings, indexed by StringId. Keys are stable
-/// "core.<snake_case>" identifiers and must match assets/i18n/lang.json.
+/// "core.<snake_case>" identifiers and must match assets/i18n/lang_<code>.json.
 constexpr I18nEntry kCoreStrings[] = {
     {"core.main_menu",          "Main Menu"},
     {"core.settings",           "Settings"},
@@ -105,6 +70,15 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.edit",               "Edit"},
     {"core.view",               "View"},
     {"core.select",             "Select"},
+    {"core.open",               "Open"},
+    {"core.add",                "Add"},
+    {"core.new",                "New"},
+    {"core.new_folder",         "New folder"},
+    {"core.new_file",           "New file"},
+    {"core.exists",             "Already exists"},
+    {"core.not_empty",          "Not empty"},
+    {"core.sure",               "Are you sure?"},
+    {"core.vfat",               "vFAT"},
     {"core.yes",                "Yes"},
     {"core.no",                 "No"},
     {"core.on",                 "On"},
@@ -137,6 +111,7 @@ constexpr I18nEntry kCoreStrings[] = {
 
     {"core.brightness",         "Brightness"},
     {"core.language",           "Language"},
+    {"core.lang_name",          "English"},
     {"core.timezone",           "Timezone"},
     {"core.summer_time",        "Daylight Saving"},
     {"core.badge_text",         "Badge Text"},
@@ -156,6 +131,8 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.wifi_connect",       "Connect"},
     {"core.wifi_details",       "Details"},
     {"core.wifi_disconnect",    "Disconnect"},
+    {"core.wifi_on",            "WiFi ON"},
+    {"core.wifi_off",           "WiFi OFF"},
     {"core.wifi_scanning",      "Scanning..."},
     {"core.wifi_no_networks",   "No networks"},
     {"core.wifi_connecting",    "Connecting..."},
@@ -247,6 +224,11 @@ constexpr I18nEntry kCoreStrings[] = {
 
     {"core.wifi_connecting",    "Connecting to"},
     {"core.plugin_loading",     "Loading"},
+    {"core.stop",               "Stop"},
+    {"core.start",              "Start"},
+    {"core.plugin_bg_running",  "Runs in background"},
+    {"core.plugin_not_running", "Not running"},
+    {"core.hint_plugin_list",   "[Y] Start [3] Menu [N] Back"},
     {"core.hint_password_hidden",   "[hold Y] Show [Y] Save"},
     {"core.hint_password_revealed", "[hold Y] Hide [Y] Save"},
 
@@ -314,11 +296,15 @@ const char* I18n::enLookup(const char* key) const
 
 const char* I18n::overlayLookup(const char* key) const
 {
-    if (activeOverlay_.empty()) return nullptr;
-    auto it = std::lower_bound(
-        activeOverlay_.begin(), activeOverlay_.end(), key,
-        [](const OverlayEntry& e, const char* k) { return e.key < k; });
-    if (it != activeOverlay_.end() && it->key == key) return it->value.c_str();
+    if (overlayCount_ == 0 || !overlayRefs_) return nullptr;
+    const OverlayRef* base = overlayRefs_.get();
+    std::size_t lo = 0, hi = overlayCount_;
+    while (lo < hi) {
+        std::size_t mid = lo + (hi - lo) / 2;
+        int c = std::strcmp(base[mid].key, key);
+        if (c == 0) return base[mid].value;
+        if (c < 0) lo = mid + 1; else hi = mid;
+    }
     return nullptr;
 }
 
@@ -346,32 +332,83 @@ bool I18n::setLanguageCode(const char* code)
     if (newLang == currentLang_) return true;
     currentLang_ = std::move(newLang);
 
-    if (currentLang_ != "en") {
-        activeOverlay_.clear();
-        const char* path = overlayJsonPath_.empty()
-                               ? DEFAULT_OVERLAY_PATH
-                               : overlayJsonPath_.c_str();
-        // loadOverlay() fires onChanged_ on success.
-        loadOverlay(path);
-    } else {
-        activeOverlay_.clear();
-        if (onChanged_) onChanged_();
-    }
+    overlayBlob_.reset();
+    overlayRefs_.reset();
+    overlayCount_ = 0;
+    if (currentLang_ != "en") loadActiveOverlayFile();
+    if (onChanged_) onChanged_();
 
     saveLanguageToNvs();
     LOG_I(TAG, "Language changed to %s", currentLang_.c_str());
     return true;
 }
 
-bool I18n::loadOverlay(const char* path)
+void I18n::scanAvailableLanguages()
 {
-    if (!path) return false;
-    overlayJsonPath_ = path;
+    overlayLangs_.clear();
+    DIR* dir = opendir(OVERLAY_DIR);
+    if (!dir) return;
 
-    auto fp = cdc::core::openFile(path, "rb");
+    constexpr const char* kPrefix = "lang_";
+    constexpr size_t kPrefixLen = 5;   // strlen("lang_")
+    constexpr size_t kSuffixLen = 5;   // strlen(".json")
+
+    struct dirent* ent = nullptr;
+    while ((ent = readdir(dir)) != nullptr) {
+        const char* n = ent->d_name;
+        const size_t len = std::strlen(n);
+        if (len <= kPrefixLen + kSuffixLen) continue;
+        if (std::strncmp(n, kPrefix, kPrefixLen) != 0) continue;
+        if (std::strcmp(n + len - kSuffixLen, ".json") != 0) continue;
+
+        std::string code(n + kPrefixLen, len - kPrefixLen - kSuffixLen);
+        if (code.empty() || code == "en") continue;   // English is in-code
+
+        // Default the display name to the code, then try to read the file's
+        // own `core.lang_name` endonym.
+        OverlayLanguage lang{code, code};
+        const std::string path = std::string(OVERLAY_DIR) + "/" + n;
+        if (auto fp = cdc::core::openFile(path.c_str(), "rb")) {
+            std::fseek(fp.get(), 0, SEEK_END);
+            const long size = std::ftell(fp.get());
+            std::fseek(fp.get(), 0, SEEK_SET);
+            if (size > 0 && size <= 1024 * 1024) {
+                auto buf = cdc::core::psramAlloc<char>(static_cast<std::size_t>(size) + 1);
+                if (buf && std::fread(buf.get(), 1, size, fp.get()) == static_cast<size_t>(size)) {
+                    buf.get()[size] = '\0';
+                    PsramCjsonScope cjson_psram;
+                    if (cJSON* root = cJSON_Parse(buf.get())) {
+                        cJSON* nm = cJSON_GetObjectItemCaseSensitive(root, "core.lang_name");
+                        if (cJSON_IsString(nm) && nm->valuestring && *nm->valuestring) {
+                            lang.name = cdc::core::cp437::fromUtf8(nm->valuestring);
+                        }
+                        cJSON_Delete(root);
+                    }
+                }
+            }
+        }
+        overlayLangs_.push_back(std::move(lang));
+    }
+    closedir(dir);
+
+    std::sort(overlayLangs_.begin(), overlayLangs_.end(),
+              [](const OverlayLanguage& a, const OverlayLanguage& b) {
+                  return a.code < b.code;
+              });
+}
+
+bool I18n::loadActiveOverlayFile()
+{
+    overlayBlob_.reset();
+    overlayRefs_.reset();
+    overlayCount_ = 0;
+
+    const std::string path =
+        std::string(OVERLAY_DIR) + "/lang_" + currentLang_ + ".json";
+
+    auto fp = cdc::core::openFile(path.c_str(), "rb");
     if (!fp) {
-        LOG_W(TAG, "Overlay file not found: %s", path);
-        overlayLangs_.clear();
+        LOG_W(TAG, "Overlay file not found: %s", path.c_str());
         return false;
     }
 
@@ -394,51 +431,98 @@ bool I18n::loadOverlay(const char* path)
     }
     buf.get()[size] = '\0';
 
+    // Parse tree + final storage both live in PSRAM.
+    PsramCjsonScope cjson_psram;
     cJSON* root = cJSON_Parse(buf.get());
-    if (!root) {
+    if (!root || !cJSON_IsObject(root)) {
         LOG_E(TAG, "Overlay JSON parse failed near: %s",
               cJSON_GetErrorPtr() ? cJSON_GetErrorPtr() : "<unknown>");
+        if (root) cJSON_Delete(root);
         return false;
     }
 
-    cJSON* translations = cJSON_GetObjectItemCaseSensitive(root, "translations");
-    if (!translations || !cJSON_IsObject(translations)) {
-        LOG_E(TAG, "Overlay missing 'translations' object");
+    // Pass 1: count string entries and the bytes needed for the packed blob
+    // (key + CP437-converted value, each null-terminated).
+    std::size_t count = 0;
+    std::size_t bytes = 0;
+    for (cJSON* e = root->child; e; e = e->next) {
+        if (!cJSON_IsString(e) || !e->string || !e->valuestring) continue;
+        ++count;
+        bytes += std::strlen(e->string) + 1;
+        bytes += cdc::core::cp437::fromUtf8(e->valuestring).size() + 1;
+    }
+    if (count == 0) { cJSON_Delete(root); return true; }
+
+    auto blob = cdc::core::psramAlloc<char>(bytes);
+    auto refs = cdc::core::psramAlloc<OverlayRef>(count);
+    if (!blob || !refs) {
+        LOG_E(TAG, "Overlay storage PSRAM allocation failed");
         cJSON_Delete(root);
         return false;
     }
 
-    overlayLangs_.clear();
-    activeOverlay_.clear();
-
-    cJSON* lang_obj = nullptr;
-    cJSON_ArrayForEach(lang_obj, translations) {
-        if (!cJSON_IsObject(lang_obj) || !lang_obj->string) continue;
-        overlayLangs_.emplace_back(lang_obj->string);
-
-        if (currentLang_ != lang_obj->string) continue;
-
-        cJSON* entry = nullptr;
-        cJSON_ArrayForEach(entry, lang_obj) {
-            if (!cJSON_IsString(entry) || !entry->string || !entry->valuestring) continue;
-            activeOverlay_.push_back({entry->string, utf8ToCp437(entry->valuestring)});
-        }
+    // Pass 2: pack into the PSRAM blob and record key/value pointers.
+    char* w = blob.get();
+    std::size_t idx = 0;
+    for (cJSON* e = root->child; e; e = e->next) {
+        if (!cJSON_IsString(e) || !e->string || !e->valuestring) continue;
+        const std::string val = cdc::core::cp437::fromUtf8(e->valuestring);
+        const std::size_t kl = std::strlen(e->string);
+        refs.get()[idx].key = w;
+        std::memcpy(w, e->string, kl + 1);
+        w += kl + 1;
+        refs.get()[idx].value = w;
+        std::memcpy(w, val.c_str(), val.size() + 1);
+        w += val.size() + 1;
+        ++idx;
     }
-
-    std::sort(activeOverlay_.begin(), activeOverlay_.end(),
-              [](const OverlayEntry& a, const OverlayEntry& b) {
-                  return a.key < b.key;
-              });
-
     cJSON_Delete(root);
 
-    LOG_I(TAG, "Overlay loaded: %u languages, %u entries for '%s'",
+    std::sort(refs.get(), refs.get() + count,
+              [](const OverlayRef& a, const OverlayRef& b) {
+                  return std::strcmp(a.key, b.key) < 0;
+              });
+
+    overlayBlob_  = std::move(blob);
+    overlayRefs_  = std::move(refs);
+    overlayCount_ = count;
+
+    LOG_I(TAG, "Overlay '%s' loaded: %u entries (PSRAM)",
+          currentLang_.c_str(), static_cast<unsigned>(count));
+    return true;
+}
+
+bool I18n::loadOverlay()
+{
+    scanAvailableLanguages();
+
+    bool ok = true;
+    if (currentLang_ != "en") {
+        ok = loadActiveOverlayFile();
+    } else {
+        overlayBlob_.reset();
+        overlayRefs_.reset();
+        overlayCount_ = 0;
+    }
+
+    LOG_I(TAG, "i18n overlay: %u languages available, active='%s'",
           static_cast<unsigned>(overlayLangs_.size()),
-          static_cast<unsigned>(activeOverlay_.size()),
           currentLang_.c_str());
 
     if (onChanged_) onChanged_();
-    return true;
+    return ok;
+}
+
+const char* I18n::languageName(const char* code) const
+{
+    if (!code || !*code || std::strcmp(code, "en") == 0) {
+        const char* en = enLookup("core.lang_name");
+        return en ? en : "English";
+    }
+    for (const auto& l : overlayLangs_) {
+        if (l.code == code) return l.name.c_str();
+    }
+    return code;
 }
 
 void I18n::loadLanguageFromNvs()

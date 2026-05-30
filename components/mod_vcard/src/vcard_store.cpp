@@ -4,6 +4,7 @@
 #include "cdc_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "esp_attr.h"
 
 #include <cctype>
 #include <cstdio>
@@ -33,7 +34,7 @@ typedef struct {
 } // namespace cdc::mod_vcard
 #endif
 
-static vcard_meta_t g_cards[VCARD_MAX_CARDS];
+EXT_RAM_BSS_ATTR static vcard_meta_t g_cards[VCARD_MAX_CARDS];
 static bool g_cards_loaded = false;
 static uint16_t g_card_count = 0;
 

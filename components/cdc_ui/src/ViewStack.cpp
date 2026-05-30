@@ -276,18 +276,24 @@ void ViewStack::render() {
     hal::IDisplay* display = hal::getDisplayInstance();
 
     if (modal_) {
-        // While a modal is shown, the underlying view must not redraw. Tick
-        // updates of the background would erase the modal overlay before the
-        // EPD flush completes. The modal owns the screen until it closes,
-        // at which point hideModal marks the view dirty again.
-        if (!modal_->needsRender()) {
+        // A modal normally owns the screen and only it repaints. But when one
+        // modal directly replaces another, the predecessor's hideModal marks
+        // the base view dirty; repaint the base first (clearing a possibly
+        // larger previous modal) and draw the new modal on top in the same
+        // pass with a full refresh, so nothing of the old modal lingers.
+        bool baseDirty = view->needsRender();
+        if (!baseDirty && !modal_->needsRender()) {
             return;
+        }
+        if (baseDirty) {
+            view->render(false);
+            view->clearDirty();
         }
         modal_->render(true);
         modal_->clearDirty();
         if (display) {
-            hal::RefreshMode mode = needsFullRefresh_ ? hal::RefreshMode::FULL
-                                                      : hal::RefreshMode::PARTIAL;
+            hal::RefreshMode mode = (baseDirty || needsFullRefresh_)
+                ? hal::RefreshMode::FULL : hal::RefreshMode::PARTIAL;
             display->flush(mode);
         }
         needsFullRefresh_ = false;

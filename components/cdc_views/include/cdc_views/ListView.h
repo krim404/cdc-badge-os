@@ -1,6 +1,8 @@
 #pragma once
 
 #include "cdc_ui/IView.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <cstdint>
 
 class Gdey029T94;
@@ -33,8 +35,8 @@ class ListView : public ViewBase {
 public:
     static constexpr uint16_t MAX_ITEMS = 2048;
     static constexpr uint8_t DEFAULT_ITEM_HEIGHT = 18;
-    static constexpr uint8_t MIN_VISIBLE_ITEMS = 2;
-    static constexpr uint8_t MAX_VISIBLE_ITEMS = 8;
+    // The actual visible-row count is the file-scope VISIBLE_ITEMS in
+    // ListView.cpp (fixed at 4 for the 296x128 panel).
 
     /**
      * Selection callback
@@ -80,6 +82,17 @@ public:
     void setOnMenu(MenuCallback callback) { onMenu_ = callback; }
 
     /**
+     * Set an optional recursive mutex serialising buffer access.
+     *
+     * When set (non-null), render(), navigation and the item-buffer reads in
+     * onKey() acquire it. A cross-task writer that re-points the backing array
+     * via init()/repaintPartial() must hold the same mutex around the swap, so
+     * the UI task never reads a half-replaced or freed buffer. Null (default)
+     * disables locking entirely for single-task lists.
+     */
+    void setEditMutex(SemaphoreHandle_t mutex) { editMutex_ = mutex; }
+
+    /**
      * Set optional row renderer
      */
     void setItemRenderer(ItemRenderCallback callback, void* userCtx = nullptr) {
@@ -123,6 +136,47 @@ public:
     const ListItem* getSelectedItem() const;
 
     /**
+     * Redraw a single list row in place and partial-refresh the panel.
+     *
+     * The backing item (in the array passed to init(), whose pointer is stored)
+     * must already be updated by the caller; this only repaints that one row,
+     * avoiding a full render() of the whole view. No-op when the item is not
+     * currently on screen (it will appear on the next scroll/render). Must be
+     * called from the UI task.
+     *
+     * @param index Item index to redraw.
+     */
+    void updateItem(uint16_t index);
+
+    /**
+     * Insert-notify: the backing array (passed to init(), pointer stored) has
+     * had one item inserted at `index` (shifting later items down); the caller
+     * must have done that shift and kept capacity. Bumps the count, keeps the
+     * currently-selected item selected, and partial-repaints. Must be called
+     * from the UI task.
+     *
+     * @param index Position the new item was inserted at (clamped to count).
+     */
+    void insertItem(uint16_t index);
+
+    /**
+     * Remove-notify: the backing array has had the item at `index` removed
+     * (shifting later items up); the caller must have done that shift. Drops
+     * the count, keeps the selection valid, and partial-repaints. Must be
+     * called from the UI task.
+     *
+     * @param index Index of the removed item.
+     */
+    void removeItem(uint16_t index);
+
+    /**
+     * Repaint the visible rows in partial-refresh mode and flush immediately.
+     * For out-of-band updates (after re-pointing items via init()) that should
+     * not wait for the next render cycle. Must be called from the UI task.
+     */
+    void repaintPartial();
+
+    /**
      * Preserve current position (selection and scroll) on next init
      * Call this before init() to retain position when returning to the list
      */
@@ -131,6 +185,7 @@ public:
     // IView implementation
     void render(bool partial) override;
     InputResult onKey(char key) override;
+    InputResult onLongPress(char key) override;
     const char* getName() const override { return "ListView"; }
     const char* getFooterHint() const override;
 
@@ -148,12 +203,16 @@ private:
     void* itemRendererCtx_ = nullptr;
     bool preservePosition_ = false;
     uint8_t itemHeight_ = DEFAULT_ITEM_HEIGHT;
+    // Optional, borrowed (not owned): serialises item-buffer access with a
+    // cross-task writer. Null disables locking. See setEditMutex().
+    SemaphoreHandle_t editMutex_ = nullptr;
 
     // Calculated at render time based on display dimensions
     uint8_t visibleItems_ = 4;
 
     void navigate(bool down);
     void ensureVisible();
+    void drawRow(Gdey029T94* gfx, uint16_t itemIndex, int y, int rowWidth);
 };
 
 // ============================================================================

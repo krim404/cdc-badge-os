@@ -2,7 +2,6 @@
  * T9InputView Implementation
  *
  * Multi-tap text input like classic phones.
- * Based on legacy views.cpp implementation.
  */
 
 #include "cdc_views/T9InputView.h"

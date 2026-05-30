@@ -19,6 +19,16 @@ cdc::ui::ConfirmView::Icon toConfirmIcon(uint8_t icon)
     }
 }
 
+// Single recursive mutex shared by every plugin list view. Only one plugin
+// list is the current top view at a time, and all edits target that list, so
+// one process-lifetime lock suffices. It serialises the plg_tick-task buffer
+// swaps against the UI-task render/key reads (see ListView::setEditMutex).
+SemaphoreHandle_t listEditMutex()
+{
+    static SemaphoreHandle_t m = xSemaphoreCreateRecursiveMutex();
+    return m;
+}
+
 }  // namespace
 
 PluginUiState& PluginUiState::instance() noexcept
@@ -157,6 +167,7 @@ void PluginUiState::onSliderSave(uint16_t value)
 {
     auto& s = instance();
     s.input_.last_int = static_cast<int32_t>(value);
+    s.input_.has_int = true;
     uint32_t action = s.input_.action_id;
     s.input_.action_id = 0;
     PluginManager::instance().dispatchAction(action, value, 1);
@@ -189,6 +200,7 @@ void PluginUiState::onColorSave(uint8_t r, uint8_t g, uint8_t b)
                     | (static_cast<uint32_t>(g) << 8)
                     |  static_cast<uint32_t>(b);
     s.input_.last_int = static_cast<int32_t>(packed);
+    s.input_.has_int = true;
     uint32_t action = s.input_.action_id;
     s.input_.action_id = 0;
     PluginManager::instance().dispatchAction(action, packed, 1);
@@ -300,35 +312,28 @@ int PluginUiState::pushList(const char* title, const ui_item_t* items, uint16_t 
     if (!title || (!items && count > 0)) return HOST_ERR_INVALID_ARG;
 
     auto next = std::make_unique<ListState>();
-    size_t pool_bytes = 0;
-    for (uint16_t i = 0; i < count; ++i) {
-        if (items[i].label) pool_bytes += std::strlen(items[i].label) + 1;
-    }
-
     if (count > 0) {
         next->items    = psramAlloc<cdc::ui::ListItem>(count);
         next->item_ids = psramAlloc<uint32_t>(count);
         if (!next->items || !next->item_ids) {
             return HOST_ERR_NO_MEMORY;
         }
+        next->labels.reserve(count);
     }
-    next->string_pool = psramAlloc<char>(pool_bytes + 1);
-    if (!next->string_pool) {
-        return HOST_ERR_NO_MEMORY;
-    }
+    next->capacity = count;
 
-    char* dst = next->string_pool.get();
     for (uint16_t i = 0; i < count; ++i) {
         const char* src = items[i].label ? items[i].label : "";
         size_t n = std::strlen(src);
-        std::memcpy(dst, src, n);
-        dst[n] = '\0';
-        next->items[i].label        = dst;
+        auto buf = psramAlloc<char>(n + 1);
+        if (!buf) return HOST_ERR_NO_MEMORY;
+        std::memcpy(buf.get(), src, n + 1);
+        next->items[i].label        = buf.get();
         next->items[i].icon         = items[i].icon;
         next->items[i].iconDisabled = items[i].icon_disabled;
         next->items[i].userData     = next.get();
         next->item_ids[i]           = items[i].item_id;
-        dst += n + 1;
+        next->labels.push_back(std::move(buf));
     }
     next->count            = count;
     next->select_action_id = select_action_id;
@@ -338,6 +343,7 @@ int PluginUiState::pushList(const char* title, const ui_item_t* items, uint16_t 
     if (!next->title_buf) return HOST_ERR_NO_MEMORY;
     std::memcpy(next->title_buf.get(), title, title_len + 1);
     next->view = std::make_unique<cdc::ui::ListView>();
+    next->view->setEditMutex(listEditMutex());
     next->view->init(next->title_buf.get(), next->items.get(), count);
     next->view->setOnSelect(&PluginUiState::onListSelect);
     if (menu_action_id != 0) next->view->setOnMenu(&PluginUiState::onListMenu);
@@ -353,6 +359,135 @@ int PluginUiState::pushList(const char* title, const ui_item_t* items, uint16_t 
         list_graveyard_.push_back(std::move(list_));
     }
     list_ = std::move(next);
+    return HOST_OK;
+}
+
+int PluginUiState::updateListItem(uint16_t index, const ui_item_t* item)
+{
+    if (!item) return HOST_ERR_INVALID_ARG;
+    if (!list_ || !list_->view || !list_->items || !list_->item_ids) {
+        return HOST_ERR_NOT_FOUND;
+    }
+    if (index >= list_->count) return HOST_ERR_INVALID_ARG;
+
+    // Only mutate while our list is the active top view.
+    if (cdc::ui::ViewStack::instance().current() != list_->view.get()) {
+        return HOST_ERR_NOT_FOUND;
+    }
+
+    // The packed string_pool labels cannot grow in place, so the new label
+    // lives in a per-item override buffer owned by this ListState.
+    const char* src = item->label ? item->label : "";
+    size_t n = std::strlen(src);
+    auto buf = psramAlloc<char>(n + 1);
+    if (!buf) return HOST_ERR_NO_MEMORY;
+    std::memcpy(buf.get(), src, n + 1);
+
+    {
+        // Hold the list edit lock so the UI task does not read items_[index]
+        // while its label pointer is being re-pointed at the new buffer.
+        cdc::core::RecursiveMutexGuard guard(listEditMutex());
+        list_->items[index].label        = buf.get();
+        list_->items[index].icon         = item->icon;
+        list_->items[index].iconDisabled = item->icon_disabled;
+        list_->item_ids[index]           = item->item_id;
+        list_->labels[index]             = std::move(buf);
+
+        list_->view->updateItem(index);
+    }
+    return HOST_OK;
+}
+
+bool PluginUiState::growList(uint16_t need)
+{
+    if (!list_) return false;
+    if (list_->capacity >= need) return true;
+
+    uint16_t newCap = static_cast<uint16_t>(list_->capacity + list_->capacity / 2 + 8);
+    if (newCap < need) newCap = need;
+    if (newCap > cdc::ui::ListView::MAX_ITEMS) newCap = cdc::ui::ListView::MAX_ITEMS;
+
+    auto ni  = psramAlloc<cdc::ui::ListItem>(newCap);
+    auto nid = psramAlloc<uint32_t>(newCap);
+    if (!ni || !nid) return false;
+    for (uint16_t i = 0; i < list_->count; ++i) {
+        ni[i]  = list_->items[i];
+        nid[i] = list_->item_ids[i];
+    }
+    list_->items    = std::move(ni);
+    list_->item_ids = std::move(nid);
+    list_->capacity = newCap;
+    // The backing array moved, so the view must be re-pointed. This is the only
+    // init on the insert path and amortises to O(log count) over many inserts.
+    list_->view->preservePosition();
+    list_->view->init(list_->title_buf ? list_->title_buf.get() : "",
+                      list_->items.get(), list_->count);
+    return true;
+}
+
+int PluginUiState::insertListItem(uint16_t index, const ui_item_t* item)
+{
+    if (!item) return HOST_ERR_INVALID_ARG;
+    if (!list_ || !list_->view) {
+        return HOST_ERR_NOT_FOUND;
+    }
+    if (cdc::ui::ViewStack::instance().current() != list_->view.get()) {
+        return HOST_ERR_NOT_FOUND;
+    }
+    const uint16_t oldCount = list_->count;
+    if (oldCount >= cdc::ui::ListView::MAX_ITEMS) return HOST_ERR_NO_MEMORY;
+    if (index > oldCount) index = oldCount;
+
+    const char* src = item->label ? item->label : "";
+    size_t n = std::strlen(src);
+    auto buf = psramAlloc<char>(n + 1);
+    if (!buf) return HOST_ERR_NO_MEMORY;
+    std::memcpy(buf.get(), src, n + 1);
+
+    {
+        // Serialise with the UI task: it must not read items_ mid-shift.
+        cdc::core::RecursiveMutexGuard guard(listEditMutex());
+        if (!growList(static_cast<uint16_t>(oldCount + 1))) return HOST_ERR_NO_MEMORY;
+        // Shift rows [index, oldCount) up by one within the capacity array.
+        for (uint16_t r = oldCount; r > index; --r) {
+            list_->items[r]    = list_->items[r - 1];
+            list_->item_ids[r] = list_->item_ids[r - 1];
+        }
+        list_->labels.insert(list_->labels.begin() + index, std::move(buf));
+        list_->items[index].label        = list_->labels[index].get();
+        list_->items[index].icon         = item->icon;
+        list_->items[index].iconDisabled = item->icon_disabled;
+        list_->items[index].userData     = list_.get();
+        list_->item_ids[index]           = item->item_id;
+        list_->count = static_cast<uint16_t>(oldCount + 1);
+        list_->view->insertItem(index);
+    }
+    return HOST_OK;
+}
+
+int PluginUiState::removeListItem(uint16_t index)
+{
+    if (!list_ || !list_->view || !list_->items || !list_->item_ids) {
+        return HOST_ERR_NOT_FOUND;
+    }
+    if (cdc::ui::ViewStack::instance().current() != list_->view.get()) {
+        return HOST_ERR_NOT_FOUND;
+    }
+    const uint16_t oldCount = list_->count;
+    if (index >= oldCount) return HOST_ERR_INVALID_ARG;
+
+    {
+        // Serialise with the UI task: it must not read items_ mid-shift.
+        cdc::core::RecursiveMutexGuard guard(listEditMutex());
+        list_->labels.erase(list_->labels.begin() + index);
+        // Shift rows (index, oldCount) down by one within the capacity array.
+        for (uint16_t r = index; r + 1 < oldCount; ++r) {
+            list_->items[r]    = list_->items[r + 1];
+            list_->item_ids[r] = list_->item_ids[r + 1];
+        }
+        list_->count = static_cast<uint16_t>(oldCount - 1);
+        list_->view->removeItem(index);
+    }
     return HOST_OK;
 }
 
@@ -524,8 +659,10 @@ int PluginUiState::consumeInputText(char* out, size_t out_size)
 int PluginUiState::consumeInputInt(int32_t* out)
 {
     if (!out) return HOST_ERR_INVALID_ARG;
+    if (!input_.has_int) return HOST_ERR_NOT_FOUND;  // no int input pending
     *out = input_.last_int;
     input_.last_int = 0;
+    input_.has_int = false;
     return HOST_OK;
 }
 

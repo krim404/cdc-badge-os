@@ -5,6 +5,7 @@
 
 #include "plugin_manager/host_api.h"
 #include "cdc_hal/ISecureElement.h"
+#include "HexUtil.h"
 
 #include "mbedtls/sha256.h"
 #include "mbedtls/md.h"
@@ -19,13 +20,6 @@
 namespace {
 
 const char BASE32_ALPHABET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-
-int hex_val(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
 
 }  // namespace
 
@@ -97,21 +91,24 @@ int host_aes_gcm_decrypt(const uint8_t* key, const uint8_t* iv,
 int host_base32_encode(const uint8_t* in, size_t in_len, char* out, size_t out_size)
 {
     if (!out || (!in && in_len > 0)) return HOST_ERR_INVALID_ARG;
-    size_t needed = ((in_len + 4) / 5) * 8 + 1;
+    // RFC 4648 base32, no padding: ceil(in_len*8 / 5) symbols + NUL. Streaming
+    // emit (symmetric to host_base32_decode), so a partial final group yields
+    // exactly its symbols instead of a zero-padded full 8-symbol group.
+    size_t needed = (in_len * 8 + 4) / 5 + 1;
     if (out_size < needed) return HOST_ERR_NO_MEMORY;
     size_t out_pos = 0;
-    for (size_t i = 0; i < in_len; i += 5) {
-        uint8_t buf[5] = {0};
-        size_t n = (in_len - i) < 5 ? (in_len - i) : 5;
-        std::memcpy(buf, in + i, n);
-        out[out_pos++] = BASE32_ALPHABET[ buf[0] >> 3];
-        out[out_pos++] = BASE32_ALPHABET[((buf[0] & 0x07) << 2) | (buf[1] >> 6)];
-        out[out_pos++] = BASE32_ALPHABET[(buf[1] >> 1) & 0x1F];
-        out[out_pos++] = BASE32_ALPHABET[((buf[1] & 0x01) << 4) | (buf[2] >> 4)];
-        out[out_pos++] = BASE32_ALPHABET[((buf[2] & 0x0F) << 1) | (buf[3] >> 7)];
-        out[out_pos++] = BASE32_ALPHABET[(buf[3] >> 2) & 0x1F];
-        out[out_pos++] = BASE32_ALPHABET[((buf[3] & 0x03) << 3) | (buf[4] >> 5)];
-        out[out_pos++] = BASE32_ALPHABET[buf[4] & 0x1F];
+    int bits = 0;
+    uint32_t buffer = 0;
+    for (size_t i = 0; i < in_len; ++i) {
+        buffer = (buffer << 8) | in[i];
+        bits += 8;
+        while (bits >= 5) {
+            out[out_pos++] = BASE32_ALPHABET[(buffer >> (bits - 5)) & 0x1F];
+            bits -= 5;
+        }
+    }
+    if (bits > 0) {
+        out[out_pos++] = BASE32_ALPHABET[(buffer << (5 - bits)) & 0x1F];
     }
     out[out_pos] = '\0';
     return HOST_OK;
@@ -181,8 +178,8 @@ int host_hex_decode(const char* in, size_t in_len, uint8_t* out, size_t out_size
     size_t need = in_len / 2;
     if (out_size < need) return HOST_ERR_NO_MEMORY;
     for (size_t i = 0; i < need; ++i) {
-        int hi = hex_val(in[i * 2]);
-        int lo = hex_val(in[i * 2 + 1]);
+        int hi = cdc::plugin_manager::hex_val(in[i * 2]);
+        int lo = cdc::plugin_manager::hex_val(in[i * 2 + 1]);
         if (hi < 0 || lo < 0) return HOST_ERR_INVALID_ARG;
         out[i] = static_cast<uint8_t>((hi << 4) | lo);
     }

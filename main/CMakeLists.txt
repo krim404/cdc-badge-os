@@ -15,6 +15,7 @@ set(MODULES
     mod_ble_serial
     mod_nvsedit
     mod_hid
+    mod_vfat
 )
 # =============================================================================
 

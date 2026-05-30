@@ -22,9 +22,32 @@ namespace cdc::ui {
 
 /** \brief Expert menu sizing constants. */
 
-static constexpr uint8_t EXPERT_FIXED_COUNT = 4;
 static constexpr uint8_t EXPERT_MAX_ITEMS = 12;
 static constexpr uint8_t MODULES_VIEW_MAX = 16;
+
+// Forward declarations so the fixed-entry tables can name their handlers
+// (defined later in this file; showModulesView comes from AppUiInternal.h).
+static void runSystemTest();
+static void runTropicCacheRebuild();
+static void runTropicCacheCleanup();
+void rebootIntoBootloader();
+
+/// Fixed expert entries above (top) and below (bottom) the dynamic module
+/// entries. The counts derive from the table sizes via sizeof, so adding or
+/// removing a row needs no separate counter update.
+struct FixedExpertEntry { const char* key; void (*action)(); };
+static const FixedExpertEntry kExpertTop[] = {
+    {"core.hardware_info", runSystemTest},
+    {"core.modules",       showModulesView},
+};
+static const FixedExpertEntry kExpertBottom[] = {
+    {"core.tr01_cache_rebuild", runTropicCacheRebuild},
+    {"core.tr01_cache_cleanup", runTropicCacheCleanup},
+    {"core.bootloader",         rebootIntoBootloader},
+};
+static constexpr uint8_t EXPERT_TOP_COUNT    = sizeof(kExpertTop) / sizeof(kExpertTop[0]);
+static constexpr uint8_t EXPERT_BOTTOM_COUNT = sizeof(kExpertBottom) / sizeof(kExpertBottom[0]);
+static constexpr uint8_t EXPERT_FIXED_COUNT  = EXPERT_TOP_COUNT + EXPERT_BOTTOM_COUNT;
 
 /** \brief Static view pointers and menu item storage for expert/module views. */
 
@@ -228,32 +251,32 @@ void showExpertMenu() {
  */
 static void rebuildExpertMenu() {
     auto& moduleReg = core::ModuleRegistry::instance();
+    uint8_t n = 0;
 
-    s_expertItems[0] = {ui::tr("core.hardware_info"), 0, false, nullptr};
-    s_expertItems[1] = {ui::tr("core.tr01_cache_rebuild"), 0, false, nullptr};
-    s_expertItems[2] = {ui::tr("core.tr01_cache_cleanup"), 0, false, nullptr};
-    s_expertItems[3] = {ui::tr("core.bootloader"), 0, false, nullptr};
+    // Top fixed entries (system test, modules), then the dynamic module
+    // entries (e.g. vFAT), then the bottom fixed entries (TROPIC, bootloader).
+    for (uint8_t i = 0; i < EXPERT_TOP_COUNT; i++)
+        s_expertItems[n++] = {ui::tr(kExpertTop[i].key), 0, false, nullptr};
 
-    s_expertModuleCount = moduleReg.getMenuItems(
+    uint8_t rawModules = moduleReg.getMenuItems(
         core::MenuLocation::EXPERT_MENU,
         s_expertModuleItems,
         EXPERT_MAX_ITEMS - EXPERT_FIXED_COUNT
     );
-
-    for (uint8_t i = 0; i < s_expertModuleCount; i++) {
+    uint8_t visible = 0;
+    for (uint8_t i = 0; i < rawModules; i++) {
         const auto& item = s_expertModuleItems[i];
         if (item.isVisible && !item.isVisible()) continue;
-
-        s_expertItems[EXPERT_FIXED_COUNT + i] = {
-            item.label,
-            0,
-            false,
-            nullptr
-        };
+        s_expertModuleItems[visible] = item;  // compact visible entries
+        s_expertItems[n++] = {item.label, 0, false, nullptr};
+        visible++;
     }
+    s_expertModuleCount = visible;
 
-    uint8_t totalCount = EXPERT_FIXED_COUNT + s_expertModuleCount;
-    s_expertMenu->init(ui::tr("core.expert"), s_expertItems, totalCount);
+    for (uint8_t i = 0; i < EXPERT_BOTTOM_COUNT; i++)
+        s_expertItems[n++] = {ui::tr(kExpertBottom[i].key), 0, false, nullptr};
+
+    s_expertMenu->init(ui::tr("core.expert"), s_expertItems, n);
 }
 
 /**
@@ -300,25 +323,26 @@ void rebootIntoBootloader() {
 static void onExpertMenuSelect(uint16_t index, void* userData) {
     (void)userData;
 
-    if (index < EXPERT_FIXED_COUNT) {
-        switch (index) {
-            case 0: runSystemTest(); break;
-            case 1: runTropicCacheRebuild(); break;
-            case 2: runTropicCacheCleanup(); break;
-            case 3: rebootIntoBootloader(); break;
-        }
+    if (index < EXPERT_TOP_COUNT) {
+        kExpertTop[index].action();
         return;
     }
 
-    uint8_t moduleIdx = index - EXPERT_FIXED_COUNT;
-    if (moduleIdx < s_expertModuleCount) {
-        const auto& item = s_expertModuleItems[moduleIdx];
+    uint16_t modIdx = index - EXPERT_TOP_COUNT;
+    if (modIdx < s_expertModuleCount) {
+        const auto& item = s_expertModuleItems[modIdx];
         if (item.getView) {
             IView* view = item.getView();
             if (view) {
                 ViewStack::instance().push(view);
             }
         }
+        return;
+    }
+
+    uint16_t botIdx = modIdx - s_expertModuleCount;
+    if (botIdx < EXPERT_BOTTOM_COUNT) {
+        kExpertBottom[botIdx].action();
     }
 }
 

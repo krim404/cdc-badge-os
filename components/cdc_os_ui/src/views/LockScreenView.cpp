@@ -5,6 +5,7 @@
  */
 
 #include "cdc_os_ui/views/LockScreenView.h"
+#include "cdc_os_ui/WifiHandlers.h"
 #include "cdc_ui/I18n.h"
 #include "cdc_views/ContextMenuView.h"
 #include "cdc_views/KeyCodes.h"
@@ -252,12 +253,26 @@ static void onLightMenuCallback() {
 }
 
 /**
+ * \brief Context-menu callback toggling WiFi on/off via the user intent flag.
+ */
+static void onWifiToggleCallback() {
+    hideContextMenu();
+    auto& wifi = WifiHandlers::instance();
+    wifi.setUserEnabled(!wifi.isConnected());
+}
+
+/**
  * \brief Storage for dynamic context-menu items contributed by modules.
  */
 static constexpr uint8_t MAX_CONTEXT_ITEMS = 12;
 static constexpr uint8_t MAX_PLUGIN_ITEMS  = 4;
+// Number of module context-menu wrapper callbacks defined below. The module
+// item array and the registry request are both bounded by this so that
+// s_moduleCallbacks is never indexed out of range. Keep in sync with the
+// s_moduleCallbacks[] table (enforced by static_assert after it).
+static constexpr uint8_t MAX_MODULE_CONTEXT_ITEMS = 7;
 static ContextMenuItem s_contextItems[MAX_CONTEXT_ITEMS];
-static core::LockScreenContextItem s_moduleContextItems[MAX_CONTEXT_ITEMS - 1];
+static core::LockScreenContextItem s_moduleContextItems[MAX_MODULE_CONTEXT_ITEMS];
 static uint8_t s_moduleContextCount = 0;
 
 static cdc::plugin_manager::PluginManager::LockscreenItem s_pluginContextItems[MAX_PLUGIN_ITEMS];
@@ -304,6 +319,8 @@ static void (*const s_moduleCallbacks[])() = {
     moduleContextCallback3, moduleContextCallback4, moduleContextCallback5,
     moduleContextCallback6
 };
+static_assert(sizeof(s_moduleCallbacks) / sizeof(s_moduleCallbacks[0]) == MAX_MODULE_CONTEXT_ITEMS,
+              "module context callback count must match MAX_MODULE_CONTEXT_ITEMS");
 
 static void pluginContextCallback0() {
     cdc::plugin_manager::PluginManager::instance().triggerLockscreenItem(s_pluginContextItems[0]);
@@ -335,16 +352,21 @@ static void (*const s_pluginCallbacks[MAX_PLUGIN_ITEMS])() = {
  * \return Input consumption result.
  */
 InputResult LockScreenView::onKey(char key) {
-    // KEY_BACK ('3') opens context menu for light toggle + module items
-    if (key == KEY_BACK) {
+    // KEY_MENU ('3') opens context menu for light toggle + module items
+    if (key == KEY_MENU) {
         uint8_t itemCount = 0;
 
         // First item: Light toggle (built-in)
         s_contextItems[itemCount++] = {ui::tr("core.light"), onLightMenuCallback};
 
+        // Second item: WiFi toggle (built-in); label reflects current state
+        const char* wifiLabel = WifiHandlers::instance().isConnected()
+            ? ui::tr("core.wifi_off") : ui::tr("core.wifi_on");
+        s_contextItems[itemCount++] = {wifiLabel, onWifiToggleCallback};
+
         // Get module items from registry
         auto& moduleReg = core::ModuleRegistry::instance();
-        s_moduleContextCount = moduleReg.getLockScreenContextItems(s_moduleContextItems, MAX_CONTEXT_ITEMS - 1);
+        s_moduleContextCount = moduleReg.getLockScreenContextItems(s_moduleContextItems, MAX_MODULE_CONTEXT_ITEMS);
 
         // Add module items to context menu
         for (uint8_t i = 0; i < s_moduleContextCount && itemCount < MAX_CONTEXT_ITEMS; i++) {
@@ -531,7 +553,7 @@ void LockScreenView::renderStatusIcons(void* gfxPtr, int x, int y) {
         iconX -= iconSpacing;
     }
 
-    // USB icon (simplified USB trident from legacy)
+    // USB icon (simplified USB trident)
     if ((statusIcons_ & StatusIcon::USB) != StatusIcon::NONE) {
         int ux = iconX, uy = y;
         // Main stem
@@ -589,6 +611,22 @@ void LockScreenView::renderStatusIcons(void* gfxPtr, int x, int y) {
         gfx->drawPixel(cx + 3, cy, EPD_BLACK);
         gfx->drawPixel(cx + 5, cy + 1, EPD_BLACK);
         gfx->drawPixel(cx + 6, cy, EPD_BLACK);
+        iconX -= iconSpacing;
+    }
+
+    // Background plugin running - play triangle inside a square frame
+    if ((statusIcons_ & StatusIcon::BACKGROUND) != StatusIcon::NONE) {
+        int bx = iconX, by = y;
+        gfx->drawRect(bx, by + 1, 11, 11, EPD_BLACK);
+        const int cy = by + 6;
+        for (int row = 0; row <= 8; row++) {
+            int rowY = by + 2 + row;
+            int r = rowY > cy ? rowY - cy : cy - rowY;
+            int rightX = bx + 8 - r;
+            if (rightX >= bx + 3) {
+                gfx->drawLine(bx + 3, rowY, rightX, rowY, EPD_BLACK);
+            }
+        }
         iconX -= iconSpacing;
     }
     (void)iconX;

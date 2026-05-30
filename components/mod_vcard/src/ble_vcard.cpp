@@ -268,6 +268,12 @@ static void sendStatusNotification(uint16_t connHandle, uint8_t status) {
 static void onServiceDiscovered(uint16_t connHandle,
                                  const IBluetoothController::DiscoveredService* service,
                                  bool complete) {
+    // Service-discovery callbacks are shared across all GATT-client users, so
+    // ignore any discovery that is not part of our own active client exchange.
+    if (s_exchange_state != VCARD_EXCHANGE_DISCOVERING ||
+        connHandle != s_client_conn_handle) {
+        return;
+    }
     if (!complete) return;
 
     if (!service) {

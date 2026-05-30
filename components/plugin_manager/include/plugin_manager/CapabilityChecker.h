@@ -26,7 +26,7 @@ enum class CapabilityResult {
     ApiLevelMismatch,
     LinearMemoryOutOfRange,
     RmemNameInvalid,
-    ReservedEccSlot,
+    EccNameInvalid,
     GpioPinNotAllowed,
     GpioPinAlreadyHeld,
     BleServiceUuidConflict,

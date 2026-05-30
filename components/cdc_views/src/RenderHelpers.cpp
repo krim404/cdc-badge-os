@@ -5,6 +5,7 @@
  */
 
 #include "cdc_views/RenderHelpers.h"
+#include "cdc_core/Cp437.h"
 #include <goodisplay/gdey029T94.h>
 #include <algorithm>
 #include <cstring>
@@ -245,38 +246,6 @@ uint8_t cp437ToLatin1(uint8_t c) {
     }
 }
 
-uint8_t unicodeToCp437(uint32_t cp) {
-    switch (cp) {
-        case 0x00A1: return 0xAD; case 0x00A2: return 0x9B;
-        case 0x00A3: return 0x9C; case 0x00A5: return 0x9D;
-        case 0x00A6: return 0x7C; case 0x00A7: return 0x15;
-        case 0x00AA: return 0xA6; case 0x00AB: return 0xAE;
-        case 0x00AC: return 0xAA; case 0x00B0: return 0xF8;
-        case 0x00B1: return 0xF1; case 0x00B2: return 0xFD;
-        case 0x00B5: return 0xE6; case 0x00BA: return 0xA7;
-        case 0x00BB: return 0xAF; case 0x00BC: return 0xAC;
-        case 0x00BD: return 0xAB; case 0x00BF: return 0xA8;
-        case 0x00C4: return 0x8E; case 0x00C5: return 0x8F;
-        case 0x00C6: return 0x92; case 0x00C7: return 0x80;
-        case 0x00C9: return 0x90; case 0x00D1: return 0xA5;
-        case 0x00D6: return 0x99; case 0x00DC: return 0x9A;
-        case 0x00DF: return 0xE1; case 0x00E0: return 0x85;
-        case 0x00E1: return 0xA0; case 0x00E2: return 0x83;
-        case 0x00E3: return 0x83; case 0x00E4: return 0x84;
-        case 0x00E5: return 0x86; case 0x00E6: return 0x91;
-        case 0x00E7: return 0x87; case 0x00E8: return 0x8A;
-        case 0x00E9: return 0x82; case 0x00EA: return 0x88;
-        case 0x00EB: return 0x89; case 0x00EC: return 0x8D;
-        case 0x00ED: return 0xA1; case 0x00EE: return 0x8C;
-        case 0x00EF: return 0x8B; case 0x00F1: return 0xA4;
-        case 0x00F2: return 0x95; case 0x00F3: return 0xA2;
-        case 0x00F4: return 0x93; case 0x00F6: return 0x94;
-        case 0x00F7: return 0xF6; case 0x00F9: return 0x97;
-        case 0x00FA: return 0xA3; case 0x00FB: return 0x96;
-        case 0x00FC: return 0x81; case 0x00FF: return 0x98;
-        default: return (cp < 0x80) ? static_cast<uint8_t>(cp) : 0;
-    }
-}
 
 namespace {
 
@@ -386,29 +355,8 @@ bool parseEntity(const char* p, uint32_t* cp_out, const char** after) {
 
 void utf8ToCp437Inplace(char* buf) {
     if (!buf) return;
-    uint8_t* r = reinterpret_cast<uint8_t*>(buf);
-    uint8_t* w = r;
-    while (*r) {
-        uint8_t c = *r;
-        uint32_t cp = 0;
-        uint8_t cont = 0;
-        if ((c & 0x80) == 0) { *w++ = c; ++r; continue; }
-        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; cont = 1; }
-        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; cont = 2; }
-        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; cont = 3; }
-        else { ++r; continue; }
-        ++r;
-        bool ok = true;
-        for (uint8_t i = 0; i < cont; i++) {
-            if ((*r & 0xC0) != 0x80) { ok = false; break; }
-            cp = (cp << 6) | (*r & 0x3F);
-            ++r;
-        }
-        if (!ok) continue;
-        uint8_t mapped = unicodeToCp437(cp);
-        if (mapped) *w++ = mapped;
-    }
-    *w = '\0';
+    std::string cp437 = cdc::core::cp437::fromUtf8(buf);
+    std::memcpy(buf, cp437.c_str(), cp437.size() + 1);
 }
 
 namespace {

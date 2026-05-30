@@ -1,8 +1,14 @@
 # Module Development Guide
 
-How to create custom modules for CDC Badge OS.
+How to create custom **native** modules for CDC Badge OS - C++ features
+compiled into the firmware and added by reflashing.
 
-> **Related:** [Architecture Overview](README.md#architecture) | [Serial Commands](SERIAL_COMMANDS.md)
+> **Related:** [Architecture Overview](README.md#architecture) | [Serial Commands](SERIAL_COMMANDS.md) | [Plugin Development](PLUGIN_DEVELOPMENT.md)
+
+> **Native module vs plugin:** this guide covers native modules, which are
+> compiled in and require a reflash. For sandboxed **WASM plugins** loaded at
+> runtime (no reflash) via the host API, see
+> [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md).
 
 ## Overview
 

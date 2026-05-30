@@ -5,6 +5,10 @@
 
 #include "plugin_manager/host_api.h"
 #include "cdc_views/RenderHelpers.h"
+#include "cdc_core/Cp437.h"
+
+#include <cstring>
+#include <string>
 
 extern "C" int host_str_to_display(const char* in, char* out, size_t out_size, uint32_t target)
 {
@@ -14,4 +18,14 @@ extern "C" int host_str_to_display(const char* in, char* out, size_t out_size, u
                  : cdc::ui::render::DisplayTarget::Cp437;
     cdc::ui::render::decodeWebText(in, out, out_size, t);
     return HOST_OK;
+}
+
+extern "C" int host_str_to_utf8(const char* in, char* out, size_t out_size)
+{
+    if (!in || !out || out_size == 0) return HOST_ERR_INVALID_ARG;
+    std::string u = cdc::core::cp437::toUtf8(in);
+    size_t n = (u.size() < out_size - 1) ? u.size() : out_size - 1;
+    std::memcpy(out, u.data(), n);
+    out[n] = '\0';
+    return static_cast<int>(n);
 }

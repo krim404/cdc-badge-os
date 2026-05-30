@@ -214,15 +214,41 @@ accepts exactly `<size>` raw bytes from the serial stream. CRC-32 is computed
 on the fly and verified against `<crc32_hex>` (IEEE 802.3) before the partial
 file is renamed in place. A `READY` session aborts after 15 s of inactivity.
 
+## vFAT Shell
+
+Group command: `VFAT <subcommand> [args]`. Requires authentication. Operates
+on the plugins FAT partition with a stateful working directory (reset to root
+when the serial session locks).
+
+| Sub-command | Description |
+|-------------|-------------|
+| `VFAT LIST` | List the current directory |
+| `VFAT CD <path>` | Change directory (`..` = up, `/` = root) |
+| `VFAT PWD` | Print the working directory |
+| `VFAT GET <file>` | Print a file's contents |
+| `VFAT PUT <file> <text>` | Write text (`\n` -> newline) |
+| `VFAT RECEIVE <file> <size> <crc32_hex>` | Stream a binary file into the current dir (same protocol as `PLUGIN UPLOAD`) |
+| `VFAT DELETE <file>` | Delete a file |
+| `VFAT MKDIR <name>` | Create a directory |
+| `VFAT RMDIR <name>` | Remove an empty directory |
+| `VFAT FREE` | Show partition usage (total / used / free) |
+
+`VFAT RECEIVE` is the single generic file-receive path: it replies `READY`,
+then accepts exactly `<size>` raw bytes verified against `<crc32_hex>`.
+
 ## i18n Overlay
 
 Group command: `LANG <subcommand> [args]`. Requires authentication.
 
+UI languages are per-language files `/plugins/i18n/lang_<code>.json` (flat
+key/value JSON; the `core.lang_name` value is the language's own display name).
+Upload one with `VFAT RECEIVE i18n/lang_<code>.json <size> <crc>` then
+`LANG RELOAD`; it appears in the on-device language picker automatically.
+
 | Sub-command | Description |
 |-------------|-------------|
-| `LANG UPLOAD <size>` | Upload `lang.json` overlay (binary byte-stream, same protocol as `PLUGIN UPLOAD`) |
-| `LANG INFO` | Show active language and available overlays under `/plugins/i18n/` |
-| `LANG RELOAD` | Reload `lang.json` overlay from `/plugins/i18n/` |
+| `LANG INFO` | Show active language and available languages under `/plugins/i18n/` |
+| `LANG RELOAD` | Rescan + reload language overlays from `/plugins/i18n/` |
 
 ## Examples
 

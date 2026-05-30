@@ -5,6 +5,7 @@ idf_component_register(
     SRCS
         "src/AttestationKeyService.cpp"
         "src/ServiceRegistry.cpp"
+        "src/Cp437.cpp"
         "src/EventBus.cpp"
         "src/PinManager.cpp"
         "src/ModuleRegistry.cpp"

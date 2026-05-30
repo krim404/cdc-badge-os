@@ -261,26 +261,38 @@ bool     host_rmem_name_used   (const char* name);
 /// \brief Maximum payload bytes per rmem slot.
 uint16_t host_rmem_slot_size   (void);
 
-/// \brief Generate a fresh ECC key on the chip into the given slot.
-int      host_ecc_generate (uint8_t slot, uint8_t curve);
+/*
+ * ECC keys are addressed by name, not by physical slot. The host maps each
+ * declared name (manifest `capabilities.ecc`) to a slot in a reserved plugin
+ * ECC pool and persists the mapping in NVS, so a key keeps its slot across
+ * reboot and reinstall. The pool is small (ECC slots are scarce and reserved
+ * for firmware features such as attestation and WebAuthn); growing it is a
+ * firmware change.
+ *
+ * Name length: max HOST_ECC_NAME_MAX bytes excluding the trailing NUL.
+ */
+#define HOST_ECC_NAME_MAX 15
 
-/// \brief Import an externally-generated private key into an ECC slot.
-int      host_ecc_import   (uint8_t slot, const uint8_t* priv, uint8_t curve);
+/// \brief Generate a fresh ECC key for the named slot.
+int      host_ecc_generate (const char* name, uint8_t curve);
 
-/// \brief Export the public key for the key in `slot`.
-int      host_ecc_pubkey   (uint8_t slot, uint8_t* pub, uint8_t curve);
+/// \brief Import an externally-generated private key for the named slot.
+int      host_ecc_import   (const char* name, const uint8_t* priv, uint8_t curve);
 
-/// \brief Erase an ECC slot.
-int      host_ecc_delete   (uint8_t slot);
+/// \brief Export the public key for the named slot.
+int      host_ecc_pubkey   (const char* name, uint8_t* pub, uint8_t curve);
 
-/// \brief True when the ECC slot currently holds a key.
-bool     host_ecc_slot_used(uint8_t slot);
+/// \brief Erase the named ECC key and free its pool slot.
+int      host_ecc_delete   (const char* name);
 
-/// \brief ECDSA-sign `msg` with the P-256 key in `slot`; writes 64-byte raw sig.
-int      host_ecdsa_sign   (uint8_t slot, const uint8_t* msg, size_t len, uint8_t sig[64]);
+/// \brief True when the named ECC key currently holds a key.
+bool     host_ecc_exists   (const char* name);
 
-/// \brief Ed25519-sign `msg` with the key in `slot`; writes 64-byte signature.
-int      host_eddsa_sign   (uint8_t slot, const uint8_t* msg, size_t len, uint8_t sig[64]);
+/// \brief ECDSA-sign `msg` with the P-256 named key; writes 64-byte raw sig.
+int      host_ecdsa_sign   (const char* name, const uint8_t* msg, size_t len, uint8_t sig[64]);
+
+/// \brief Ed25519-sign `msg` with the named key; writes 64-byte signature.
+int      host_eddsa_sign   (const char* name, const uint8_t* msg, size_t len, uint8_t sig[64]);
 
 /**
  * \brief Read the TROPIC01 chip serial / identity blob.
@@ -406,18 +418,47 @@ int     host_wifi_scan_results(wifi_scan_result_t* out, size_t* count);
  * \{
  */
 
+/* GATT characteristic property flags (BLE Core Spec Vol 3, Part G, 3.3.1.1). */
+#define BLE_PROP_READ          0x02
+#define BLE_PROP_WRITE_NO_RSP  0x04
+#define BLE_PROP_WRITE         0x08
+#define BLE_PROP_NOTIFY        0x10
+#define BLE_PROP_INDICATE      0x20
+
+/** \brief One characteristic of a plugin GATT service (peripheral role). */
 typedef struct {
-    uint8_t  uuid[16];
-    uint8_t  is_primary;
-    uint8_t  reserved[2];
-    uint16_t handle;
+    uint8_t  uuid[16];        /**< 128-bit characteristic UUID. */
+    uint8_t  properties;      /**< BLE_PROP_* bitmask. */
+    uint8_t  reserved[3];
+    uint32_t write_action_id; /**< Action fired on each inbound write (0 = none). */
+    uint32_t char_handle;     /**< OUT: handle for notify / indicate / consume_write. */
+} ble_char_def_t;
+
+/** \brief A plugin GATT service definition (peripheral role). Always primary. */
+typedef struct {
+    uint8_t  uuid[16];        /**< 128-bit primary service UUID. */
+    uint8_t  num_chars;       /**< Number of entries in the chars array (1..6). */
+    uint8_t  reserved[3];
+    uint32_t service_handle;  /**< OUT: handle for unregister. */
 } ble_service_def_t;
 
+/** \brief One device from a central scan. */
 typedef struct {
     uint8_t addr[6];
+    uint8_t addr_type;        /**< 0 = public, 1 = random. */
     int8_t  rssi;
     char    name[32];
 } ble_scan_result_t;
+
+/** \brief One characteristic discovered on a connected peer (central role). */
+typedef struct {
+    uint8_t  uuid[16];
+    uint16_t value_handle;
+    uint8_t  properties;      /**< BLE_PROP_* bitmask. */
+    uint8_t  reserved;
+} ble_remote_char_t;
+
+/* --- State (read-only) --- */
 
 /// \brief True when the BLE stack is initialised and advertising or connectable.
 bool    host_ble_is_enabled       (void);
@@ -431,52 +472,106 @@ int     host_ble_device_name      (char* out, size_t out_size);
 /// \brief Signal strength of the active BLE link in dBm, or 0 when idle.
 int8_t  host_ble_rssi             (void);
 
+/* --- Peripheral (GATT server) --- */
+
 /**
- * \brief Register a GATT service definition for the peripheral role.
- * \param service_handle_out Receives the assigned service handle.
+ * \brief Register the plugin's GATT service and its characteristics.
+ *
+ * Fills `def->service_handle` and each `chars[i].char_handle`. The service UUID
+ * must not be a reserved system UUID and a plugin service slot must be free.
+ * \param def       Service definition; `service_handle` is written back.
+ * \param chars     Characteristic array; `char_handle` is written back per entry.
+ * \param num_chars Number of characteristics (1..6).
  */
-int     host_ble_register_service (const ble_service_def_t* def, uint32_t* service_handle_out);
+int     host_ble_register_service (ble_service_def_t* def,
+                                   ble_char_def_t* chars, uint32_t num_chars);
 
-/// \brief Send a GATT notification on a previously registered characteristic.
-int     host_ble_send_notification(uint32_t char_handle, const uint8_t* data, size_t len);
-
-/// \brief Send a GATT indication (acknowledged notification).
-int     host_ble_send_indication  (uint32_t char_handle, const uint8_t* data, size_t len);
-
-/// \brief Tear down a previously registered GATT service.
+/// \brief Tear down the plugin's registered GATT service.
 int     host_ble_unregister_service(uint32_t service_handle);
 
-/// \brief Start an asynchronous BLE central scan.
-int     host_ble_scan_start       (void);
+/// \brief Notify subscribers of a value on one of the plugin's characteristics.
+int     host_ble_send_notification(uint32_t char_handle, const uint8_t* data, size_t len);
+
+/// \brief Indicate (acknowledged notify) a value on a plugin characteristic.
+int     host_ble_send_indication  (uint32_t char_handle, const uint8_t* data, size_t len);
 
 /**
- * \brief Read results from the last BLE central scan.
+ * \brief Pull the next queued inbound write for `char_handle`.
+ *
+ * Call from the characteristic's `write_action_id` handler; the action fires
+ * with `idx` set to the characteristic handle and `user_data` to the
+ * connection handle.
+ * \return Bytes copied (>= 0), or a negative HOST_ERR_* code.
+ */
+int     host_ble_consume_write    (uint32_t char_handle, uint8_t* buf, size_t buf_size);
+
+/* --- Central (GATT client) --- */
+
+/// \brief Start a central scan for `duration_ms` milliseconds.
+int     host_ble_scan_start       (uint32_t duration_ms);
+
+/// \brief True when the scan started by host_ble_scan_start() has finished.
+bool    host_ble_scan_done        (void);
+
+/**
+ * \brief Read results from the last central scan.
  * \param count In: capacity of `out`; out: entries written.
  */
 int     host_ble_scan_results     (ble_scan_result_t* out, size_t* count);
 
-/// \brief Initiate a BLE central connection to `addr`.
-int     host_ble_connect          (const uint8_t addr[6]);
-
 /**
- * \brief Read a characteristic value from a connected peer.
- * \param len In: capacity of `buf`; out: bytes actually read.
+ * \brief Connect to a peer. Completion arrives as a BLE_CONNECTED event; read
+ *        the resulting handle with host_ble_conn_handle().
  */
-int     host_ble_read_char        (uint32_t conn, const uint8_t uuid[16],
-                                   uint8_t* buf, size_t* len);
+int     host_ble_connect          (const uint8_t addr[6], uint8_t addr_type);
 
-/// \brief Write a characteristic value on a connected peer.
-int     host_ble_write_char       (uint32_t conn, const uint8_t uuid[16],
-                                   const uint8_t* data, size_t len);
+/// \brief Current connection handle (central or peripheral), or 0 when idle.
+uint32_t host_ble_conn_handle     (void);
 
-/**
- * \brief Subscribe to notifications/indications on a peer characteristic.
- * \param action_id Plugin action id fired on each incoming notification.
- */
-int     host_ble_subscribe        (uint32_t conn, const uint8_t uuid[16], uint32_t action_id);
-
-/// \brief Tear down a BLE central connection.
+/// \brief Disconnect a connection.
 int     host_ble_disconnect       (uint32_t conn);
+
+/**
+ * \brief Discover the characteristics of one service on a connected peer.
+ *        Completion fires `action_id`; read entries with host_ble_consume_discovery().
+ */
+int     host_ble_discover         (uint32_t conn, const uint8_t uuid[16], uint32_t action_id);
+
+/**
+ * \brief Pull discovered characteristics after a discovery action fires.
+ * \param count In: capacity of `out`; out: entries written.
+ */
+int     host_ble_consume_discovery(ble_remote_char_t* out, size_t* count);
+
+/**
+ * \brief Start reading a peer characteristic by value handle. Completion fires
+ *        `action_id`; read the value with host_ble_consume_read().
+ */
+int     host_ble_read_char        (uint32_t conn, uint16_t value_handle, uint32_t action_id);
+
+/**
+ * \brief Pull the value delivered by the last read action.
+ * \return Bytes copied (>= 0), or a negative HOST_ERR_* code.
+ */
+int     host_ble_consume_read     (uint8_t* buf, size_t buf_size);
+
+/// \brief Write a value to a peer characteristic by value handle.
+int     host_ble_write_char       (uint32_t conn, uint16_t value_handle,
+                                   const uint8_t* data, size_t len, uint8_t with_response);
+
+/**
+ * \brief Subscribe to notifications on a peer characteristic (by CCCD handle).
+ *        Each notification fires `action_id`; read it with
+ *        host_ble_consume_notification().
+ */
+int     host_ble_subscribe        (uint32_t conn, uint16_t cccd_handle, uint32_t action_id);
+
+/**
+ * \brief Pull the next queued inbound notification.
+ * \param value_handle_out Receives the source characteristic value handle.
+ * \return Bytes copied (>= 0), or a negative HOST_ERR_* code.
+ */
+int     host_ble_consume_notification(uint16_t* value_handle_out, uint8_t* buf, size_t buf_size);
 
 /** \} */
 
@@ -521,6 +616,48 @@ int host_nvs_erase_all(void);
  * \param out_len In: capacity of `out`; out: bytes written (NUL-separated list).
  */
 int host_nvs_list_keys(char* out, size_t* out_len);
+
+/** \} */
+
+/**
+ * \defgroup vfat vFAT file storage (plugin-sandboxed)
+ * \brief Sandboxed file access on the plugins FAT partition.
+ *
+ * Each plugin can only touch files in its own private folder; the host builds
+ * and confines every path. Requires the `vfat` capability. `name` is a bare
+ * filename: characters [A-Za-z0-9._-], no path separators, no leading dot,
+ * at most 64 bytes.
+ * \{
+ */
+
+/// \brief Create or overwrite `name` with `len` bytes. \return HOST_OK or HOST_ERR_*.
+int host_fs_write (const char* name, const uint8_t* data, size_t len);
+
+/**
+ * \brief Read `name` into `buf`.
+ * \param len In: capacity of `buf`; out: bytes actually read.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND, or another HOST_ERR_*.
+ */
+int host_fs_read  (const char* name, uint8_t* buf, size_t* len);
+
+/// \brief Delete `name`. \return HOST_OK or HOST_ERR_NOT_FOUND.
+int host_fs_remove(const char* name);
+
+/// \brief Write the byte size of `name` to `*out`. \return HOST_OK or HOST_ERR_NOT_FOUND.
+int host_fs_size  (const char* name, size_t* out);
+
+/**
+ * \brief Enumerate the plugin's own files.
+ * \param out_len In: capacity of `out`; out: bytes written ('\n'-separated list).
+ */
+int host_fs_list  (char* out, size_t* out_len);
+
+/**
+ * \brief Open one of the plugin's own files in a scrollable on-screen text
+ *        viewer (same as opening the file in the vFAT explorer). Useful for a
+ *        bundled readme / help page. \return HOST_OK or a HOST_ERR_* code.
+ */
+int host_fs_view  (const char* name);
 
 /** \} */
 
@@ -677,6 +814,28 @@ int host_ui_set_view_footer (const char* hint);
 
 /// \brief Override the empty-state text shown by an empty list view.
 int host_ui_set_view_empty  (const char* text);
+
+/* Redraw a single row of the plugin's current top list view in place, without
+ * re-pushing or fully re-rendering the list. The label, icon and item_id of
+ * the given index are replaced from `item`; the new label is copied
+ * internally. Only repaints when the plugin's list is the active top view and
+ * the row is on screen (partial refresh). Returns HOST_ERR_NOT_FOUND if the
+ * top view is not the plugin's list, HOST_ERR_INVALID_ARG on a bad index. */
+/// \brief Update one list row in place (partial redraw).
+int host_ui_update_list_item(uint16_t index, const ui_item_t* item);
+
+/* Insert a new row into the plugin's current top list at `index` (later rows
+ * shift down), then partial-repaint. The label is copied internally. `index`
+ * is clamped to the current item count (append). Returns HOST_ERR_NOT_FOUND if
+ * the top view is not the plugin's list. */
+/// \brief Insert a list row at `index` (partial redraw).
+int host_ui_insert_list_item(uint16_t index, const ui_item_t* item);
+
+/* Remove the row at `index` from the plugin's current top list (later rows
+ * shift up), then partial-repaint. Returns HOST_ERR_NOT_FOUND if the top view
+ * is not the plugin's list, HOST_ERR_INVALID_ARG on a bad index. */
+/// \brief Remove the list row at `index` (partial redraw).
+int host_ui_remove_list_item(uint16_t index);
 
 /// \brief Pop the topmost view.
 int host_ui_pop                (void);
@@ -1095,6 +1254,15 @@ int host_cmd_consume (char* out, size_t out_size);
 /// \return HOST_OK on success, HOST_ERR_INVALID_ARG when inputs are NULL or `out_size==0`.
 int host_str_to_display(const char* in, char* out, size_t out_size, uint32_t target);
 
+/// \brief Inverse of the CP437 display encoding: convert CP437 display bytes
+///        in `in` to a UTF-8 string in `out`. Use this before persisting or
+///        transmitting on-screen-edited text so it stays UTF-8.
+/// \param in       Source CP437 string.
+/// \param out      Destination buffer (always NUL-terminated, truncated to fit).
+/// \param out_size Capacity of `out` in bytes (including the NUL).
+/// \return Bytes written (excluding NUL), or a negative HOST_ERR_* code.
+int host_str_to_utf8(const char* in, char* out, size_t out_size);
+
 /** \} */
 
 /**
@@ -1220,7 +1388,7 @@ bool     host_pixel_strip_ready   (void);
  * \brief Register a single lockscreen quick-action for background plugins.
  *
  * A plugin may register exactly one item that appears in the lockscreen
- * context menu (opened by KEY_BACK). When the user selects it, the plugin's
+ * context menu (opened by KEY_MENU). When the user selects it, the plugin's
  * `plugin_on_action(action_id, 0, 0)` fires. The label is an i18n key
  * resolved per-language via \ref host_i18n_tr_key.
  * \{

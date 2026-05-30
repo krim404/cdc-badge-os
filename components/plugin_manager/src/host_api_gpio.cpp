@@ -13,13 +13,13 @@
  */
 
 #include "cdc_hal/hw_config.h"
+#include "cdc_hal/II2cBus.h"
 #include "plugin_manager/host_api.h"
 #include "plugin_manager/Plugin.h"
 #include "plugin_manager/PluginGpioPolicy.h"
 
 #include "driver/gpio.h"
 #include "driver/ledc.h"
-#include "driver/i2c.h"
 #include "esp_adc/adc_oneshot.h"
 
 #include <array>
@@ -69,6 +69,22 @@ int acquire_lock(uint8_t pin) {
 void release_lock(uint8_t pin) {
     if (pin >= MAX_GPIO_PINS) return;
     s_pin_locks[pin] = PinLock{};
+}
+
+// Only the expansion bus (I2C1) is reachable by plugins. Bus 0 carries the
+// charger (BQ25895) and IO expander (TCA9535) and is never exposed. The
+// TROPIC01 is on SPI, not I2C, so it is unreachable here by design.
+bool manifest_allows_i2c(uint8_t bus) {
+    auto* p = active();
+    if (!p) return false;
+    for (uint8_t b : p->manifest().capabilities.i2c_bus) if (b == bus) return true;
+    return false;
+}
+
+// Fetch the expansion bus, ensuring its driver is installed (idempotent).
+cdc::hal::II2cBus* expansion_bus() {
+    auto* bus = cdc::hal::getI2cBus1();
+    return (bus && bus->init()) ? bus : nullptr;
 }
 
 }  // namespace
@@ -228,11 +244,76 @@ int host_adc_read(uint8_t pin, uint16_t* raw, uint16_t* millivolt)
     return HOST_OK;
 }
 
-int host_i2c_write(uint8_t /*bus*/, uint8_t /*addr*/, const uint8_t* /*data*/, size_t /*len*/)         { return HOST_ERR_NOT_SUPPORTED; }
-int host_i2c_read (uint8_t /*bus*/, uint8_t /*addr*/, uint8_t* /*data*/, size_t /*len*/)               { return HOST_ERR_NOT_SUPPORTED; }
-int host_i2c_write_read(uint8_t /*bus*/, uint8_t /*addr*/, const uint8_t*, size_t, uint8_t*, size_t)   { return HOST_ERR_NOT_SUPPORTED; }
-int host_i2c_scan (uint8_t /*bus*/, uint8_t* /*found_addrs*/, size_t* /*count*/)                       { return HOST_ERR_NOT_SUPPORTED; }
-int host_sao_eeprom_read (uint16_t /*off*/, uint8_t* /*buf*/, size_t /*len*/)                          { return HOST_ERR_NOT_SUPPORTED; }
-int host_sao_eeprom_write(uint16_t /*off*/, const uint8_t* /*buf*/, size_t /*len*/)                    { return HOST_ERR_NOT_SUPPORTED; }
+// I2C and SAO EEPROM are thin capability gates over the I2cBus HAL; the raw
+// transaction logic lives in cdc_hal/I2cBus, not here.
+
+int host_i2c_write(uint8_t bus, uint8_t addr, const uint8_t* data, size_t len)
+{
+    if (!data && len) return HOST_ERR_INVALID_ARG;
+    if (bus != 1) return HOST_ERR_INVALID_ARG;            // only the expansion bus
+    if (!manifest_allows_i2c(bus)) return HOST_ERR_NO_CAPABILITY;
+    auto* b = expansion_bus();
+    if (!b) return HOST_ERR_GENERIC;
+    return b->writeRaw(addr, data, len) == ESP_OK ? HOST_OK : HOST_ERR_GENERIC;
+}
+
+int host_i2c_read(uint8_t bus, uint8_t addr, uint8_t* data, size_t len)
+{
+    if (!data || len == 0) return HOST_ERR_INVALID_ARG;
+    if (bus != 1) return HOST_ERR_INVALID_ARG;
+    if (!manifest_allows_i2c(bus)) return HOST_ERR_NO_CAPABILITY;
+    auto* b = expansion_bus();
+    if (!b) return HOST_ERR_GENERIC;
+    return b->readRaw(addr, data, len) == ESP_OK ? HOST_OK : HOST_ERR_GENERIC;
+}
+
+int host_i2c_write_read(uint8_t bus, uint8_t addr,
+                        const uint8_t* wr, size_t wr_len,
+                        uint8_t* rd, size_t rd_len)
+{
+    if ((!wr && wr_len) || !rd || rd_len == 0) return HOST_ERR_INVALID_ARG;
+    if (bus != 1) return HOST_ERR_INVALID_ARG;
+    if (!manifest_allows_i2c(bus)) return HOST_ERR_NO_CAPABILITY;
+    auto* b = expansion_bus();
+    if (!b) return HOST_ERR_GENERIC;
+    return b->writeReadRaw(addr, wr, wr_len, rd, rd_len) == ESP_OK ? HOST_OK : HOST_ERR_GENERIC;
+}
+
+int host_i2c_scan(uint8_t bus, uint8_t* found_addrs, size_t* count)
+{
+    if (!found_addrs || !count) return HOST_ERR_INVALID_ARG;
+    if (bus != 1) return HOST_ERR_INVALID_ARG;
+    if (!manifest_allows_i2c(bus)) return HOST_ERR_NO_CAPABILITY;
+    auto* b = expansion_bus();
+    if (!b) return HOST_ERR_GENERIC;
+
+    const size_t cap = *count;
+    size_t n = 0;
+    for (uint8_t addr = 0x08; addr < 0x78 && n < cap; ++addr) {
+        if (b->probe(addr)) found_addrs[n++] = addr;
+    }
+    *count = n;
+    return HOST_OK;
+}
+
+int host_sao_eeprom_read(uint16_t off, uint8_t* buf, size_t len)
+{
+    if (!buf || len == 0) return HOST_ERR_INVALID_ARG;
+    auto* p = active();
+    if (!p || !p->manifest().capabilities.sao) return HOST_ERR_NO_CAPABILITY;
+    auto* b = expansion_bus();
+    if (!b) return HOST_ERR_GENERIC;
+    return b->eepromRead(SAO_EEPROM_ADDR, off, buf, len) == ESP_OK ? HOST_OK : HOST_ERR_GENERIC;
+}
+
+int host_sao_eeprom_write(uint16_t off, const uint8_t* buf, size_t len)
+{
+    if (!buf || len == 0) return HOST_ERR_INVALID_ARG;
+    auto* p = active();
+    if (!p || !p->manifest().capabilities.sao) return HOST_ERR_NO_CAPABILITY;
+    auto* b = expansion_bus();
+    if (!b) return HOST_ERR_GENERIC;
+    return b->eepromWrite(SAO_EEPROM_ADDR, off, buf, len) == ESP_OK ? HOST_OK : HOST_ERR_GENERIC;
+}
 
 }  // extern "C"

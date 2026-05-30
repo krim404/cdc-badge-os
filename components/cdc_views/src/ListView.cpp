@@ -12,6 +12,7 @@
 #include "cdc_ui/ViewStack.h"
 #include "cdc_ui/I18n.h"
 #include "cdc_hal/IDisplay.h"
+#include "cdc_core/Raii.h"
 #include "cdc_log.h"
 #include <goodisplay/gdey029T94.h>
 
@@ -142,37 +143,67 @@ void ListView::ensureVisible() {
  */
 InputResult ListView::onKey(char key) {
     switch (key) {
-        case KEY_UP:
+        case KEY_UP: {
+            cdc::core::RecursiveMutexGuard guard(editMutex_);
             navigate(false);
             return InputResult::CONSUMED;
+        }
 
-        case KEY_DOWN:
+        case KEY_DOWN: {
+            cdc::core::RecursiveMutexGuard guard(editMutex_);
             navigate(true);
             return InputResult::CONSUMED;
+        }
 
-        case KEY_YES: // Select
-            if (onSelect_ && items_ && selection_ < itemCount_) {
-                onSelect_(selection_, items_[selection_].userData);
-            }
-            return InputResult::CONSUMED;
-
-        case KEY_BACK: // Context menu
-            if (onMenu_) {
-                if (items_ && selection_ < itemCount_) {
-                    onMenu_(selection_, items_[selection_].userData);
-                } else {
-                    // Empty list: surface a "no-selection" menu opportunity.
-                    onMenu_(0xFFFF, nullptr);
+        case KEY_YES: { // Select
+            // Snapshot the target under the lock; the callback may re-enter the
+            // call stack (plugin dispatch) and must not run while editMutex_ is
+            // held, so release before invoking it.
+            void* userData = nullptr;
+            uint16_t sel = 0;
+            bool valid = false;
+            {
+                cdc::core::RecursiveMutexGuard guard(editMutex_);
+                if (onSelect_ && items_ && selection_ < itemCount_) {
+                    sel = selection_;
+                    userData = items_[selection_].userData;
+                    valid = true;
                 }
-                return InputResult::CONSUMED;
             }
-            return InputResult::IGNORED;
+            if (valid) onSelect_(sel, userData);
+            return InputResult::CONSUMED;
+        }
+
+        case KEY_MENU: { // Context menu
+            if (!onMenu_) return InputResult::IGNORED;
+            void* userData = nullptr;
+            uint16_t sel = 0xFFFF;  // sentinel: empty list / no selection
+            {
+                cdc::core::RecursiveMutexGuard guard(editMutex_);
+                if (items_ && selection_ < itemCount_) {
+                    sel = selection_;
+                    userData = items_[selection_].userData;
+                }
+            }
+            onMenu_(sel, userData);
+            return InputResult::CONSUMED;
+        }
 
         case KEY_NO: // Back
             return InputResult::REQUEST_POP;
 
         default:
             return InputResult::IGNORED;
+    }
+}
+
+InputResult ListView::onLongPress(char key) {
+    cdc::core::RecursiveMutexGuard guard(editMutex_);
+    if (itemCount_ == 0) return InputResult::IGNORED;
+    switch (key) {
+        case KEY_UP:   setSelection(0); return InputResult::CONSUMED;
+        case KEY_DOWN: setSelection(itemCount_ - 1); return InputResult::CONSUMED;
+        default:       return InputResult::IGNORED;
     }
 }
 
@@ -202,6 +233,10 @@ void ListView::render(bool partial) {
     auto* gfx = static_cast<Gdey029T94*>(display->getNativeHandle());
     if (!gfx) return;
 
+    // Serialise against a cross-task writer that may re-point items_ / free the
+    // backing buffer mid-render (plugin list edits). No-op when unset.
+    cdc::core::RecursiveMutexGuard guard(editMutex_);
+
     const uint16_t width = display->getWidth();
     const uint16_t height = display->getHeight();
 
@@ -222,51 +257,7 @@ void ListView::render(bool partial) {
     for (uint8_t i = 0; i < visibleItems_; i++) {
         uint16_t itemIndex = scrollPos_ + i;
         int y = LIST_START_Y + i * itemHeight_;
-
-        // Clear item area
-        gfx->fillRect(0, y, rowWidth, itemHeight_, EPD_WHITE);
-
-        if (itemIndex >= itemCount_) continue;
-
-        const ListItem& item = items_[itemIndex];
-        bool isSelected = (itemIndex == selection_);
-
-        if (isSelected) {
-            gfx->fillRect(2, y + 1, rowWidth - 4, itemHeight_ - 2, EPD_BLACK);
-            gfx->setTextColor(EPD_WHITE);
-        } else {
-            gfx->setTextColor(EPD_BLACK);
-        }
-
-        bool handled = false;
-        if (itemRenderer_) {
-            handled = itemRenderer_(gfx, item, itemIndex,
-                                    0, y, rowWidth, itemHeight_,
-                                    isSelected, itemRendererCtx_);
-        }
-
-        if (!handled) {
-            int textX = ITEM_PADDING_X;
-            if (item.icon) {
-                char iconStr[2] = {static_cast<char>(item.icon), '\0'};
-                gfx->setCursor(textX, y + 4);
-                render::printText(gfx, iconStr);
-                if (item.iconDisabled) {
-                    uint16_t color = isSelected ? EPD_WHITE : EPD_BLACK;
-                    gfx->drawLine(textX, y + 10, textX + 6, y + 10, color);
-                }
-                textX += 10;
-            } else {
-                uint16_t bullet_color = isSelected ? EPD_WHITE : EPD_BLACK;
-                gfx->fillCircle(textX + 2, y + itemHeight_ / 2, 2, bullet_color);
-                textX += 9;
-            }
-
-            gfx->setCursor(textX, y + 4);
-            if (item.label) {
-                render::printTruncated(gfx, item.label, rowWidth - textX - 2);
-            }
-        }
+        drawRow(gfx, itemIndex, y, rowWidth);
     }
 
     // Empty placeholder (after item rects so it's not overpainted)
@@ -301,6 +292,127 @@ void ListView::render(bool partial) {
     render::drawFooterBar(gfx, width, height, prefix, hint, true);
 
     dirty_ = false;
+}
+
+/**
+ * \brief Draws one list row (clear, selection background, content).
+ * \param gfx Native graphics context.
+ * \param itemIndex Absolute item index to draw.
+ * \param y Top y coordinate of the row.
+ * \param rowWidth Drawable row width (excluding scroll indicator).
+ * \return void
+ */
+void ListView::drawRow(Gdey029T94* gfx, uint16_t itemIndex, int y, int rowWidth) {
+    gfx->setFont(nullptr);
+    gfx->setTextSize(1);
+    gfx->setTextWrap(false);
+
+    // Clear item area
+    gfx->fillRect(0, y, rowWidth, itemHeight_, EPD_WHITE);
+
+    if (itemIndex >= itemCount_) return;
+
+    const ListItem& item = items_[itemIndex];
+    bool isSelected = (itemIndex == selection_);
+
+    if (isSelected) {
+        gfx->fillRect(2, y + 1, rowWidth - 4, itemHeight_ - 2, EPD_BLACK);
+        gfx->setTextColor(EPD_WHITE);
+    } else {
+        gfx->setTextColor(EPD_BLACK);
+    }
+
+    bool handled = false;
+    if (itemRenderer_) {
+        handled = itemRenderer_(gfx, item, itemIndex,
+                                0, y, rowWidth, itemHeight_,
+                                isSelected, itemRendererCtx_);
+    }
+
+    if (!handled) {
+        int textX = ITEM_PADDING_X;
+        if (item.icon) {
+            char iconStr[2] = {static_cast<char>(item.icon), '\0'};
+            gfx->setCursor(textX, y + 4);
+            render::printText(gfx, iconStr);
+            if (item.iconDisabled) {
+                uint16_t color = isSelected ? EPD_WHITE : EPD_BLACK;
+                gfx->drawLine(textX, y + 10, textX + 6, y + 10, color);
+            }
+            textX += 10;
+        } else {
+            uint16_t bullet_color = isSelected ? EPD_WHITE : EPD_BLACK;
+            gfx->fillCircle(textX + 2, y + itemHeight_ / 2, 2, bullet_color);
+            textX += 9;
+        }
+
+        gfx->setCursor(textX, y + 4);
+        if (item.label) {
+            render::printTruncated(gfx, item.label, rowWidth - textX - 2);
+        }
+    }
+}
+
+/**
+ * \brief Marks the list dirty after the caller updated a backing item.
+ *
+ * Does not touch the panel: a burst of edits within one tick coalesces into a
+ * single partial refresh performed by the view-stack render cycle, instead of
+ * one e-paper refresh per edit.
+ * \param index Item index that changed.
+ * \return void
+ */
+void ListView::updateItem(uint16_t index) {
+    cdc::core::RecursiveMutexGuard guard(editMutex_);
+    if (!items_ || index >= itemCount_) return;
+    markDirty();
+}
+
+/**
+ * \brief Requests a redraw; the actual repaint happens once per render cycle.
+ * \return void
+ */
+void ListView::repaintPartial() {
+    markDirty();
+}
+
+/**
+ * \brief Reflects a caller-side insertion at `index` and marks dirty.
+ * \param index Insertion position (clamped to the current count).
+ * \return void
+ */
+void ListView::insertItem(uint16_t index) {
+    cdc::core::RecursiveMutexGuard guard(editMutex_);
+    if (!items_ || itemCount_ >= MAX_ITEMS) return;
+    if (index > itemCount_) index = itemCount_;
+    uint16_t oldCount = itemCount_;
+    itemCount_++;
+    // Keep the selected item selected: it shifts down when inserting at or
+    // before it.
+    if (oldCount > 0 && index <= selection_ && selection_ + 1 < itemCount_) {
+        selection_++;
+    }
+    ensureVisible();
+    markDirty();
+}
+
+/**
+ * \brief Reflects a caller-side removal at `index` and marks dirty.
+ * \param index Index of the removed item.
+ * \return void
+ */
+void ListView::removeItem(uint16_t index) {
+    cdc::core::RecursiveMutexGuard guard(editMutex_);
+    if (!items_ || itemCount_ == 0 || index >= itemCount_) return;
+    itemCount_--;
+    if (selection_ > index) {
+        selection_--;
+    }
+    if (selection_ >= itemCount_) {
+        selection_ = itemCount_ > 0 ? itemCount_ - 1 : 0;
+    }
+    ensureVisible();
+    markDirty();
 }
 
 /**

@@ -38,7 +38,7 @@ jobs:
         run: |
           pip install construct
           python tools/build_lang_image.py \
-            --lang-json assets/i18n/lang.json \
+            --lang-dir assets/i18n \
             --output build/plugins_initial.bin
 
       - name: Get version info

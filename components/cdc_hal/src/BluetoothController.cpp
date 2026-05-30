@@ -59,8 +59,10 @@ static int gattcWriteCb(uint16_t connHandle, const struct ble_gatt_error* error,
  * \brief Internal limits for dynamic GATT service registration.
  */
 
-static constexpr uint8_t MAX_REGISTERED_SERVICES = 4;
-static constexpr uint8_t MAX_CHARS_PER_SERVICE = 6;
+static constexpr uint8_t MAX_REGISTERED_SERVICES = IBluetoothController::MAX_REGISTERED_SERVICES;
+/// \brief Last service slot, reserved exclusively for a plugin-registered service.
+static constexpr uint8_t PLUGIN_SERVICE_SLOT = MAX_REGISTERED_SERVICES - 1;
+static constexpr uint8_t MAX_CHARS_PER_SERVICE = IBluetoothController::MAX_CHARS_PER_SERVICE;
 static constexpr uint8_t MAX_DESCRIPTORS_PER_CHAR = 2;
 static constexpr uint8_t MAX_ADV_UUIDS = 4;
 static constexpr uint8_t MAX_CONN_CALLBACKS = 4;
@@ -261,7 +263,9 @@ public:
      * \name GATT Server
      * \{
      */
-    bool registerGattService(const GattServiceDef& service) override;
+    bool registerGattService(const GattServiceDef& service,
+                             bool pluginReserved = false) override;
+    bool unregisterGattService(const BleUuid& serviceUuid) override;
     bool sendNotification(uint16_t connHandle, uint16_t attrHandle,
                           const uint8_t* data, uint16_t len) override;
     uint16_t getMtu() const override;
@@ -274,6 +278,7 @@ public:
      * \{
      */
     bool connect(const uint8_t* addr, uint8_t addrType) override;
+    void cancelConnect() override;
     bool discoverServiceByUuid(uint16_t connHandle, const BleUuid& uuid) override;
     bool writeCharacteristic(uint16_t connHandle, uint16_t attrHandle,
                              const uint8_t* data, uint16_t len,
@@ -383,8 +388,10 @@ private:
     SubscribeEntry subscribes_[MAX_SUBSCRIBE_ENTRIES] = {};
 
     /** \brief Scan result cache. */
-    static constexpr uint8_t MAX_SCAN_RESULTS = 16;
     BleScanResult scanResults_[MAX_SCAN_RESULTS] = {};
+    // Per-result flag: name came from a Complete Local Name (0x09). Prevents
+    // downgrading it to a Shortened name (0x08) on later advertising events.
+    bool scanNameComplete_[MAX_SCAN_RESULTS] = {};
     uint8_t scanResultCount_ = 0;
 
     /** \brief Advertised service UUID list for scan responses. */
@@ -1087,6 +1094,7 @@ bool BluetoothController::startScan(uint32_t durationMs) {
     // Clear previous results
     scanResultCount_ = 0;
     memset(scanResults_, 0, sizeof(scanResults_));
+    memset(scanNameComplete_, 0, sizeof(scanNameComplete_));
 
     struct ble_gap_disc_params discParams = {};
     discParams.filter_duplicates = 0;  // Allow duplicates to get scan responses with names
@@ -1137,7 +1145,7 @@ void BluetoothController::stopScan() {
  * \return true if a name was found and copied.
  */
 static bool parseAdvName(const uint8_t* data, uint8_t dataLen,
-                         char* name, size_t nameMaxLen) {
+                         char* name, size_t nameMaxLen, bool* isComplete = nullptr) {
     uint8_t pos = 0;
     while (pos < dataLen) {
         uint8_t len = data[pos];
@@ -1149,6 +1157,7 @@ static bool parseAdvName(const uint8_t* data, uint8_t dataLen,
             size_t copyLen = (nameLen < nameMaxLen - 1) ? nameLen : nameMaxLen - 1;
             memcpy(name, &data[pos + 2], copyLen);
             name[copyLen] = '\0';
+            if (isComplete) *isComplete = (type == 0x09);
             return true;
         }
         pos += len + 1;
@@ -1157,54 +1166,83 @@ static bool parseAdvName(const uint8_t* data, uint8_t dataLen,
 }
 
 /**
- * \brief Caches or updates one scan result from a GAP discovery callback.
- * \param disc Discovery descriptor received from NimBLE.
+ * \brief Fills a scan-result slot from a discovery descriptor.
+ *
+ * Stores MAC/address-type/RSSI and the raw advertising data, then sets the
+ * name from the advertising payload, falling back to the formatted MAC when
+ * no name is advertised. \p outNameComplete reports whether the stored name
+ * came from a Complete Local Name (0x09) so callers can avoid downgrading it.
  */
-void BluetoothController::onScanResult(const ble_gap_disc_desc* disc) {
-    if (!disc || scanResultCount_ >= MAX_SCAN_RESULTS) return;
+static void fillScanResult(BleScanResult& result, const ble_gap_disc_desc* disc,
+                           bool* outNameComplete) {
+    memcpy(result.mac, disc->addr.val, 6);
+    result.addrType = disc->addr.type;
+    result.rssi = disc->rssi;
+    result.name[0] = '\0';
 
-    // Check if we already have this device (update name/RSSI from scan response)
+    result.advDataLen = (disc->length_data <= sizeof(result.advData))
+                         ? disc->length_data : sizeof(result.advData);
+    memcpy(result.advData, disc->data, result.advDataLen);
+
+    bool isComplete = false;
+    parseAdvName(disc->data, disc->length_data, result.name, sizeof(result.name), &isComplete);
+    const bool haveName = (result.name[0] != '\0');
+    if (outNameComplete) *outNameComplete = haveName && isComplete;
+    if (!haveName) {
+        snprintf(result.name, sizeof(result.name), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 result.mac[5], result.mac[4], result.mac[3],
+                 result.mac[2], result.mac[1], result.mac[0]);
+    }
+}
+
+void BluetoothController::onScanResult(const ble_gap_disc_desc* disc) {
+    if (!disc) return;
+
+    // Update an existing entry (same MAC). Scan responses often carry the name.
     for (uint8_t i = 0; i < scanResultCount_; i++) {
         if (memcmp(scanResults_[i].mac, disc->addr.val, 6) == 0) {
             if (disc->rssi > scanResults_[i].rssi) {
                 scanResults_[i].rssi = disc->rssi;
             }
-            // Update name if this event carries one (scan response often has the name)
+            // Replace the name only with a non-empty one, and never downgrade a
+            // Complete Local Name (0x09) to a Shortened one (0x08): devices that
+            // advertise a short name in the primary PDU and the full name in the
+            // scan response would otherwise flip-flop every interval.
             char parsedName[32];
-            if (parseAdvName(disc->data, disc->length_data, parsedName, sizeof(parsedName))) {
+            bool isComplete = false;
+            if (parseAdvName(disc->data, disc->length_data, parsedName, sizeof(parsedName), &isComplete) &&
+                parsedName[0] != '\0' &&
+                (isComplete || !scanNameComplete_[i]) &&
+                strcmp(parsedName, scanResults_[i].name) != 0) {
                 strncpy(scanResults_[i].name, parsedName, sizeof(scanResults_[i].name) - 1);
                 scanResults_[i].name[sizeof(scanResults_[i].name) - 1] = '\0';
+                scanNameComplete_[i] = isComplete;
                 LOG_D(TAG, "Name updated: %s (evt=0x%02X)", parsedName, disc->event_type);
             }
             return;
         }
     }
 
-    // Add new result
-    BleScanResult& result = scanResults_[scanResultCount_];
-    memcpy(result.mac, disc->addr.val, 6);
-    result.addrType = disc->addr.type;
-    result.rssi = disc->rssi;
-    result.name[0] = '\0';
-
-    // Store raw advertising data for module-specific parsing
-    result.advDataLen = (disc->length_data <= sizeof(result.advData))
-                         ? disc->length_data : sizeof(result.advData);
-    memcpy(result.advData, disc->data, result.advDataLen);
-
-    // Extract name from advertising data
-    parseAdvName(disc->data, disc->length_data, result.name, sizeof(result.name));
-
-    // Use MAC as name if no name found
-    if (result.name[0] == '\0') {
-        snprintf(result.name, sizeof(result.name), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 result.mac[5], result.mac[4], result.mac[3],
-                 result.mac[2], result.mac[1], result.mac[0]);
+    // New device. Append while there is room; once full, keep the strongest by
+    // replacing the weakest entry only when the newcomer has a higher RSSI.
+    uint8_t slot;
+    if (scanResultCount_ < MAX_SCAN_RESULTS) {
+        slot = scanResultCount_++;
+    } else {
+        uint8_t weakest = 0;
+        for (uint8_t i = 1; i < scanResultCount_; i++) {
+            if (scanResults_[i].rssi < scanResults_[weakest].rssi) weakest = i;
+        }
+        if (disc->rssi <= scanResults_[weakest].rssi) return;
+        slot = weakest;
     }
 
-    scanResultCount_++;
+    bool nameComplete = false;
+    fillScanResult(scanResults_[slot], disc, &nameComplete);
+    scanNameComplete_[slot] = nameComplete;
     LOG_D(TAG, "Found: %s (RSSI %d) evt=0x%02X dlen=%d",
-          result.name, result.rssi, disc->event_type, disc->length_data);
+          scanResults_[slot].name, scanResults_[slot].rssi,
+          disc->event_type, disc->length_data);
 }
 
 /**
@@ -1244,20 +1282,25 @@ uint8_t BluetoothController::getScanResults(BleScanResult* results, uint8_t maxR
  * \param service High-level service definition.
  * \return `true` if registration succeeded.
  */
-bool BluetoothController::registerGattService(const GattServiceDef& service) {
+bool BluetoothController::registerGattService(const GattServiceDef& service,
+                                              bool pluginReserved) {
     // Reuse the slot already holding this service UUID (idempotent re-register),
     // otherwise take a free slot. Registration is allowed while BLE is disabled:
     // the slot is stored and committed to NimBLE later from enable().
+    // System modules draw from slots [0, PLUGIN_SERVICE_SLOT); a plugin draws
+    // only from the reserved PLUGIN_SERVICE_SLOT, so neither can starve the other.
     ble_uuid_any_t wantUuid;
     convertUuid(service.uuid, wantUuid);
+    const int firstSlot = pluginReserved ? PLUGIN_SERVICE_SLOT : 0;
+    const int lastSlot  = pluginReserved ? MAX_REGISTERED_SERVICES : PLUGIN_SERVICE_SLOT;
     int slot = -1;
-    for (int i = 0; i < MAX_REGISTERED_SERVICES; i++) {
+    for (int i = firstSlot; i < lastSlot; i++) {
         if (s_services[i].active && ble_uuid_cmp(&s_services[i].svcUuid.u, &wantUuid.u) == 0) {
             slot = i; break;
         }
     }
     if (slot < 0) {
-        for (int i = 0; i < MAX_REGISTERED_SERVICES; i++) {
+        for (int i = firstSlot; i < lastSlot; i++) {
             if (!s_services[i].active) { slot = i; break; }
         }
     }
@@ -1337,69 +1380,59 @@ bool BluetoothController::registerGattService(const GattServiceDef& service) {
     s.nimbleSvcs[0].characteristics = s.nimbleChars;
     memset(&s.nimbleSvcs[1], 0, sizeof(ble_gatt_svc_def));
 
-    // BLE not enabled yet: keep the converted slot and commit it from enable().
+    // Commit the slot; enable() (re)adds every active service through the one
+    // correct init path.
+    s.active = true;
+
+    // BLE not enabled yet: enable() commits this slot later.
     if (!enabled_) {
-        s.active = true;
         LOG_I(TAG, "GATT service stored, deferred until BLE enable (slot %d)", slot);
         return true;
     }
 
-    // Register with NimBLE
-    int rc = ble_gatts_count_cfg(s.nimbleSvcs);
-    if (rc != 0) {
-        LOG_E(TAG, "ble_gatts_count_cfg failed: %d", rc);
+    // BLE already running: NimBLE cannot add a service to a started GATT server
+    // in place (ble_svc_gap_init is not re-entrant and asserts on a second
+    // call), so rebuild the whole stack through the proven disable()/enable()
+    // path. This drops any active BLE connection.
+    disable();
+    if (!enable()) {
+        s.active = false;
+        LOG_E(TAG, "GATT service register: BLE restart failed (slot %d)", slot);
         return false;
     }
+    LOG_I(TAG, "GATT service registered via BLE restart (slot %d, %d chars)", slot, numChars);
+    return true;
+}
 
-    rc = ble_gatts_add_svcs(s.nimbleSvcs);
-    if (rc == BLE_HS_EBUSY) {
-        // GATT DB is already started; rebuild it to include the new service.
-        // Safe at registration time (no client connected yet). We must not
-        // expose the new slot as active until the rebuild completes
-        // successfully, otherwise other tasks could see a half-initialised
-        // slot during the loop.
-        if (advertising_) {
-            ble_gap_adv_stop();
-            advertising_ = false;
+bool BluetoothController::unregisterGattService(const BleUuid& serviceUuid) {
+    ble_uuid_any_t wantUuid;
+    convertUuid(serviceUuid, wantUuid);
+    int slot = -1;
+    for (int i = 0; i < MAX_REGISTERED_SERVICES; i++) {
+        if (s_services[i].active && ble_uuid_cmp(&s_services[i].svcUuid.u, &wantUuid.u) == 0) {
+            slot = i; break;
         }
-        ble_gatts_reset();
-        ble_svc_gap_init();
-        ble_svc_gatt_init();
+    }
+    if (slot < 0) return false;
 
-        bool ok = true;
-        for (int i = 0; i < MAX_REGISTERED_SERVICES; i++) {
-            if (i != slot && !s_services[i].active) continue;
-            int rrc = ble_gatts_count_cfg(s_services[i].nimbleSvcs);
-            if (rrc == 0) rrc = ble_gatts_add_svcs(s_services[i].nimbleSvcs);
-            if (rrc != 0) {
-                LOG_E(TAG, "GATT rebuild failed for slot %d: %d", i, rrc);
-                ok = false;
-                break;
-            }
-        }
-        if (ok) {
-            int srv_rc = ble_gatts_start();
-            if (srv_rc != 0) {
-                LOG_E(TAG, "ble_gatts_start after rebuild: %d", srv_rc);
-                ok = false;
-            }
-        }
-        if (!ok) return false;
+    memset(&s_services[slot], 0, sizeof(InternalService));
 
-        s.active = true;
-        if (synced_) {
-            startAdvertising();
-        }
-        LOG_I(TAG, "GATT service registered via rebuild (slot %d, %d chars)", slot, numChars);
+    // While disabled there is no live GATT DB to rebuild; the slot is simply
+    // dropped before the next enable() commits the remaining services.
+    if (!enabled_) {
+        LOG_I(TAG, "GATT service unregistered (slot %d, deferred)", slot);
         return true;
     }
-    if (rc != 0) {
-        LOG_E(TAG, "ble_gatts_add_svcs failed: %d", rc);
+
+    // Rebuild the live GATT DB through the proven disable()/enable() path (an
+    // in-place ble_gatts_reset + ble_svc_gap_init re-init asserts in NimBLE).
+    // This drops any active BLE connection.
+    disable();
+    if (!enable()) {
+        LOG_E(TAG, "GATT service unregister: BLE restart failed (slot %d)", slot);
         return false;
     }
-
-    s.active = true;
-    LOG_I(TAG, "GATT service registered (slot %d, %d chars)", slot, numChars);
+    LOG_I(TAG, "GATT service unregistered via BLE restart (slot %d)", slot);
     return true;
 }
 
@@ -1927,6 +1960,13 @@ bool BluetoothController::connect(const uint8_t* addr, uint8_t addrType) {
     LOG_I(TAG, "Connecting to %02X:%02X:%02X:%02X:%02X:%02X",
           addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
     return true;
+}
+
+/**
+ * \brief Cancels an in-progress GAP connection attempt.
+ */
+void BluetoothController::cancelConnect() {
+    ble_gap_conn_cancel();
 }
 
 /**

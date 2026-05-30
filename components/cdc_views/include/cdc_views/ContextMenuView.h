@@ -46,6 +46,7 @@ public:
     // IView implementation
     void render(bool partial) override;
     InputResult onKey(char key) override;
+    void onTick(uint32_t nowMs) override;
     const char* getName() const override { return "ContextMenuView"; }
     const char* getFooterHint() const override { return nullptr; }
 
@@ -57,6 +58,9 @@ private:
     uint8_t itemCount_ = 0;
     uint8_t selection_ = 0;
     uint8_t scrollPos_ = 0;
+    // Uptime (ms) of the last interaction; 0 until the first tick after show.
+    // Used for the auto-dismiss inactivity timeout.
+    uint32_t lastActivityMs_ = 0;
 
     void navigate(bool down);
     void select();

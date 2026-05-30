@@ -1,6 +1,9 @@
 #include "plugin_manager/PluginListView.h"
 #include "plugin_manager/PluginManager.h"
+#include "plugin_manager/host_api.h"
 #include "cdc_views/ToastView.h"
+#include "cdc_views/ContextMenuView.h"
+#include "cdc_ui/I18n.h"
 #include "cdc_log.h"
 
 #include <cstdio>
@@ -9,6 +12,59 @@ namespace cdc::plugin_manager {
 
 static const char* TAG = "PLG_UI";
 static PluginListView* s_active = nullptr;
+
+// Plugin id targeted by the currently-open context menu (key 3). The menu's
+// Stop callback takes no arguments, so the selection is stashed here.
+static std::string s_ctxPluginId;
+static cdc::ui::ContextMenuItem s_ctxItems[1];
+
+/**
+ * \brief Context-menu Stop callback: force-unloads the selected plugin.
+ */
+static void onCtxStop()
+{
+    cdc::ui::hideContextMenu();
+    if (!s_ctxPluginId.empty()) {
+        PluginManager::instance().unloadFromRam(s_ctxPluginId);
+    }
+    if (s_active) {
+        s_active->refresh();
+    }
+}
+
+/// Show a toast describing a non-Ok plugin start result.
+static void reportStartResult(StartResult result)
+{
+    if (result == StartResult::Ok) return;
+    static char msg[64];
+    const char* label = "Start failed";
+    switch (result) {
+        case StartResult::PluginAlreadyRunning: label = "Already running"; break;
+        case StartResult::ManifestInvalid:      label = "Manifest invalid"; break;
+        case StartResult::CapabilityRejected:   label = "Capabilities rejected"; break;
+        case StartResult::WamrLoadFailed:       label = "WASM load failed"; break;
+        case StartResult::PluginInitFailed:     label = "plugin_init failed"; break;
+        case StartResult::PrerequisiteFailed:   label = "Prerequisite failed"; break;
+        case StartResult::PluginOnEnterFailed:  label = "plugin_on_enter missing"; break;
+        default: break;
+    }
+    std::snprintf(msg, sizeof(msg), "%s\nErr %d", label, static_cast<int>(result));
+    cdc::ui::showToastError(msg, 3000);
+}
+
+/**
+ * \brief Context-menu Start callback: starts the selected (stopped) plugin.
+ */
+static void onCtxStart()
+{
+    cdc::ui::hideContextMenu();
+    if (!s_ctxPluginId.empty()) {
+        reportStartResult(PluginManager::instance().startPlugin(s_ctxPluginId));
+    }
+    if (s_active) {
+        s_active->refresh();
+    }
+}
 
 PluginListView* PluginListView::active() noexcept { return s_active; }
 
@@ -30,6 +86,11 @@ void PluginListView::onExit()
 void PluginListView::onResume()
 {
     s_active = this;
+    // A plugin declaring capabilities.background keeps ticking after the user
+    // leaves its view; tell them so before we demote it off the foreground.
+    if (PluginManager::instance().activePluginIsBackground()) {
+        cdc::ui::showToastInfo(cdc::ui::tr("core.plugin_bg_running"), 1800);
+    }
     PluginManager::instance().requestStopActivePlugin();
     rebuildItems();
     list_.markDirty();
@@ -47,12 +108,19 @@ cdc::ui::InputResult PluginListView::onKey(char key)
 
 const char* PluginListView::getFooterHint() const
 {
-    return "Y=Start  3=Menu  N=Back";
+    return cdc::ui::tr("core.hint_plugin_list");
+}
+
+void PluginListView::refresh()
+{
+    rebuildItems();
+    list_.markDirty();
 }
 
 void PluginListView::rebuildItems()
 {
-    ids_     = PluginManager::instance().listInstalledIds();
+    auto& mgr = PluginManager::instance();
+    ids_     = mgr.listInstalledIds();
     labels_.clear();
     items_.clear();
     labels_.reserve(ids_.size());
@@ -72,11 +140,18 @@ void PluginListView::rebuildItems()
             }
         }
         labels_.push_back(std::move(display));
-        items_.push_back(cdc::ui::ListItem{labels_.back().c_str(), 0, false, nullptr});
+        // Mark as running for an already-background plugin AND for the active
+        // plugin that is about to be demoted to background (the demotion is
+        // async, so this would otherwise miss the indicator on first open).
+        const bool running = mgr.isRunningInBackground(id) ||
+                             (mgr.activePluginIsBackground() && mgr.activePluginId() == id);
+        const uint8_t icon = running ? UI_ICON_SUN : 0;
+        items_.push_back(cdc::ui::ListItem{labels_.back().c_str(), icon, false, nullptr});
     }
 
     list_.init("Plugins", items_.data(), static_cast<uint16_t>(items_.size()));
     list_.setEmptyText("No plugins installed");
+    list_.setHint(cdc::ui::tr("core.hint_plugin_list"));
 }
 
 void PluginListView::onSelectStatic(uint16_t index, void*)
@@ -95,28 +170,22 @@ void PluginListView::onSelect(uint16_t index)
     const auto& id = ids_[index];
     LOG_I(TAG, "start plugin %s", id.c_str());
 
-    auto result = PluginManager::instance().startPlugin(id);
-    if (result != StartResult::Ok) {
-        static char msg[64];
-        const char* label = "Start failed";
-        switch (result) {
-            case StartResult::PluginAlreadyRunning: label = "Already running"; break;
-            case StartResult::ManifestInvalid:      label = "Manifest invalid"; break;
-            case StartResult::CapabilityRejected:   label = "Capabilities rejected"; break;
-            case StartResult::WamrLoadFailed:       label = "WASM load failed"; break;
-            case StartResult::PluginInitFailed:     label = "plugin_init failed"; break;
-            case StartResult::PrerequisiteFailed:   label = "Prerequisite failed"; break;
-            case StartResult::PluginOnEnterFailed:  label = "plugin_on_enter missing"; break;
-            default: break;
-        }
-        std::snprintf(msg, sizeof(msg), "%s\nErr %d", label, static_cast<int>(result));
-        cdc::ui::showToastError(msg, 3000);
-    }
+    reportStartResult(PluginManager::instance().startPlugin(id));
 }
 
-void PluginListView::onMenu(uint16_t /*index*/)
+void PluginListView::onMenu(uint16_t index)
 {
-    cdc::ui::showToastInfo("Context menu coming soon", 1200);
+    if (index >= ids_.size()) return;
+    s_ctxPluginId = ids_[index];
+
+    auto& mgr = PluginManager::instance();
+    const bool running = mgr.isRunningInBackground(s_ctxPluginId) ||
+                         (mgr.activePluginIsBackground() && mgr.activePluginId() == s_ctxPluginId);
+
+    s_ctxItems[0] = running
+        ? cdc::ui::ContextMenuItem{cdc::ui::tr("core.stop"),  &onCtxStop}
+        : cdc::ui::ContextMenuItem{cdc::ui::tr("core.start"), &onCtxStart};
+    cdc::ui::showContextMenu(cdc::ui::tr("core.actions"), s_ctxItems, 1);
 }
 
 }  // namespace cdc::plugin_manager

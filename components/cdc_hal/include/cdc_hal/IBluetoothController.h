@@ -142,6 +142,11 @@ public:
     using ListenerToken = uint16_t;
     static constexpr ListenerToken INVALID_LISTENER = 0xFFFF;
 
+    // GATT server limits (single source of truth for the controller and any
+    // caller validating a service before registerGattService()).
+    static constexpr uint8_t MAX_REGISTERED_SERVICES = 5;
+    static constexpr uint8_t MAX_CHARS_PER_SERVICE   = 6;
+
     // === Power Control ===
 
     /**
@@ -264,6 +269,12 @@ public:
     // === Scanning ===
 
     /**
+     * Maximum number of scan results retained/returned. Single source of truth
+     * for both the controller's result buffer and any caller-side buffers.
+     */
+    static constexpr uint8_t MAX_SCAN_RESULTS = 64;
+
+    /**
      * Start BLE scan
      * @param durationMs Scan duration in milliseconds
      * @return true if scan started
@@ -384,10 +395,25 @@ public:
      * Service definitions are translated to stack-native format internally.
      * Must be called after enable() and before advertising.
      * @param service Service definition (struct must remain valid until unregistered)
+     * @param pluginReserved true to allocate from the slot reserved for plugins;
+     *                       false (system modules) to allocate from the system pool
      * @return true if successfully registered
      */
-    virtual bool registerGattService(const GattServiceDef& service) {
-        (void)service;
+    virtual bool registerGattService(const GattServiceDef& service,
+                                     bool pluginReserved = false) {
+        (void)service; (void)pluginReserved;
+        return false;
+    }
+
+    /**
+     * Unregister a previously registered GATT service by its service UUID and
+     * rebuild the GATT database. Intended for dynamically (un)loaded owners
+     * such as plugins.
+     * @param serviceUuid UUID of the service to remove
+     * @return true if a matching service was found and removed
+     */
+    virtual bool unregisterGattService(const BleUuid& serviceUuid) {
+        (void)serviceUuid;
         return false;
     }
 
@@ -437,6 +463,12 @@ public:
         (void)addr; (void)addrType;
         return false;
     }
+
+    /**
+     * Cancel an in-progress connection attempt started via connect().
+     * No-op if no connection is pending.
+     */
+    virtual void cancelConnect() {}
 
     /**
      * Discover a specific service by UUID on connected device.
@@ -584,6 +616,11 @@ public:
      */
     virtual uint16_t getConnectionHandle() const { return 0xFFFF; }
 };
+
+// Namespace-level aliases for the multi-listener token type, so callers can
+// write cdc::hal::ListenerToken / cdc::hal::INVALID_LISTENER.
+using ListenerToken = IBluetoothController::ListenerToken;
+inline constexpr ListenerToken INVALID_LISTENER = IBluetoothController::INVALID_LISTENER;
 
 // Factory function
 IBluetoothController* getBluetoothControllerInstance();

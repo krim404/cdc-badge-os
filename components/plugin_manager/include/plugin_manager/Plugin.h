@@ -87,9 +87,9 @@ public:
     /**
      * \brief Load the plugin's translation overlay from disk into PSRAM.
      *
-     * Parses a JSON file (same schema as the firmware-wide lang.json) and
-     * keeps the active language's key/value pairs in a sorted array for
-     * binary-search lookup via `trKey()`. Missing or invalid file is
+     * Parses a JSON file with a `{ "translations": { "<code>": {...} } }`
+     * schema and keeps the active language's key/value pairs in a sorted array
+     * for binary-search lookup via `trKey()`. Missing or invalid file is
      * non-fatal - lookups fall back to the manifest's English strings.
      *
      * \param path Filesystem path, defaults to `/plugins/<id>.lang`.

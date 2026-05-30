@@ -22,6 +22,7 @@ idf_component_register(
         "src/PluginUiState.cpp"
         "src/host_api_i18n.cpp"
         "src/host_api_nvs.cpp"
+        "src/host_api_fs.cpp"
         "src/host_api_event.cpp"
         "src/host_api_gpio.cpp"
         "src/host_api_wifi.cpp"
@@ -31,14 +32,18 @@ idf_component_register(
         "src/host_api_sysinfo.cpp"
         "src/host_api_cmd.cpp"
         "src/host_api_ble.cpp"
+        "src/host_api_display.cpp"
+        "src/host_api_keypad.cpp"
+        "src/host_api_usb.cpp"
         "src/host_api_pixel_strip.cpp"
         "src/host_api_lockscreen.cpp"
         "src/host_api_strings.cpp"
-        "src/host_api_stubs.cpp"
         "src/PluginSerialCommands.cpp"
         "src/GpioSerialCommands.cpp"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "src"
     REQUIRES
         cdc_core
         cdc_hal
@@ -58,4 +63,5 @@ idf_component_register(
         esp-tls
         mbedtls
         espressif__led_strip
+        usb_badge
 )

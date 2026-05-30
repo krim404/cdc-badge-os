@@ -37,6 +37,7 @@ Modular firmware for the CDC Badge v1.0/v1.1 hardware security key featuring TRO
 | **Multi-Language** | Working | English and German UI |
 | **Secure Serial** | Working | PIN authentication for serial commands |
 | **WASM Plugin Runtime** | WIP | Sandboxed third-party plugins via WebAssembly (WAMR Fast Interpreter). Host API exposes 80+ symbols under module `"cdc"`, including a Canvas view for plugin-drawn UIs. |
+| **vFAT File Browser** | Working | On-device file explorer (Tools&nbsp;→&nbsp;Expert) and a `VFAT` serial shell for the plugins FAT partition. |
 
 ### Planned
 
@@ -55,9 +56,9 @@ partition and can be installed / updated without re-flashing.
 | Web installer | [krim404.github.io/cdc-badge-plugins](https://krim404.github.io/cdc-badge-plugins/) |
 | SDK + examples + source | [github.com/krim404/cdc-badge-plugins](https://github.com/krim404/cdc-badge-plugins) |
 
-The plugin host API surface (80+ functions: NVS, i18n, HTTP, WiFi, GPIO,
-ADC, I2C, Pixel-Strip, BLE, SecureElement, Crypto, UI views, Canvas, RGB
-Color Picker, …) is defined canonically in
+The plugin host API surface (80+ functions: NVS, sandboxed vFAT file access,
+i18n, HTTP, WiFi, GPIO, ADC, I2C, Pixel-Strip, BLE, SecureElement, Crypto, UI
+views, Canvas, RGB Color Picker, …) is defined canonically in
 [`components/plugin_manager/include/plugin_manager/host_api.h`](components/plugin_manager/include/plugin_manager/host_api.h)
 and mirrored byte-identical into the SDK repo.
 
@@ -84,6 +85,7 @@ components/
   mod_ble_serial/ BLE Serial console (Nordic UART Service)
   mod_sao/        SAO port detection
   mod_nvsedit/    NVS editor (privileged)
+  mod_vfat/       vFAT file explorer + VFAT serial shell
 ```
 
 Modules are self-contained and can be enabled/disabled in `main/CMakeLists.txt`.

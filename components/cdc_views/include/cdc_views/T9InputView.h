@@ -20,7 +20,7 @@ namespace cdc::ui {
 class T9InputView : public ViewBase {
 public:
     static constexpr uint16_t MAX_TEXT_LEN = 320;
-    static constexpr uint32_t TIMEOUT_MS = 2000;  // Time before character is committed (match legacy)
+    static constexpr uint32_t TIMEOUT_MS = 2000;  // Time before character is committed
 
     /**
      * Save callback (called when Y is pressed)

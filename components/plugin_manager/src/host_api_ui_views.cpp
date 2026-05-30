@@ -37,6 +37,21 @@ int host_ui_set_view_empty(const char* text)
     return cdc::plugin_manager::PluginUiState::instance().setViewEmpty(text);
 }
 
+int host_ui_update_list_item(uint16_t index, const ui_item_t* item)
+{
+    return cdc::plugin_manager::PluginUiState::instance().updateListItem(index, item);
+}
+
+int host_ui_insert_list_item(uint16_t index, const ui_item_t* item)
+{
+    return cdc::plugin_manager::PluginUiState::instance().insertListItem(index, item);
+}
+
+int host_ui_remove_list_item(uint16_t index)
+{
+    return cdc::plugin_manager::PluginUiState::instance().removeListItem(index);
+}
+
 int host_ui_push_context_menu(const char* title, const ui_item_t* items, uint16_t count,
                               uint32_t select_action_id)
 {

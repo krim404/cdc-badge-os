@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Build a wear-levelled FAT image (plugins partition) seeded with the
-i18n overlay file.
+per-language i18n overlay files.
 
-The output image has a single `i18n/lang.json` entry. All remaining sectors
-are empty so installed plugins (which live as `<id>.wasm` + `<id>.meta` in
-the partition root) can be written next to it without further preparation.
+The output image holds one `i18n/lang_<code>.json` entry per language file
+found in the source directory (e.g. `i18n/lang_de.json`). All remaining
+sectors are empty so installed plugins (which live as `<id>.wasm` +
+`<id>.meta` in the partition root) can be written next to it without further
+preparation.
 
 Run from the repo root:
 
     python tools/build_lang_image.py \
-        --lang-json assets/i18n/lang.json \
+        --lang-dir assets/i18n \
         --output build/plugins_initial.bin
 
 The script locates wl_fatfsgen.py inside the active ESP-IDF installation.
@@ -58,9 +60,10 @@ def select_python() -> str:
     return sys.executable
 
 
-def build_image(lang_json: Path, output: Path, partition_size: int) -> None:
-    if not lang_json.is_file():
-        raise FileNotFoundError(f"lang.json not found: {lang_json}")
+def build_image(lang_dir: Path, output: Path, partition_size: int) -> None:
+    lang_files = sorted(lang_dir.glob("lang_*.json")) if lang_dir.is_dir() else []
+    if not lang_files:
+        raise FileNotFoundError(f"no lang_<code>.json files in: {lang_dir}")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     fatfsgen = find_wl_fatfsgen()
@@ -68,7 +71,9 @@ def build_image(lang_json: Path, output: Path, partition_size: int) -> None:
     with tempfile.TemporaryDirectory() as staging:
         i18n_dir = Path(staging) / "i18n"
         i18n_dir.mkdir()
-        shutil.copy(lang_json, i18n_dir / "lang.json")
+        for f in lang_files:
+            shutil.copy(f, i18n_dir / f.name)
+        print(f"Seeding i18n with: {', '.join(f.name for f in lang_files)}")
 
         cmd = [
             select_python(),
@@ -89,9 +94,10 @@ def build_image(lang_json: Path, output: Path, partition_size: int) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--lang-json", type=Path,
-                    default=Path("assets/i18n/lang.json"),
-                    help="Path to lang.json (default: assets/i18n/lang.json)")
+    ap.add_argument("--lang-dir", type=Path,
+                    default=Path("assets/i18n"),
+                    help="Directory with lang_<code>.json files "
+                         "(default: assets/i18n)")
     ap.add_argument("--output", type=Path,
                     default=Path("build/plugins_initial.bin"),
                     help="Output image path (default: build/plugins_initial.bin)")
@@ -101,7 +107,7 @@ def main() -> int:
     args = ap.parse_args()
 
     try:
-        build_image(args.lang_json, args.output, args.partition_size)
+        build_image(args.lang_dir, args.output, args.partition_size)
     except (FileNotFoundError, subprocess.CalledProcessError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

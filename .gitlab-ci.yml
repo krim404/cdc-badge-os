@@ -28,7 +28,7 @@ build:
     - pio run
     - pip install construct
     - export IDF_PATH="$(find "$PLATFORMIO_CORE_DIR/packages" -maxdepth 1 -name 'framework-espidf*' | head -1)"
-    - python tools/build_lang_image.py --lang-json assets/i18n/lang.json --output build/plugins_initial.bin
+    - python tools/build_lang_image.py --lang-dir assets/i18n --output build/plugins_initial.bin
     - |
       if [ -n "$CI_COMMIT_TAG" ]; then
         VERSION="$CI_COMMIT_TAG"
