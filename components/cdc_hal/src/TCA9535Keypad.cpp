@@ -9,8 +9,10 @@
 #include "cdc_core/SystemLock.h"
 #include "cdc_log.h"
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
@@ -241,8 +243,8 @@ bool TCA9535Keypad::init() {
     }
 
     // Create task
-    BaseType_t ret = xTaskCreate(taskFunc, "keypad", TASK_STACK_SIZE,
-                                  this, TASK_PRIORITY, &taskHandle_);
+    BaseType_t ret = xTaskCreateWithCaps(taskFunc, "keypad", TASK_STACK_SIZE,
+                                  this, TASK_PRIORITY, &taskHandle_, MALLOC_CAP_SPIRAM);
     if (ret != pdPASS) {
         LOG_E(TAG, "Failed to create task");
         vSemaphoreDelete(semaphore_);

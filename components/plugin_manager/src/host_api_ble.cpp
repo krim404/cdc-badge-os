@@ -17,6 +17,7 @@
 
 #include "cdc_hal/IBluetoothController.h"
 #include "plugin_manager/host_api.h"
+#include "esp_attr.h"
 #include "plugin_manager/Plugin.h"
 #include "plugin_manager/PluginManager.h"
 
@@ -38,6 +39,7 @@ extern "C" void* plg_get_active_plugin(void);
 namespace {
 
 constexpr uint16_t BLE_MAX_PAYLOAD = 244;   // default-MTU payload budget
+constexpr uint32_t PLUGIN_SERVICE_HANDLE = 1;  // only one plugin GATT service exists
 constexpr uint8_t  MAX_PLUGIN_CHARS = cdc::hal::IBluetoothController::MAX_CHARS_PER_SERVICE;
 constexpr uint8_t  WRITE_RING = 4;
 constexpr uint8_t  NOTIFY_RING = 4;
@@ -107,7 +109,7 @@ struct {
     // inbound notification ring
     NotifyEvt nring[NOTIFY_RING];
     uint8_t   n_head = 0, n_tail = 0;
-} s_cen;
+} s_cen EXT_RAM_BSS_ATTR;
 
 // --- helpers ---
 
@@ -292,14 +294,14 @@ int host_ble_register_service(ble_service_def_t* def, ble_char_def_t* chars, uin
         s_periph.chars[i].write_action_id = chars[i].write_action_id;
         chars[i].char_handle = i + 1;
     }
-    def->service_handle = 1;
+    def->service_handle = PLUGIN_SERVICE_HANDLE;
     return HOST_OK;
 }
 
 int host_ble_unregister_service(uint32_t service_handle) {
-    (void)service_handle;
     if (!ble_allowed()) return HOST_ERR_NO_CAPABILITY;
     if (!s_periph.active || s_periph.plugin != plg_get_active_plugin()) return HOST_ERR_NOT_FOUND;
+    if (service_handle != PLUGIN_SERVICE_HANDLE) return HOST_ERR_NOT_FOUND;
     auto* b = ble();
     if (b) b->unregisterGattService(BleUuid::from128(s_periph.uuid));
     s_periph = {};

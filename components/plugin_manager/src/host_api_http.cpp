@@ -3,10 +3,14 @@
  * \brief HTTP client wrapper over esp_http_client.
  *
  * Holds up to 4 simultaneous in-flight requests in a fixed slot table so the
- * WAMR-WASM side can identify them by integer handle. Streaming reads via
- * host_http_read_chunk; the host buffers chunks in PSRAM via the http event
- * handler. The client handle and body buffer use RAII wrappers, so resetting
- * a slot via `*slot = HttpSlot{}` frees both resources automatically.
+ * WAMR-WASM side can identify them by integer handle. The whole response body
+ * is buffered in PSRAM during host_http_perform (via the event handler, or a
+ * manual drain on the auth-error path); host_http_read_chunk then hands it out
+ * sequentially from that buffer, so reads are chunked but not truly streamed.
+ * The body buffer is capped at MAX_HTTP_BODY_BYTES and silently truncated past
+ * it; the read cursor is one-way (a body cannot be re-read); Content-Type is
+ * not exposed. The client handle and body buffer use RAII wrappers, so
+ * resetting a slot via `*slot = HttpSlot{}` frees both resources automatically.
  */
 
 #include "plugin_manager/Raii.h"
@@ -50,29 +54,41 @@ constexpr size_t MAX_HTTP_SLOTS = 4;
 constexpr size_t MAX_HTTP_BODY_BYTES = 1 * 1024 * 1024;
 cdc::plugin_manager::SlotTable<HttpSlot, MAX_HTTP_SLOTS> s_slots{};
 
+// Append response bytes to the slot buffer, growing PSRAM storage up to
+// MAX_HTTP_BODY_BYTES. Returns false if the cap is reached or realloc fails.
+bool appendBody(HttpSlot& slot, const char* data, size_t len)
+{
+    if (!data || len == 0) return true;
+    size_t needed = slot.body_len + len + 1;
+    if (needed > MAX_HTTP_BODY_BYTES) return false;
+    if (needed > slot.body_cap) {
+        size_t new_cap = slot.body_cap ? slot.body_cap : 4096;
+        while (new_cap < needed) new_cap *= 2;
+        if (new_cap > MAX_HTTP_BODY_BYTES) new_cap = MAX_HTTP_BODY_BYTES;
+        char* raw = slot.body.release();
+        char* grown = static_cast<char*>(std::realloc(raw, new_cap));
+        if (!grown) {
+            slot.body.reset(raw);
+            return false;
+        }
+        slot.body.reset(grown);
+        slot.body_cap = new_cap;
+    }
+    std::memcpy(slot.body.get() + slot.body_len, data, len);
+    slot.body_len += len;
+    slot.body.get()[slot.body_len] = '\0';
+    return true;
+}
+
 esp_err_t http_event_handler(esp_http_client_event_t* evt)
 {
     auto* slot = static_cast<HttpSlot*>(evt->user_data);
     if (!slot) return ESP_OK;
     if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data && evt->data_len > 0) {
-        size_t needed = slot->body_len + evt->data_len + 1;
-        if (needed > MAX_HTTP_BODY_BYTES) return ESP_FAIL;
-        if (needed > slot->body_cap) {
-            size_t new_cap = slot->body_cap ? slot->body_cap : 4096;
-            while (new_cap < needed) new_cap *= 2;
-            if (new_cap > MAX_HTTP_BODY_BYTES) new_cap = MAX_HTTP_BODY_BYTES;
-            char* raw = slot->body.release();
-            char* grown = static_cast<char*>(std::realloc(raw, new_cap));
-            if (!grown) {
-                slot->body.reset(raw);
-                return ESP_FAIL;
-            }
-            slot->body.reset(grown);
-            slot->body_cap = new_cap;
+        if (!appendBody(*slot, static_cast<const char*>(evt->data),
+                        static_cast<size_t>(evt->data_len))) {
+            return ESP_FAIL;
         }
-        std::memcpy(slot->body.get() + slot->body_len, evt->data, evt->data_len);
-        slot->body_len += evt->data_len;
-        slot->body.get()[slot->body_len] = '\0';
     }
     return ESP_OK;
 }
@@ -146,13 +162,26 @@ int host_http_perform(int handle)
     auto* slot = slotFor(handle);
     if (!slot) return HOST_ERR_INVALID_ARG;
     esp_err_t err = esp_http_client_perform(slot->handle.get());
-    if (err != ESP_OK) {
-        LOG_E("HTTP", "perform failed: %s (0x%x)", esp_err_to_name(err), err);
-        return HOST_ERR_GENERIC;
-    }
     slot->status         = esp_http_client_get_status_code(slot->handle.get());
     slot->content_length = static_cast<size_t>(
         esp_http_client_get_content_length(slot->handle.get()));
+    // esp_http_client_perform reports ESP_ERR_NOT_SUPPORTED for a 401 whose
+    // WWW-Authenticate scheme it cannot satisfy (e.g. Bearer) and returns before
+    // draining the body, so HTTP_EVENT_ON_DATA never fired. A zero status means
+    // no HTTP exchange happened (connect/TLS failure): that stays a hard error.
+    // Otherwise the exchange completed; drain the body manually so the plugin can
+    // read the error response and act on the status code itself.
+    if (err != ESP_OK) {
+        if (slot->status == 0) {
+            LOG_E("HTTP", "perform failed: %s (0x%x)", esp_err_to_name(err), err);
+            return HOST_ERR_GENERIC;
+        }
+        char buf[512];
+        int n;
+        while ((n = esp_http_client_read(slot->handle.get(), buf, sizeof(buf))) > 0) {
+            if (!appendBody(*slot, buf, static_cast<size_t>(n))) break;
+        }
+    }
     LOG_I("HTTP", "status=%d content_length=%zu", slot->status, slot->content_length);
     return HOST_OK;
 }

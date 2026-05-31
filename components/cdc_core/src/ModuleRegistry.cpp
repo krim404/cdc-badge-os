@@ -20,8 +20,8 @@ namespace cdc::core {
  * \return Registry singleton reference.
  */
 ModuleRegistry& ModuleRegistry::instance() {
-    static ModuleRegistry instance;
-    return instance;
+    static ModuleRegistry* instance = new ModuleRegistry();
+    return *instance;
 }
 
 /**

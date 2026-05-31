@@ -1,158 +1,57 @@
 # CDC Badge OS Documentation
 
-Documentation for the CDC Badge v1.0/v1.1 hardware security key firmware.
+Documentation index for the CDC Badge v1.0/v1.1 hardware security key firmware.
 
-## Quick Links
+For the feature/module list, hardware overview, build/flash commands, feature
+flags, and getting started, see the [project README](../README.md).
 
-| Document | Description |
-|----------|-------------|
-| [Getting Started](#getting-started) | Build, flash, and first steps |
-| [Module Development](MODULE_DEVELOPMENT.md) | Create custom modules |
-| [Serial Commands](SERIAL_COMMANDS.md) | Command reference |
-| [UI Flows](UI_FLOWS.md) | User interface navigation |
+Authoritative facts live in code, not in these docs:
 
-## Overview
-
-CDC Badge OS is modular firmware for a hardware security key based on:
-
-- **ESP32-S3** with 16MB flash and PSRAM
-- **TROPIC01** secure element for key storage
-- **E-Paper display** (296x128) with 12-button keypad
-- **USB-C** for CDC serial, CCID smartcard, and HID
-- **Bluetooth LE** for vCard exchange and HID keyboard
-
-### Features
-
-| Module | Description | Status |
-|--------|-------------|--------|
-| **FIDO2/WebAuthn** | Passwordless authentication | Working |
-| **TOTP** | Time-based one-time passwords | Working |
-| **Passwords** | Encrypted password vault | Working |
-| **GPG** | OpenPGP smartcard (CCID): sign / verify / encrypt / decrypt / SSH-auth end-to-end with GnuPG | Working (UI WIP) |
-| **BLE vCard** | Contact exchange between badges | Working |
-| **BLE HID** | Bluetooth keyboard for auto-type | Working |
-
-## Getting Started
-
-### Prerequisites
-
-- CDC Badge v1.0/v1.1 hardware
-- USB-C cable
-
-### Flash Pre-built Firmware
-
-No build environment needed - flash a release directly.
-
-**Web Flasher:** [CDC Badge Web Flasher](https://krim404.github.io/cdc-badge-os/) (Chrome/Edge with Web Serial)
-
-**Python Flash Tool:**
-
-```bash
-pip install -r tools/requirements.txt
-python tools/flash_firmware.py --release latest
-```
-
-See `python tools/flash_firmware.py --help` for all options (specific versions, local files, NVS erase).
-
-### Build from Source
-
-Requires [PlatformIO](https://platformio.org/) with ESP-IDF framework.
-
-```bash
-# Initialize submodules (first time only)
-git submodule update --init --recursive
-
-# Build firmware
-~/.platformio/penv/bin/pio run
-
-# Build and flash
-~/.platformio/penv/bin/pio run -t upload
-
-# Monitor serial output
-~/.platformio/penv/bin/pio device monitor
-```
-
-### First Boot
-
-1. Connect badge via USB-C
-2. Default PIN: `123456` (change immediately!)
-3. Press **Y** on lock screen to unlock
-4. Navigate with **1-9** keys, confirm with **Y**, back with **N**
+- TROPIC01 slot allocation: `main/tropic_slot_map.h`
+- Plugin host API surface: `components/plugin_manager/include/plugin_manager/host_api.h`
+- Feature flags: `components/cdc_core/include/cdc_core/feature_flags.h`
 
 ## Architecture
 
-### Component Overview
-
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Modules                                  │
-│  mod_fido2 │ mod_totp │ mod_password │ mod_gpg │ mod_vcard │ ...│
+│  Native modules (mod_fido2, mod_totp, mod_password, mod_gpg, …)  │
+│  + WASM plugins (PluginManager + WAMR sandbox)                   │
 ├─────────────────────────────────────────────────────────────────┤
-│                      OS UI (cdc_os_ui)                          │
-│          Lock Screen │ Settings │ WiFi/BLE Menus                │
+│  OS UI (cdc_os_ui): Lock Screen │ Settings │ WiFi/BLE Menus      │
 ├─────────────────────────────────────────────────────────────────┤
-│                    UI Framework (cdc_ui + cdc_views)            │
-│        ViewStack │ ListView │ T9Input │ Toast │ Confirm │ ...   │
+│  UI Framework (cdc_ui + cdc_views): ViewStack │ ListView │ …     │
 ├─────────────────────────────────────────────────────────────────┤
-│                      Core Services (cdc_core)                   │
-│   ServiceRegistry │ EventBus │ ModuleRegistry │ TropicStorage   │
+│  Core Services (cdc_core): ServiceRegistry │ EventBus │ …        │
 ├─────────────────────────────────────────────────────────────────┤
-│                   HAL (cdc_hal)                                 │
-│   Display │ Keypad │ SecureElement │ Power │ WiFi │ Bluetooth   │
+│  HAL (cdc_hal): Display │ Keypad │ SecureElement │ Power │ …     │
 ├─────────────────────────────────────────────────────────────────┤
-│                      ESP-IDF / FreeRTOS                         │
+│  ESP-IDF / FreeRTOS                                              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Secure Storage (TROPIC01)
+## Guides
 
-Private keys and secrets are stored in the TROPIC01 secure element:
+### User
 
-| Resource | Capacity | Usage |
-|----------|----------|-------|
-| ECC Slots | 32 (0-31) | Cryptographic keys |
-| R-Memory Slots | 512 (0-511) | Encrypted data (422 bytes payload each, 444-byte slot incl. 22-byte header) |
-
-Slot allocation is defined in `main/tropic_slot_map.h`. See [Module Development](MODULE_DEVELOPMENT.md) for details.
-
-## Tools
-
-Python tools under `tools/`. Install all dependencies at once:
-
-```bash
-pip install -r tools/requirements.txt
-```
-
-| Tool | Description |
-|------|-------------|
-| `flash_firmware.py` | Flash pre-built firmware from GitHub releases or local files |
-| `ble_serial.py` | BLE serial console via Nordic UART Service |
-| `coredump.py` | Read and analyze ESP32 core dumps from flash |
-
-## Documentation Index
-
-### User Guides
-
-- [UI Flows](UI_FLOWS.md) - Navigation and interface reference
+- [UI Flows](UI_FLOWS.md) - on-device navigation and interface reference
 - [Serial Commands](SERIAL_COMMANDS.md) - USB serial command reference
 
-### Developer Guides
+### Developer
 
-- [Module Development](MODULE_DEVELOPMENT.md) - Creating custom modules
-- [GPG Implementation](GPG.md) - GPG/OpenPGP smartcard details
+- [Module Development](MODULE_DEVELOPMENT.md) - native modules (compiled in)
+- [Plugin Development](PLUGIN_DEVELOPMENT.md) - sandboxed WASM plugins (host API)
+- [Security Hardening](SECURITY.md) - security posture and 1.0 hardening roadmap
+- [GPG Implementation](GPG.md) - OpenPGP smartcard details
 
 ### Protocol Specifications
 
-- [BLE vCard Protocol](ble_vcard_protocol.md) - Badge-to-badge contact exchange
-- [GPG Cross-Signing](CROSS_SIGNING.md) - Badge-to-badge key signing
-
-### Implementation Plans
-
-Historical implementation plans are archived in [plans/](plans/). These documents reflect the design process and may not match the current implementation.
+- [BLE vCard Protocol](ble_vcard_protocol.md) - badge-to-badge contact exchange
+- [GPG Cross-Signing](CROSS_SIGNING.md) - badge-to-badge key signing
 
 ## Contributing
 
-- All code and documentation in **English**
+- All code and documentation in English
 - Follow existing patterns in the codebase
 - Use `cdc_log` for logging (never `ESP_LOG` directly)
 - See [Module Development](MODULE_DEVELOPMENT.md) for architecture guidelines

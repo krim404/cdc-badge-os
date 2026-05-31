@@ -15,6 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
+#include "esp_attr.h"
 
 namespace cdc::ui {
 
@@ -73,7 +74,7 @@ static ListItem s_wifiAuthItems[WIFI_AUTH_COUNT];
 static ListItem s_wifiIpItems[WIFI_IP_COUNT];
 static ListItem s_wifiScanItems[WIFI_MAX_NETWORKS + 1];
 static char s_wifiManualLabel[48];
-static WifiItem s_wifiScanResults[WIFI_MAX_NETWORKS];
+EXT_RAM_BSS_ATTR static WifiItem s_wifiScanResults[WIFI_MAX_NETWORKS];
 static uint8_t s_wifiScanCount = 0;
 static const char* s_wifiAuthLabels[WIFI_AUTH_COUNT] = {
     "WPA2", "WPA/WPA2", "WPA3", "WPA", "Open", "WEP"

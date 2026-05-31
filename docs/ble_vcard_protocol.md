@@ -74,8 +74,8 @@ Service UUID:
 
 Characteristics:
 - **Data** (Indicate): `8E2F1F21-8B5D-4D7A-9A6E-4C9D6A8B1A01`
-- **Control** (Write): `8E2F1F22-8B5D-4D7A-9A6E-4C9D6A8B1A01`
-- **RX** (Write w/ Response): `8E2F1F23-8B5D-4D7A-9A6E-4C9D6A8B1A01`
+- **RX** (Write w/ Response): `8E2F1F22-8B5D-4D7A-9A6E-4C9D6A8B1A01`
+- **Control** (Write): `8E2F1F23-8B5D-4D7A-9A6E-4C9D6A8B1A01`
 - **Status** (Indicate + Read): `8E2F1F24-8B5D-4D7A-9A6E-4C9D6A8B1A01`
 
 Security:
@@ -115,7 +115,7 @@ Payload follows immediately after the opcode (START has an extra 2‑byte length
 6) Receive Data indications and reassemble remote vCard
 7) Store if OK
 8) Send own vCard via RX (Write) in chunks
-9) Wait for Status indication (`0x01` = success, `0x00` = fail)
+9) Wait for Status notification (`0x01` ACCEPTED, `0x02` DECLINED, `0x03` BUSY)
 10) Disconnect
 
 **Responder (Server)**
@@ -123,7 +123,7 @@ Payload follows immediately after the opcode (START has an extra 2‑byte length
 2) Client connects + pairs
 3) On Control=0x01: send own vCard via Data indications
 4) On RX writes: reassemble and store
-5) Send Status (indication) 0x01 or 0x00
+5) Send Status notification: `0x01` ACCEPTED, `0x02` DECLINED, `0x03` BUSY
 
 ### 3.5 State machine (Client)
 - CONNECTING
@@ -137,7 +137,7 @@ Payload follows immediately after the opcode (START has an extra 2‑byte length
 
 ### 3.6 Errors / Retry
 - Timeout (default 30s) -> FAIL
-- Status 0x00 -> FAIL
+- Status `0x02` (DECLINED) -> FAIL
 - Retry is manual (user starts again)
 
 ### 3.7 Receive without active exchange
@@ -192,9 +192,9 @@ on_rx_write(chunk):
   reassemble()
   if complete:
     if validate/store OK:
-      indicate_status(0x01)
+      notify_status(0x01)   # ACCEPTED
     else:
-      indicate_status(0x00)
+      notify_status(0x02)   # DECLINED
 ```
 
 ## 7) Compatibility and limits

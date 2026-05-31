@@ -51,6 +51,7 @@ static uint32_t w_host_power_source(wasm_exec_env_t)        { return host_power_
 static uint32_t w_host_charge_status(wasm_exec_env_t)       { return host_charge_status(); }
 static int32_t  w_host_is_battery_low(wasm_exec_env_t)      { return host_is_battery_low(); }
 static int32_t  w_host_is_battery_critical(wasm_exec_env_t) { return host_is_battery_critical(); }
+static void     w_host_set_sleep_inhibit(wasm_exec_env_t, uint32_t on) { host_set_sleep_inhibit(on); }
 
 // -- UI ---------------------------------------------------------------------
 
@@ -512,6 +513,8 @@ static int32_t w_host_get_build_profile(wasm_exec_env_t, char* out, uint32_t out
 static int32_t w_host_feature_enabled(wasm_exec_env_t, uint32_t feature_id)
 { return host_feature_enabled(static_cast<uint16_t>(feature_id)) ? 1 : 0; }
 
+static uint32_t w_host_cpu_load(wasm_exec_env_t) { return host_cpu_load(); }
+
 static int32_t w_host_cmd_consume(wasm_exec_env_t, char* out, uint32_t out_size)
 { return host_cmd_consume(out, out_size); }
 
@@ -729,7 +732,7 @@ static int32_t  w_host_ble_consume_notification(wasm_exec_env_t, uint16_t* vh_ou
 
 // -- Symbol table -----------------------------------------------------------
 
-static NativeSymbol s_symbols[] = {
+static const NativeSymbol s_symbols[] = {
     W("host_log",                w_host_log,                "(i$$)"),
     W("host_uptime_ms",          w_host_uptime_ms,          "()I"),
     W("host_unix_time",          w_host_unix_time,          "()I"),
@@ -743,6 +746,7 @@ static NativeSymbol s_symbols[] = {
     W("host_charge_status",      w_host_charge_status,      "()i"),
     W("host_is_battery_low",     w_host_is_battery_low,     "()i"),
     W("host_is_battery_critical",w_host_is_battery_critical,"()i"),
+    W("host_set_sleep_inhibit",  w_host_set_sleep_inhibit,  "(i)"),
 
     W("host_ui_push_toast",      w_host_ui_push_toast,      "($ii)i"),
     W("host_ui_push_message",    w_host_ui_push_message,    "($ii)i"),
@@ -868,6 +872,7 @@ static NativeSymbol s_symbols[] = {
     W("host_str_to_utf8",           w_host_str_to_utf8,           "($*~)i"),
     W("host_get_build_profile",    w_host_get_build_profile,    "(*~)i"),
     W("host_feature_enabled",      w_host_feature_enabled,      "(i)i"),
+    W("host_cpu_load",             w_host_cpu_load,             "()i"),
     W("host_cmd_consume",          w_host_cmd_consume,          "(*~)i"),
 
     W("host_ui_acquire_exclusive", w_host_ui_acquire_exclusive, "()i"),
@@ -957,10 +962,20 @@ static NativeSymbol s_symbols[] = {
     W("host_ble_consume_notification", w_host_ble_consume_notification, "(**~)i"),
 };
 
+static cdc::core::PsramUniquePtr<NativeSymbol> s_symbols_ram;
+
 bool register_host_imports()
 {
     const uint32_t n = sizeof(s_symbols) / sizeof(s_symbols[0]);
-    if (!wasm_runtime_register_natives("cdc", s_symbols, n)) {
+    if (!s_symbols_ram) {
+        s_symbols_ram = cdc::core::psramAlloc<NativeSymbol>(n);
+        if (!s_symbols_ram) {
+            plg_log_error("WAMR: PSRAM alloc for host symbol table failed");
+            return false;
+        }
+        std::memcpy(s_symbols_ram.get(), s_symbols, sizeof(s_symbols));
+    }
+    if (!wasm_runtime_register_natives("cdc", s_symbols_ram.get(), n)) {
         plg_log_error("WAMR: register_natives(\"cdc\") failed");
         return false;
     }
@@ -972,7 +987,7 @@ bool register_host_imports()
 
 void unregister_host_imports()
 {
-    wasm_runtime_unregister_natives("cdc", s_symbols);
+    if (s_symbols_ram) wasm_runtime_unregister_natives("cdc", s_symbols_ram.get());
 }
 
 }  // namespace cdc::plugin_manager

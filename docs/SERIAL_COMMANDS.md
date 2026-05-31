@@ -4,10 +4,13 @@ USB serial command interface for the CDC Badge.
 
 Connect via USB CDC at **115200 baud**. Use `HELP` to list all available commands.
 
-When `FEATURE_SECURE_SERIAL` is enabled (the default for shipped builds), every
-command except `PING` and `AUTH` requires an authenticated session. Use
-`AUTH <pin>` to log in. The session ends on `LOGOUT`, on a wrong PIN, or after
-the device idle timeout.
+When `FEATURE_SECURE_SERIAL` is enabled, every command except `PING` and `AUTH`
+requires an authenticated session. Use `AUTH <pin>` to log in. The session ends
+on `LOGOUT`, on a wrong PIN, or after the device idle timeout.
+
+`FEATURE_SECURE_SERIAL` defaults to 0 in
+`components/cdc_core/include/cdc_core/feature_flags.h`; it is forced to 1 when
+the Kconfig option `CONFIG_SECURE_SERIAL` is set.
 
 Commands tagged `[AUTH]` additionally require authentication even when
 `FEATURE_SECURE_SERIAL` is disabled. The tag is applied to anything that
@@ -202,8 +205,10 @@ Group command: `PLUGIN <subcommand> [args]`. All plugin commands require authent
 | `PLUGIN INFO <id>` | Show manifest details for one plugin |
 | `PLUGIN START <id>` | Start a plugin |
 | `PLUGIN STOP` | Stop the currently active plugin |
+| `PLUGIN CMD <id> <args>` | Forward a command string to a plugin |
 | `PLUGIN DELETE <id>` | Delete wasm + meta + lang files for plugin |
 | `PLUGIN UPLOAD <id> <size> <crc32_hex>` | Upload `.wasm` payload (binary byte-stream) |
+| `PLUGIN UPLOAD_AOT <id> <size> <crc32_hex>` | Upload `.aot` payload (binary byte-stream) |
 | `PLUGIN UPLOAD_META <id> <size> <crc32_hex>` | Upload `.meta` payload (binary byte-stream) |
 | `PLUGIN UPLOAD_LANG <id> <size> <crc32_hex>` | Upload `.lang` payload (binary byte-stream) |
 | `PLUGIN ABORT` | Abort an active upload session |

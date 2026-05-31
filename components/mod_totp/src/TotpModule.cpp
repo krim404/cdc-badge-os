@@ -14,6 +14,7 @@
 #include "serial_cmd/SubCommand.h"
 #include "serial_cmd/Console.h"
 #include "cdc_log.h"
+#include "esp_attr.h"
 #include <goodisplay/gdey029T94.h>
 #include <cctype>
 #include <cstring>
@@ -510,7 +511,7 @@ struct WizardState {
     uint16_t editSlot;
 };
 
-static WizardState s_wizard = {};
+EXT_RAM_BSS_ATTR static WizardState s_wizard = {};
 
 /** \brief Pushes T9 input view for current wizard step. */
 /**

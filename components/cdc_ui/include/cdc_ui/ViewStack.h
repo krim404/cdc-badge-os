@@ -101,10 +101,12 @@ public:
     // === Rendering ===
 
     /**
-     * Render current view (and modal if present)
-     * Flushes to display automatically
+     * \brief Render current view (and modal if present) and flush to display.
+     * \param synchronous When true, flush via the blocking display path
+     *        (flushSync) so the panel update has fully completed on return.
+     *        When false (default), flush asynchronously via the render task.
      */
-    void render();
+    void render(bool synchronous = false);
 
     /**
      * Check if any view needs rendering

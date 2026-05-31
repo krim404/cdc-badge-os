@@ -7,8 +7,6 @@
 #include "cdc_core/EventBus.h"
 #include "cdc_log.h"
 #include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include <ctime>
 #include <cstdio>
 #include <cstring>
@@ -116,11 +114,10 @@ void SleepManager::enterLockScreenSleep() {
     lockScreen_->addStatusIcon(StatusIcon::LIGHT_SLEEP);
     inLightSleep_ = true;
 
-    // Render the icon before sleeping
-    ViewStack::instance().render();
-
-    // Wait for E-Paper partial refresh to complete
-    vTaskDelay(pdMS_TO_TICKS(350));
+    // Render the icon synchronously so the full SPI command/data stream reaches
+    // the panel before light sleep halts the chip; otherwise an in-flight
+    // refresh is frozen mid-transfer and the panel is left half-rendered.
+    ViewStack::instance().render(true);
 
     // Enter light sleep (blocking call, returns after wakeup)
     sleep_->enterLightSleep();
@@ -172,9 +169,9 @@ void SleepManager::handleWakeup() {
         // Update power icons
         updatePowerStatusIcons();
 
-        // Render clock update
-        ViewStack::instance().render();
-        vTaskDelay(pdMS_TO_TICKS(350));
+        // Render clock update synchronously so the panel update completes
+        // before we re-enter light sleep below.
+        ViewStack::instance().render(true);
 
         // Check if USB was connected during sleep
         if (power_ && power_->isUsbConnected()) {

@@ -7,6 +7,9 @@
 
 #include "plugin_manager/host_api.h"
 #include "cdc_core/feature_flags.h"
+#include "cdc_core/CpuStats.h"
+
+#include "esp_timer.h"
 
 #include <cstdio>
 #include <cstring>
@@ -64,6 +67,39 @@ bool host_feature_enabled(uint16_t feature_id)
 #endif
         default: return false;
     }
+}
+
+uint8_t host_cpu_load(void)
+{
+    // Recompute at most ~2x/s; cheap esp_timer check gates the task-state dump
+    // so a per-frame caller (e.g. an LED effect) gets a stable cached value.
+    static uint64_t lastIdle = 0;
+    static uint64_t lastWall = 0;
+    static bool primed = false;
+    static uint8_t cached = 0;
+    static constexpr uint64_t kRefreshUs = 500000ULL;
+
+    uint64_t now = static_cast<uint64_t>(esp_timer_get_time());
+    if (primed && (now - lastWall) < kRefreshUs) return cached;
+
+    uint64_t idle, wall;
+    if (!cdc::core::CpuStats::sample(idle, wall)) return cached;
+
+    if (!primed) {
+        lastIdle = idle;
+        lastWall = wall;
+        primed = true;
+        return 0;
+    }
+
+    uint64_t denom = (wall - lastWall) * 2;  // two cores
+    uint64_t idleDelta = idle - lastIdle;
+    lastIdle = idle;
+    lastWall = wall;
+    if (denom == 0) return cached;
+    if (idleDelta > denom) idleDelta = denom;  // clamp counter-wrap glitch
+    cached = static_cast<uint8_t>(100 - (idleDelta * 100) / denom);
+    return cached;
 }
 
 }  // extern "C"

@@ -9,6 +9,7 @@
 #include "cdc_hal/hw_config.h"
 #include "cdc_log.h"
 #include "sdkconfig.h"
+#include "esp_attr.h"
 
 static const char* TAG = "BT-Ctrl";
 
@@ -96,7 +97,7 @@ struct InternalService {
     uint8_t numChars = 0;
 };
 
-static InternalService s_services[MAX_REGISTERED_SERVICES];
+EXT_RAM_BSS_ATTR static InternalService s_services[MAX_REGISTERED_SERVICES];
 
 /**
  * \brief Converts a generic BLE UUID into NimBLE's `ble_uuid_any_t` format.
@@ -152,7 +153,7 @@ static ble_gatt_chr_flags mapProperties(uint8_t props, uint8_t perms) {
  * cannot race with itself. Hoisting it out of `gattServiceAccessCb` reclaims
  * roughly 1 KB of host-task stack per call.
  */
-static uint8_t s_gattAccessBuf[512];
+EXT_RAM_BSS_ATTR static uint8_t s_gattAccessBuf[512];
 
 static int gattServiceAccessCb(uint16_t connHandle, uint16_t attrHandle,
                                 struct ble_gatt_access_ctxt* ctxt, void* arg) {
@@ -2127,16 +2128,12 @@ void BluetoothController::setWriteCompleteCallback(WriteCompleteCallback cb) {
 }
 
 /**
- * \brief Singleton Bluetooth controller instance.
- */
-static BluetoothController g_bluetoothController;
-
-/**
  * \brief Returns the singleton Bluetooth controller instance.
  * \return Pointer to the global `IBluetoothController` implementation.
  */
 IBluetoothController* getBluetoothControllerInstance() {
-    return &g_bluetoothController;
+    static BluetoothController* g_bluetoothController = new BluetoothController();
+    return g_bluetoothController;
 }
 
 } // namespace cdc::hal

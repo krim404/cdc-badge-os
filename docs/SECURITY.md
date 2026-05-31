@@ -137,9 +137,10 @@ a one-shot setup step.
 
 ### Slot Map
 
-Refer to [Module Development Guide](MODULE_DEVELOPMENT.md) for the
-authoritative module-to-slot mapping. SYSTEM owns ECC slot 0 (attestation)
-and R-Memory slot 0 (PIN material).
+The authoritative module-to-slot mapping is the code in
+`main/tropic_slot_map.h`; a prose mirror is in the
+[Module Development Guide](MODULE_DEVELOPMENT.md). SYSTEM owns ECC slot 0
+(attestation) and R-Memory slot 0 (PIN material).
 
 ---
 
@@ -148,61 +149,40 @@ and R-Memory slot 0 (PIN material).
 These items are deliberately disabled during beta development to keep the
 flash workflow fast (frequent reflashing, debug builds, occasional rollback
 to an older build). They are required before a release build can be
-considered production-grade.
+considered production-grade. The exact ESP-IDF options live in `sdkconfig`;
+configure them via `pio run -t menuconfig` rather than hand-editing.
 
 ### Flash Encryption
 
-```
-CONFIG_SECURE_FLASH_ENC_ENABLED=y
-CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
-```
-
-Release mode is **irreversible** once the eFuse is burned. The chip will only
-accept subsequent firmware images encrypted with the per-device key. Develop
-with release mode disabled, then enable for manufactured units.
+Release mode is **irreversible** once the eFuse is burned. The chip then only
+accepts firmware images encrypted with the per-device key, so on-flash material
+is not extractable from a dump. Develop with it disabled, enable it for
+manufactured units.
 
 ### Secure Boot v2
 
-```
-CONFIG_SECURE_BOOT=y
-CONFIG_SECURE_BOOT_V2_ENABLED=y
-```
-
-The sdkconfig today only sets `CONFIG_SECURE_BOOT_V2_PREFERRED=y` (capability
-flag), which is not the same as enabling Secure Boot. Enabling requires
-generating a signing key with `espsecure.py generate_signing_key`, signing
-the bootloader and app, and burning the public-key digest into eFuse.
+The sdkconfig today only sets the Secure Boot v2 *preferred* capability flag,
+which is not the same as enabling Secure Boot. Enabling requires generating a
+signing key with `espsecure.py`, signing the bootloader and app, and burning
+the public-key digest into eFuse.
 
 ### App Anti-Rollback
 
-```
-CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
-CONFIG_BOOTLOADER_APP_SEC_VER=<n>
-```
-
 Combined with Secure Boot v2, this makes the build-profile guard enforceable:
 release builds (e.g. `DEBUG_MODE=0`, `SECURE_SERIAL=1`) are assigned a higher
-`secure_version` than debug builds. Once a release build has booted, the
-bootloader refuses any image with a lower secure_version, and `espefuse`
-prevents the rollback bit from being cleared.
+secure version than debug builds. Once a release build has booted, the
+bootloader refuses any image with a lower secure version, and the rollback bit
+cannot be cleared.
 
 ### NVS Encryption
-
-```
-CONFIG_NVS_ENCRYPTION=y
-```
 
 Requires Flash Encryption. Encrypts the NVS partition so configuration data
 extracted from a flash dump is not readable.
 
 ### JTAG Disable
 
-```
-espefuse.py burn_efuse DIS_PAD_JTAG
-espefuse.py burn_efuse DIS_USB_JTAG
-```
-
-Permanently disables JTAG via fuse burn. Irreversible.
+Permanently disables JTAG by burning the relevant eFuses with `espefuse.py`.
+Irreversible.
 
 ---
 

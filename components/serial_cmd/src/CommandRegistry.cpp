@@ -239,16 +239,12 @@ private:
 };
 
 /**
- * \brief Singleton command registry instance.
- */
-static CommandRegistry g_commandRegistry;
-
-/**
  * \brief Returns singleton command-registry interface.
  * \return Reference to global `ICommandRegistry` implementation.
  */
 ICommandRegistry& getCommandRegistry() {
-    return g_commandRegistry;
+    static CommandRegistry* g_commandRegistry = new CommandRegistry();
+    return *g_commandRegistry;
 }
 
 } // namespace cdc::serial

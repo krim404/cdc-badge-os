@@ -21,6 +21,7 @@
 #include "cdc_views/ListView.h"
 #include "cdc_views/PinEntryView.h"
 #include "cdc_views/ToastView.h"
+#include <esp_attr.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <algorithm>
@@ -56,7 +57,7 @@ static ui::InfoView* s_promptView = nullptr;
 static ui::PinEntryView* s_pinEntry = nullptr;
 
 static ui::ListItem s_listItems[FIDO2_MAX_CREDENTIALS];
-static char s_labels[FIDO2_MAX_CREDENTIALS][100];
+EXT_RAM_BSS_ATTR static char s_labels[FIDO2_MAX_CREDENTIALS][100];
 static uint8_t s_sortMap[FIDO2_MAX_CREDENTIALS];
 static uint8_t s_listCount = 0;
 

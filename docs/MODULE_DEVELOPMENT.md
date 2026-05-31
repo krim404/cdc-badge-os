@@ -72,7 +72,7 @@ Add dependencies as needed:
 
 `cdc_views` is the public framework-view layer. Modules use it for generic UI
 building blocks: `ListView`, `ConfirmView`, `InfoView`, `ToastView`,
-`QRCodeView`, `T9InputView`, `PinChangeView`, `ContextMenuView`. These are
+`QRCodeView`, `T9InputView`, `ContextMenuView`. These are
 intentionally module-facing and reusable.
 
 `cdc_os_ui` is the OS-only layer (LockScreen, Settings, Wifi/Bluetooth menus,
@@ -89,21 +89,18 @@ Create `components/mod_example/include/mod_example/ExampleModule.h`:
 ```cpp
 #pragma once
 
-#include "cdc_core/IModule.h"
+#include "cdc_core/ModuleBase.h"
 
 namespace cdc::mod_example {
 
-class ExampleModule : public core::IModule {
+class ExampleModule : public core::ModuleBase {
 public:
-    // Required: Module identification
-    const char* getName() const override { return "mod_example"; }
-    const char* getVersion() const override { return "1.0"; }
-    core::ServiceState getState() const override { return state_; }
-
-    // Required: Lifecycle
+    // Required: lifecycle. start()/stop() are inherited from ModuleBase;
+    // override stop() only if cleanup work is needed.
     bool init() override;
-    bool start() override;
-    void stop() override;
+
+    // Module identification (getName()/getState() come from ModuleBase)
+    const char* getVersion() const override { return "1.0"; }
 
     // Optional: Menu items
     uint8_t getMenuItems(core::ModuleMenuItem* items, uint8_t maxItems) override;
@@ -123,8 +120,7 @@ public:
     static ExampleModule& instance();
 
 private:
-    ExampleModule() = default;
-    core::ServiceState state_ = core::ServiceState::UNINITIALIZED;
+    ExampleModule() : ModuleBase("mod_example") {}
     core::IModule::SlotRange slotRange_ = {};
 };
 
@@ -154,32 +150,15 @@ static const char* TAG = "EXAMPLE";
 namespace cdc::mod_example {
 
 // =============================================================================
-// I18n Strings (Module-local translations)
+// I18n Strings (Module-local English fallback table)
 // =============================================================================
 
-static uint16_t s_strIdBase = 0;
-static constexpr uint16_t STR_TITLE = 0;
-static constexpr uint16_t STR_COUNT = 1;
-
-static const char* mstr(uint16_t offset) {
-    return ui::tr(s_strIdBase + offset);
-}
+constexpr ui::I18nEntry kStrings[] = {
+    {"mod_example.title", "Example"},
+};
 
 static void registerStrings() {
-    auto& i18n = ui::I18n::instance();
-    s_strIdBase = i18n.registerModule("mod_example", STR_COUNT);
-    if (s_strIdBase == 0) {
-        LOG_E(TAG, "Failed to register i18n strings");
-        return;
-    }
-
-    // English translations
-    i18n.registerTranslation(s_strIdBase + STR_TITLE, ui::Language::EN, "Example");
-
-    // German translations
-    i18n.registerTranslation(s_strIdBase + STR_TITLE, ui::Language::DE, "Beispiel");
-
-    LOG_I(TAG, "Registered i18n strings (base=%d)", s_strIdBase);
+    ui::I18n::instance().registerEnglishTable(kStrings, std::size(kStrings));
 }
 
 // =============================================================================
@@ -233,7 +212,7 @@ static ui::IView* getMainView() {
         {"Item 2", 0, false, nullptr},
     };
 
-    s_listView.init(mstr(STR_TITLE), items, 2);
+    s_listView.init(ui::tr("mod_example.title"), items, 2);
     return &s_listView;
 }
 
@@ -265,18 +244,8 @@ bool ExampleModule::init() {
     return true;
 }
 
-bool ExampleModule::start() {
-    if (state_ != core::ServiceState::INITIALIZED &&
-        state_ != core::ServiceState::STOPPED) {
-        return false;
-    }
-    state_ = core::ServiceState::STARTED;
-    return true;
-}
-
-void ExampleModule::stop() {
-    state_ = core::ServiceState::STOPPED;
-}
+// start() and stop() are inherited from ModuleBase. Override stop() only when
+// the module needs to release resources before the state transition.
 
 void ExampleModule::setSlotRange(const core::IModule::SlotRange& range) {
     slotRange_ = range;
@@ -293,7 +262,7 @@ uint8_t ExampleModule::getMenuItems(core::ModuleMenuItem* items, uint8_t maxItem
     if (!items || maxItems == 0) return 0;
 
     items[0] = {
-        mstr(STR_TITLE),           // Label (translated)
+        ui::tr("mod_example.title"),  // Label (translated)
         100,                        // Priority (lower = higher in list)
         getMainView,               // View factory function
         nullptr,                   // Visibility check (nullptr = always visible)
@@ -367,27 +336,24 @@ If your module requires secure storage in the TROPIC01 chip, you must edit the m
 Edit `main/tropic_slot_map.h`:
 
 ```cpp
-// 1. Add a Module ID (must be unique, 0-254)
-#define MODULE_ID_MOD_EXAMPLE 7
+// 1. Add a Module ID (must be unique, 0-254; 255 = UNKNOWN)
+#define MODULE_ID_MOD_EXAMPLE 8
 
-// 2. Define slot ranges (if using ECC keys)
-#define ECC_SLOT_MOD_EXAMPLE_START 32   // Not available - all ECC slots used
-#define ECC_SLOT_MOD_EXAMPLE_END 32
+// 2. Define an R-Memory range (slots 1-511; 0 is reserved)
+#define RMEM_SLOT_MOD_EXAMPLE_START <start>
+#define RMEM_SLOT_MOD_EXAMPLE_END   <end>
 
-// 3. Define slot ranges (if using R-Memory)
-// R-Memory slots must be >= 32 (slots 0-31 are reserved)
-#define RMEM_SLOT_MOD_EXAMPLE_START 520  // Example: slots 520-530
-#define RMEM_SLOT_MOD_EXAMPLE_END 530
-
-// 4. Add to the slot map macros
-#define TROPIC_ECC_SLOT_MAP(X) \
-    ... existing entries ... \
-    X("mod_example", MODULE_ID_MOD_EXAMPLE, ECC_SLOT_MOD_EXAMPLE_START, ECC_SLOT_MOD_EXAMPLE_END)
-
+// 3. Add to the R-Memory slot map macro
 #define TROPIC_RMEM_SLOT_MAP(X) \
     ... existing entries ... \
     X("mod_example", MODULE_ID_MOD_EXAMPLE, RMEM_SLOT_MOD_EXAMPLE_START, RMEM_SLOT_MOD_EXAMPLE_END)
 ```
+
+The ECC and R-Memory maps in `main/tropic_slot_map.h` are fully allocated
+today (see the slot table below). A new module must carve its range out of an
+existing allocation; the validator rejects overlaps and out-of-bounds ranges.
+ECC slots (1-30 in use, 31 reserved for plugins) cannot be added without
+shrinking another module's ECC range first.
 
 **Important:** The module name in the slot map (`"mod_example"`) must exactly match `getName()` in your module class.
 
@@ -500,7 +466,8 @@ The TROPIC01 secure element has two storage types:
 | 0 | System (Attestation Key) |
 | 1-3 | mod_gpg |
 | 4 | mod_ca (reserved) |
-| 5-31 | mod_fido2 |
+| 5-30 | mod_fido2 |
+| 31 | WASM plugin pool (single reserved ECC slot, `capabilities.ecc`) |
 
 ### R-Memory Slots (512 slots: 0-511, 422 bytes payload each, 444-byte slot incl. 22-byte header)
 
@@ -509,7 +476,7 @@ The TROPIC01 secure element has two storage types:
 | 0 | System (PinManager: PIN hashes + ECDSA attestation signature) |
 | 1-3 | mod_gpg (paired with ECC 1-3: SIG / DEC / AUT companion slots) |
 | 4 | mod_ca (paired with ECC 4) |
-| 5-31 | mod_fido2 (27 credentials, paired with ECC 5-31) |
+| 5-31 | mod_fido2 (27 credentials; companion slots for ECC 5-30) |
 | 32-131 | mod_totp (100 accounts) |
 | 132-500 | mod_password (369 entries) |
 | 501-511 | WASM plugin named slots (`capabilities.rmem` in manifest) |
@@ -549,19 +516,27 @@ Lower priority values appear higher in the menu:
 
 ### I18n (Internationalization)
 
-Always use dynamic string registration:
+Register an English fallback table once at init, then look strings up by key:
 
 ```cpp
-// Register strings at init
-s_strIdBase = i18n.registerModule("mod_name", STRING_COUNT);
-i18n.registerTranslation(s_strIdBase + STR_X, ui::Language::EN, "English");
-i18n.registerTranslation(s_strIdBase + STR_X, ui::Language::DE, "German");
+// English fallbacks (rodata), registered in init()
+constexpr ui::I18nEntry kStrings[] = {
+    {"mod_name.title", "Title"},
+    {"mod_name.save",  "Save"},
+};
+ui::I18n::instance().registerEnglishTable(kStrings, std::size(kStrings));
 
-// Use strings
-ui::tr(s_strIdBase + STR_X);
+// Use strings anywhere by key
+ui::tr("mod_name.title");
 ```
 
-**Note:** German umlauts must use ae, oe, ue (display font limitation).
+Other languages are flat `/plugins/i18n/lang_<code>.json` overlay files keyed
+by the same strings; the active overlay is loaded into PSRAM at boot. To ship
+a German translation, add each key to `assets/i18n/lang_de.json`. Keys must use
+the `mod_<name>.` prefix and be 7-bit ASCII snake_case.
+
+**Note:** German overlay values use real UTF-8 umlauts (`ä ö ü Ä Ö Ü ß`); the
+loader converts them to CP437 for the display.
 
 ### Logging
 
@@ -611,7 +586,7 @@ void setSlotRange(const SlotRange& range) {
 }
 ```
 
-3. Configure slot allocation in `TropicSlotMap.h`.
+3. Configure slot allocation in `main/tropic_slot_map.h`.
 
 ### Static View Instances
 
@@ -715,8 +690,8 @@ is no longer a built-in module.
 ### Strings not translating
 
 1. Ensure `registerStrings()` is called in `init()`
-2. Check `s_strIdBase != 0` after registration
-3. Use `mstr()` helper consistently
+2. Check the key passed to `ui::tr()` matches an `I18nEntry` key exactly
+3. For a non-English language, verify the key exists in `lang_<code>.json`
 
 ### Serial commands not working
 

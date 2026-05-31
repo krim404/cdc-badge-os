@@ -352,7 +352,10 @@ int host_se_chip_id(uint8_t* serial, size_t* len)
     if (!serial || !len) return HOST_ERR_INVALID_ARG;
     auto* s = se();
     if (!s) return HOST_ERR_NOT_FOUND;
-    return s->getChipId(serial, static_cast<uint8_t>(*len)) ? HOST_OK : HOST_ERR_GENERIC;
+    // getChipId takes a uint8_t capacity; clamp so a large *len cannot wrap to a
+    // tiny size. It reports success/failure only, not the byte count written.
+    uint8_t cap = *len > 0xff ? 0xff : static_cast<uint8_t>(*len);
+    return s->getChipId(serial, cap) ? HOST_OK : HOST_ERR_GENERIC;
 }
 
 int host_se_fw_version(uint8_t* riscv, uint8_t* spect)

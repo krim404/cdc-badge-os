@@ -17,6 +17,7 @@
 #include "esp_timer.h"
 #include "cdc_views/ToastView.h"
 #include "cdc_log.h"
+#include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <cstring>
@@ -129,7 +130,7 @@ static bool s_viewsInitialized = false;
  * \brief Peer discovery storage used for UI list rendering.
  */
 static constexpr uint16_t MAX_UI_PEERS = 16;
-static vcard_peer_t s_uiPeers[MAX_UI_PEERS] = {};
+EXT_RAM_BSS_ATTR static vcard_peer_t s_uiPeers[MAX_UI_PEERS] = {};
 static uint16_t s_uiPeerCount = 0;
 static ui::ListItem s_peerItems[MAX_UI_PEERS + 1] = {};
 static char s_peerLabels[MAX_UI_PEERS][48] = {};
@@ -310,7 +311,7 @@ static void onMainMenuSelect(uint16_t index, void* userData) {
 
     switch (index) {
         case MENU_MY_VCARD: {
-            static char vcardText[VCARD_MAX_LEN + 1];
+            static EXT_RAM_BSS_ATTR char vcardText[VCARD_MAX_LEN + 1];
             size_t len = vcard_store_get_own(vcardText, sizeof(vcardText));
             if (len > 0) {
                 static ui::InfoView infoView;
@@ -415,14 +416,14 @@ static const char* getMyVcardLockscreenLabel() {
  *        Falls back to a toast when no vCard has been configured yet.
  */
 static void onMyVcardLockscreenSelect() {
-    static char s_qrBuf[VCARD_MAX_LEN + 1];
+    static EXT_RAM_BSS_ATTR char s_qrBuf[VCARD_MAX_LEN + 1];
     size_t len = vcard_store_get_own(s_qrBuf, sizeof(s_qrBuf));
     if (len == 0) {
         ui::showToastError(mstr(STR_NO_VCARD));
         return;
     }
 
-    static vcard_data_t s_parsed;
+    static EXT_RAM_BSS_ATTR vcard_data_t s_parsed;
     static char s_qrTitle[96];
     static char s_qrSubtitle[96];
 
@@ -451,7 +452,7 @@ static void onMyVcardLockscreenSelect() {
 // Serial Commands (VCARD_SET / VCARD_GET / VCARD_DELETE)
 // ============================================================================
 
-static char s_vcardBuf[VCARD_MAX_LEN + 64];
+EXT_RAM_BSS_ATTR static char s_vcardBuf[VCARD_MAX_LEN + 64];
 static int  s_vcardBufPos = 0;
 static bool s_vcardInputMode = false;
 static esp_timer_handle_t s_vcardIdleTimer = nullptr;

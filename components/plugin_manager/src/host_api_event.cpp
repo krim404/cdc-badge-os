@@ -83,11 +83,14 @@ int host_event_unsubscribe(uint32_t subscription_id)
 
 int host_event_publish(uint32_t module_event_subtype, uint32_t value)
 {
+    // The v1 Event carries a single byte (data.value), defined by the core as the
+    // module-event sub-type. The separate `value` argument has no transport slot
+    // in this model and is not forwarded to subscribers.
+    (void)value;
     cdc::core::Event evt{};
     evt.type       = cdc::core::EventType::MODULE_EVENT;
     evt.timestamp  = 0;
-    evt.data.value = static_cast<uint8_t>(value & 0xff);
-    (void)module_event_subtype;  // Event struct has no subtype field; payload only.
+    evt.data.value = static_cast<uint8_t>(module_event_subtype & 0xff);
     cdc::core::EventBus::instance().publish(evt);
     return HOST_OK;
 }

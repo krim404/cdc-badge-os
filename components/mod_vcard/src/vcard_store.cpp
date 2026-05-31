@@ -15,7 +15,7 @@ static const char* TAG = "VCARD";
 static constexpr const char* VCARD_NAMESPACE = "mod_vcard";
 static constexpr const char* VCARD_KEY_OWN = "own";
 
-static char g_own_vcard[VCARD_MAX_LEN + 1];
+EXT_RAM_BSS_ATTR static char g_own_vcard[VCARD_MAX_LEN + 1];
 static bool g_own_loaded = false;
 static bool g_own_present = false;
 

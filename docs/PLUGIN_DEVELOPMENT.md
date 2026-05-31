@@ -42,7 +42,9 @@ without the matching capability return `HOST_ERR_NO_CAPABILITY`.
 | Manifest key | Type | Gates |
 |--------------|------|-------|
 | `background` | bool | `plugin_on_tick` while not on screen |
+| `autoload` | bool | start as a resident background instance at badge boot |
 | `prevent_sleep` | bool | inhibits lock-screen light sleep while the plugin is loaded |
+| `vfat` | bool | sandboxed file access on the plugins FAT (own folder only) via `host_fs_*` |
 | `nvs_namespace` | string | NVS (always scoped to `plugin_<id>`) |
 | `rmem` | string[] | named retained-memory slots (plugin pool) |
 | `ecc` | string[] | named ECC keys (single reserved slot, see below) |
@@ -63,7 +65,8 @@ are trusted:
 - **NVS** is scoped to a per-plugin namespace (`plugin_<id>`). `nvs_erase_all`
   wipes only the calling plugin's own keys, never another plugin or firmware.
 - **Retained memory (rmem)** is allocated by name from a dedicated plugin pool
-  (`PLG_RMEM_POOL_START..END`); plugins cannot reach firmware rmem slots.
+  (the `mod_plugins` R-Memory range in `main/tropic_slot_map.h`); plugins
+  cannot reach firmware rmem slots.
 - **GPIO** is gated by a hard block-list (`PluginGpioPolicy::BLOCKED`) covering
   the SPI bus, TROPIC01 CS, display control, charger I2C, USB, and PSRAM pins,
   plus a per-pin lock. The block-list is enforced on every path (host API and
@@ -81,9 +84,11 @@ ECC slots on the TROPIC01 are **scarce** (`ECC_SLOT_COUNT = 32`) and primarily
 reserved for firmware features (attestation in slot 0, WebAuthn / identity,
 ...). Those take priority over plugins.
 
-Plugins therefore get a **single reserved ECC slot** - the last physical slot
-(`PLG_ECC_POOL_START..END` in `host_api_se.cpp`, currently both
-`ECC_SLOT_COUNT - 1`). Plugins address ECC keys **by name** (manifest
+Plugins therefore get a **single reserved ECC slot** - the last physical slot.
+The pool bounds are the `mod_plugins` ECC entry in `main/tropic_slot_map.h`
+(currently slot 31); `host_api_se.cpp` fetches them from `TropicSlotMap` by
+module id and never hardcodes a number. Plugins address ECC keys **by name**
+(manifest
 `capabilities.ecc`), exactly like rmem; the firmware maps each name to a pool
 slot and persists the mapping in NVS (namespace `plg_ecc_map`), so a key keeps
 its slot across reboot and reinstall. A slot occupied by an uninstalled
@@ -91,8 +96,9 @@ plugin's name is reclaimable; reclaiming wipes the stale key first.
 
 **Consequence:** with a one-slot pool, only one plugin ECC key can be live at a
 time. **To let multiple plugins use ECC, widen the pool in firmware** - extend
-`PLG_ECC_POOL_START..END` to cover more slots, keeping them clear of any
-firmware-owned slot. This is a deliberate firmware decision, never granted by a
+the `mod_plugins` ECC range in `main/tropic_slot_map.h` to cover more slots,
+keeping them clear of any firmware-owned slot. This is a deliberate firmware
+decision, never granted by a
 plugin manifest alone. `ecc_allowed`-style slot escape is structurally
 impossible: plugins never name a numeric slot.
 
@@ -129,9 +135,7 @@ through the `IBluetoothController` HAL, never NimBLE directly.
    exist yet, add it to the HAL - not to the plugin adapter.
 3. Register it in `WamrImports.cpp` (wrapper translating WASM argument types +
    a `NativeSymbol` entry with the signature string).
-4. Expose a safe Rust binding in the SDK and bump nothing without instruction.
+4. Expose a safe Rust binding in the SDK.
 
-If a family is not implemented yet, its stubs live in `host_api_stubs.cpp` and
-return `HOST_ERR_NOT_SUPPORTED`. When you implement a family, **move it to its
-own `host_api_<family>.cpp` and delete the stub** - never leave functional code
-in the stubs file.
+Every host API family is implemented in its own `host_api_<family>.cpp`. Keep
+functional code there, never as a placeholder returning `HOST_ERR_NOT_SUPPORTED`.

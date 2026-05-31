@@ -202,6 +202,7 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.hw_battery",         "Battery"},
     {"core.hw_temp",            "Temp"},
     {"core.hw_uptime",          "Uptime"},
+    {"core.hw_cpu_load",        "CPU Load"},
     {"core.hw_charging_suffix", " (chg)"},
     {"core.hw_not_available",   "n/a"},
 

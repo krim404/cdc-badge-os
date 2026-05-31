@@ -12,6 +12,7 @@
 #include "mod_vcard/vcard_store.h"
 #include "cdc_hal/IBluetoothController.h"
 #include "cdc_log.h"
+#include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -115,7 +116,7 @@ static int8_t s_rssi_threshold = -80;
  * \brief Peer-discovery storage and synchronization primitives.
  */
 static constexpr uint16_t MAX_PEERS = 32;
-static vcard_peer_t s_peers[MAX_PEERS] = {};
+EXT_RAM_BSS_ATTR static vcard_peer_t s_peers[MAX_PEERS] = {};
 static uint16_t s_peer_count = 0;
 static SemaphoreHandle_t s_peer_mutex = nullptr;
 
@@ -128,8 +129,8 @@ static bool s_nearby_available = false;
 /**
  * \brief TX/RX buffers for vCard exchange payloads.
  */
-static char s_tx_vcard[VCARD_MAX_LEN] = {};
-static char s_rx_vcard[VCARD_MAX_LEN] = {};
+EXT_RAM_BSS_ATTR static char s_tx_vcard[VCARD_MAX_LEN] = {};
+EXT_RAM_BSS_ATTR static char s_rx_vcard[VCARD_MAX_LEN] = {};
 static size_t s_rx_offset = 0;
 
 /**

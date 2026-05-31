@@ -13,6 +13,7 @@
 #include "cdc_views/InfoView.h"
 #include "cdc_views/ToastView.h"
 #include "cdc_log.h"
+#include "esp_attr.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <cstring>
@@ -27,6 +28,9 @@ namespace cdc::mod_nvsedit {
 
 /** \brief Returns the NVS editor entry view callback target. */
 static IView* getNvsEditorView();
+
+/** \brief Rebuilds key list labels into s_keyLabels and refreshes the key list view. */
+static void rebuildKeyListView();
 
 /** \brief Upper bounds for list sizes and value preview buffers. */
 
@@ -336,16 +340,7 @@ static void onDeleteKey() {
     if (deleteKey(s_selectedNamespace, s_selectedKey)) {
         showToastInfo("Deleted");
         loadKeys(s_selectedNamespace);
-        // Update list
-        for (uint8_t i = 0; i < s_keyCount; i++) {
-            static char keyLabels[MAX_KEYS][24];
-            snprintf(keyLabels[i], sizeof(keyLabels[i]), "%s [%s]",
-                     s_keys[i], nvsTypeToString(s_keyTypes[i]));
-            s_keyItems[i] = {keyLabels[i], 0, false, nullptr};
-        }
-        if (s_keyListView) {
-            s_keyListView->init(s_selectedNamespace, s_keyItems, s_keyCount);
-        }
+        rebuildKeyListView();
         // Go back if no more keys
         if (s_keyCount == 0) {
             ViewStack::instance().pop();
@@ -420,7 +415,7 @@ static void showNamespaceListView() {
 }
 
 /** \brief Persistent key label storage used by list items. */
-static char s_keyLabels[MAX_KEYS][24];
+EXT_RAM_BSS_ATTR static char s_keyLabels[MAX_KEYS][24];
 
 /**
  * \brief Handles key selection and opens detailed value view.

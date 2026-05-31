@@ -4,15 +4,10 @@ Loads WebAssembly plugins from the `/plugins` FAT-FS partition, validates their 
 
 ## Files
 
-- `include/plugin_manager/host_api.h` - canonical mirror of the SDK header from `cdc-badge-plugins`. Drift is detected by CI in both repos.
-- `include/plugin_manager/plugin_lifecycle.h` - declarations of the optional lifecycle functions a plugin can export.
-- `PluginManager` - discovery + lifecycle. V1 keeps one active plugin at a time.
-- `PluginStorage` - VFS mount of the `plugins` partition.
-- `PluginManifest` - JSON parser for `meta.json`.
-- `CapabilityChecker` - load-time validation.
-- `host_api_log.cpp` - `host_log` / `host_log_hex` (real, route to `cdc_log`).
-- `host_api_stubs.cpp` - everything else, returning `HOST_ERR_NOT_SUPPORTED`. Replaced incrementally by `host_api_<family>.cpp` files during Phase 3.
-
-## Status
-
-Phase 1: structure scaffolded, FAT-FS mount works, manifest is parseable, capability check runs. Actual WAMR instantiation, host import binding, and `plugin_on_enter` flow land in Phase 2.
+- `include/plugin_manager/host_api.h` - canonical host API header. The SDK header in `cdc-badge-plugins` is a byte-identical mirror; CI in both repos checks for drift.
+- `include/plugin_manager/plugin_lifecycle.h` - declarations of the lifecycle functions a plugin can export.
+- `PluginManager` - discovery and lifecycle. Runs one foreground plugin plus resident background plugins (see `background` / `autoload` capabilities).
+- `PluginStorage` - VFS mount of the `plugins` partition; on-device files are `<id>.wasm` (or `<id>.aot`) plus `<id>.meta`.
+- `PluginManifest` - JSON parser for the `<id>.meta` manifest.
+- `CapabilityChecker` - load-time capability and resource validation.
+- `host_api_<family>.cpp` - host API implementations grouped by family (log, time, power, crypto, se, http, wifi, ble, nvs, ui, ui_views, i18n, event, gpio, fs, display, canvas, pixel_strip, keypad, cmd, usb, strings, sysinfo). Registered with WAMR under module `"cdc"`.

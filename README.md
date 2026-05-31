@@ -27,16 +27,16 @@ Modular firmware for the CDC Badge v1.0/v1.1 hardware security key featuring TRO
 | **TOTP Authenticator** | Working | Time-based OTP (100 accounts, Google Authenticator compatible) |
 | **Password Vault** | Working | Secure password storage (369 entries) |
 | **GPG/CCID** | Working (UI WIP) | OpenPGP smartcard via USB CCID, sign / encrypt / decrypt / SSH end-to-end with GnuPG |
-| **BLE vCard** | WIP | Badge-to-badge contact exchange via BLE |
-| **BLE HID** | WIP | Bluetooth keyboard for auto-type |
+| **BLE vCard** | ⚠️ **WIP, untested on hardware.** | Badge-to-badge contact exchange via BLE |
+| **BLE HID** | ⚠️ **WIP, untested on hardware.** | Bluetooth keyboard for auto-type |
 | **WiFi + NTP** | Working | Time synchronization over WiFi, serial control (scan, connect, status, ..) |
-| **BLE Serial** | WIP | Bluetooth serial console (Nordic UART Service) |
+| **BLE Serial** | ⚠️ **WIP, untested on hardware.** | Bluetooth serial console (Nordic UART Service) |
 | **SAO Detection** | Working | Shitty Add-On port detection and info |
 | **E-Paper Display** | Working | 2.9" low-power display with backlight |
 | **12-Button Keypad** | Working | Phone-style T9 input |
 | **Multi-Language** | Working | English and German UI |
 | **Secure Serial** | Working | PIN authentication for serial commands |
-| **WASM Plugin Runtime** | WIP | Sandboxed third-party plugins via WebAssembly (WAMR Fast Interpreter). Host API exposes 80+ symbols under module `"cdc"`, including a Canvas view for plugin-drawn UIs. |
+| **WASM Plugin Runtime** | Working | Sandboxed third-party plugins via WebAssembly (WAMR). The host API under module `"cdc"` covers NVS, vFAT, i18n, HTTP/WiFi, GPIO/ADC/I2C, Pixel-Strip, BLE, SecureElement, Crypto, and UI views including a Canvas for plugin-drawn UIs. |
 | **vFAT File Browser** | Working | On-device file explorer (Tools&nbsp;→&nbsp;Expert) and a `VFAT` serial shell for the plugins FAT partition. |
 
 ### Planned
@@ -56,9 +56,9 @@ partition and can be installed / updated without re-flashing.
 | Web installer | [krim404.github.io/cdc-badge-plugins](https://krim404.github.io/cdc-badge-plugins/) |
 | SDK + examples + source | [github.com/krim404/cdc-badge-plugins](https://github.com/krim404/cdc-badge-plugins) |
 
-The plugin host API surface (80+ functions: NVS, sandboxed vFAT file access,
-i18n, HTTP, WiFi, GPIO, ADC, I2C, Pixel-Strip, BLE, SecureElement, Crypto, UI
-views, Canvas, RGB Color Picker, …) is defined canonically in
+The plugin host API surface (NVS, sandboxed vFAT file access, i18n, HTTP, WiFi,
+GPIO, ADC, I2C, Pixel-Strip, BLE, SecureElement, Crypto, UI views, Canvas, RGB
+Color Picker, …) is defined canonically in
 [`components/plugin_manager/include/plugin_manager/host_api.h`](components/plugin_manager/include/plugin_manager/host_api.h)
 and mirrored byte-identical into the SDK repo.
 
@@ -129,7 +129,8 @@ reset.
 - Tamper-resistant key storage
 - Keys cannot be extracted or cloned
 
-See [Module Development Guide](docs/MODULE_DEVELOPMENT.md) for the storage map.
+See [Module Development Guide](docs/MODULE_DEVELOPMENT.md) for the storage map
+(canonical source: `main/tropic_slot_map.h`).
 
 ## Hardware
 
@@ -163,7 +164,7 @@ pip install -r tools/requirements.txt
 python tools/flash_firmware.py --release latest
 
 # Flash a specific version
-python tools/flash_firmware.py --release v0.4.1
+python tools/flash_firmware.py --release latest
 
 # Flash from a local directory
 python tools/flash_firmware.py --dir ./artifacts/

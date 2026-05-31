@@ -143,6 +143,13 @@ bool     host_is_battery_low     (void);
 /// \brief True when battery has crossed the critical-shutdown threshold.
 bool     host_is_battery_critical(void);
 
+/// \brief Hold or release a light-sleep inhibitor for the calling plugin.
+///        While any inhibitor is held the badge does not enter light sleep,
+///        so a background plugin keeps ticking. Keyed by the plugin id and
+///        released automatically when the plugin is unloaded.
+/// \param on Non-zero to hold the inhibitor, zero to release it.
+void     host_set_sleep_inhibit  (uint32_t on);
+
 /** \} */
 
 /**
@@ -1197,6 +1204,12 @@ int  host_get_firmware_version  (char* out, size_t out_size);
 
 /// \brief Copy the build profile name (e.g. "release", "debug") into `out`.
 int  host_get_build_profile     (char* out, size_t out_size);
+
+/// \brief Aggregate CPU load across all cores as 0..100 percent.
+///        Sampled on demand from FreeRTOS run-time stats and refreshed at most
+///        a few times per second; intermediate calls return the cached value.
+///        The first call after load returns 0 (no baseline yet).
+uint8_t host_cpu_load           (void);
 
 /** \} */
 

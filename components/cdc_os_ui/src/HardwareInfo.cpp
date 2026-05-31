@@ -2,6 +2,7 @@
 
 #include "cdc_views/InfoView.h"
 #include "cdc_ui/I18n.h"
+#include "cdc_core/CpuStats.h"
 #include "cdc_hal/II2cBus.h"
 #include "cdc_hal/IPowerManager.h"
 #include "cdc_hal/IKeypad.h"
@@ -174,6 +175,8 @@ static void buildHardwareInfoText(char* buf, size_t bufSize) {
 
     uint64_t uptimeS = esp_timer_get_time() / 1000000ULL;
     append("%s: %llu s\n", ui::tr("core.hw_uptime"), (unsigned long long)uptimeS);
+
+    append("%s: %u%%\n", ui::tr("core.hw_cpu_load"), cdc::core::CpuStats::loadOverWindow());
 }
 
 /**

@@ -70,6 +70,21 @@ def readline(p, timeout=ACK_TIMEOUT_S):
     return p.readline().decode("utf-8", errors="replace").rstrip("\r\n")
 
 
+def drain(p, quiet=0.3):
+    """Discard pending input until the port stays quiet for `quiet` seconds.
+
+    Each serial command echoes a `[D][SERIAL] Executing: ...` debug line plus
+    its own reply, so a fire-and-forget setup command (CD/MKDIR) leaves more
+    than one line behind. Draining keeps those out of the next command's
+    response window.
+    """
+    old = p.timeout
+    p.timeout = quiet
+    while p.readline():
+        pass
+    p.timeout = old
+
+
 def send_line(p, line):
     # Bare LF terminator: with CRLF the badge executes on \r and the trailing
     # \n is swallowed as the first payload byte of a streamed upload.
@@ -130,6 +145,10 @@ def stream_payload(p, command, data, progress=None):
     "PLUGIN UPLOAD hello" or "VFAT RECEIVE data/notes.txt".
     """
     total = len(data)
+    # Drop any leftover output from preceding setup commands so the READY
+    # handshake is matched against this command's reply only, not a stale
+    # "ERR: already exists" from an earlier MKDIR.
+    p.reset_input_buffer()
     send_line(p, f"{command} {total} {crc32(data):08x}")
     ready = wait_for(p, ["READY", "ERR"], timeout=5)
     if ready is None:
@@ -205,9 +224,9 @@ def cmd_lang(args):
     p = open_port(require_port(args))
     authenticate(p, args.pin)
     send_line(p, "VFAT CD /")
-    readline(p, timeout=2)
+    drain(p)
     send_line(p, "VFAT MKDIR i18n")
-    readline(p, timeout=2)
+    drain(p)
     print(f"Uploading overlay -> /plugins/i18n/{name} ({path})")
     vfat_receive(p, f"i18n/{name}", path.read_bytes(),
                  lambda f: print(f"  {f * 100:5.1f} %", end="\r"))
@@ -227,10 +246,10 @@ def cmd_put(args):
     p = open_port(require_port(args))
     authenticate(p, args.pin)
     send_line(p, "VFAT CD /")
-    readline(p, timeout=2)
+    drain(p)
     if args.dir:
         send_line(p, f"VFAT MKDIR {args.dir}")
-        readline(p, timeout=2)
+        drain(p)
     print(f"Uploading file -> /{relpath} ({path})")
     vfat_receive(p, relpath, path.read_bytes(),
                  lambda f: print(f"  {f * 100:5.1f} %", end="\r"))

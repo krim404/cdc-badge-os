@@ -13,6 +13,7 @@
 #include "cdc_core/TropicSlotMap.h"
 #include "cdc_core/TropicStorage.h"
 #include "cdc_core/FactoryReset.h"
+#include "cdc_core/CpuStats.h"
 #include "cdc_hal/ISecureElement.h"
 #include "cdc_hal/IWifiController.h"
 #include "cdc_os_ui/AppUi.h"
@@ -442,6 +443,15 @@ static void cmdStatus(const char* args) {
     Console::printf("Free heap: %lu bytes\r\n", (unsigned long)esp_get_free_heap_size());
     Console::printf("Min free heap: %lu bytes\r\n", (unsigned long)esp_get_minimum_free_heap_size());
     Console::printf("Uptime: %llu ms\r\n", esp_timer_get_time() / 1000ULL);
+    Console::flush();
+}
+
+static void cmdCpu(const char* args) {
+    (void)args;
+    Console::printf("Measuring CPU load (~250 ms)...\r\n");
+    Console::flush();
+    uint8_t load = cdc::core::CpuStats::loadOverWindow();
+    Console::printf("CPU load: %u %%\r\n", (unsigned)load);
     Console::flush();
 }
 
@@ -2189,6 +2199,7 @@ void SerialCmd::registerBuiltinCommands() {
     reg.registerCommand({"STATUS", "Show system status", cmdStatus, "system", false});
     reg.registerCommand({"MEM", "Show memory usage", cmdMem, "system", false});
     reg.registerCommand({"MEMINFO", "Show detailed memory + task info", cmdMemInfo, "system", false});
+    reg.registerCommand({"CPU", "Measure aggregate CPU load (~250 ms)", cmdCpu, "system", false});
     reg.registerCommand({"ERROR_LOG", "Show error log (CLEAR to reset)", cmdErrorLog, "system", false});
     reg.registerCommand({"REBOOT", "Restart the device", cmdReboot, "system", true});
     reg.registerCommand({"BOOTLOADER", "Reboot into USB download mode", cmdBootloader, "system", true});

@@ -53,16 +53,21 @@ void invokeDeinit(Plugin& plugin)
     }
 }
 
-// Reflect a plugin's `prevent_sleep` capability into the SleepManager. The id
-// string (stable for the plugin's lifetime in RAM) is used as the inhibitor
-// reason, so it must be released before the plugin is unloaded.
+// Reflect a plugin's sleep inhibitor into the SleepManager. The id string
+// (stable for the plugin's lifetime in RAM) is used as the inhibitor reason,
+// so it must be released before the plugin is unloaded.
 void applySleepInhibitor(const Plugin& plugin, bool on)
 {
-    if (!plugin.manifest().capabilities.prevent_sleep) return;
     auto& sm = cdc::ui::SleepManager::instance();
     if (on) {
+        // Auto-acquire only for the static prevent_sleep capability. Dynamic
+        // inhibitors are acquired by the plugin via host_set_sleep_inhibit.
+        if (!plugin.manifest().capabilities.prevent_sleep) return;
         sm.addSleepInhibitor(plugin.id().c_str());
     } else {
+        // Always release on unload: covers both the prevent_sleep capability
+        // and any inhibitor acquired dynamically. removeSleepInhibitor is a
+        // no-op when no matching inhibitor is held.
         sm.removeSleepInhibitor(plugin.id().c_str());
     }
 }

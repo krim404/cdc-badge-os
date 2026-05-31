@@ -18,6 +18,7 @@
 #include "serial_cmd/SubCommand.h"
 #include "serial_cmd/Console.h"
 #include "cdc_log.h"
+#include "esp_attr.h"
 #include <cctype>
 #include <cstring>
 #include <strings.h>
@@ -436,7 +437,7 @@ struct WizardState {
     uint16_t editSlot;
 };
 
-static WizardState s_wizard = {};
+EXT_RAM_BSS_ATTR static WizardState s_wizard = {};
 
 static constexpr uint16_t NOTES_INPUT_MAX =
     (PasswordStore::NOTES_LEN < ui::T9InputView::MAX_TEXT_LEN)
@@ -551,7 +552,7 @@ static void showDetails(uint16_t slot) {
     strncpy(s_passwordToType, entry.password, sizeof(s_passwordToType) - 1);
     s_passwordToType[sizeof(s_passwordToType) - 1] = '\0';
 
-    static char detailText[ui::InfoView::MAX_TEXT_LEN];
+    static EXT_RAM_BSS_ATTR char detailText[ui::InfoView::MAX_TEXT_LEN];
     char totpBuf[16] = {};
     const char* emptyText = ui::tr("core.empty");
     char emptyWrapped[16] = {};

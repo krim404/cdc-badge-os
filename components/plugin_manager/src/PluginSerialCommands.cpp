@@ -284,8 +284,10 @@ void cmdInfo(const char* args)
     addCap(c.grove, "grove");
     addCap(c.pixel_strip, "pixel_strip");
     addCap(c.background, "background");
+    addCap(c.autoload, "autoload");
     addCap(c.usb_cdc, "usb_cdc");
     addCap(c.prevent_sleep, "prevent_sleep");
+    addCap(c.vfat, "vfat");
     sendf("caps:         %s", caps.empty() ? "-" : caps.c_str());
 
     auto joinPins = [](const std::vector<uint8_t>& v) {
@@ -487,7 +489,7 @@ void cmdDebug(const char*)
 
     sendf("OK plugin debug ENABLED");
     auto& pm = PluginManager::instance();
-    sendf("--- diagnostic snapshot ---");
+    sendf("--- plugin status ---");
     sendf("active_plugin:    %s",
           pm.hasActivePlugin() ? pm.activePluginId().c_str() : "(none)");
     sendf("installed_count:  %u",

@@ -6,6 +6,7 @@ idf_component_register(
         "src/AttestationKeyService.cpp"
         "src/ServiceRegistry.cpp"
         "src/Cp437.cpp"
+        "src/CpuStats.cpp"
         "src/EventBus.cpp"
         "src/PinManager.cpp"
         "src/ModuleRegistry.cpp"

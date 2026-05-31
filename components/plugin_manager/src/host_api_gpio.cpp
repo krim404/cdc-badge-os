@@ -71,6 +71,32 @@ void release_lock(uint8_t pin) {
     s_pin_locks[pin] = PinLock{};
 }
 
+// LEDC low-speed channel allocation: each PWM pin gets its own channel so duties
+// are independent. All channels share LEDC_TIMER_0 and therefore the frequency
+// set by the first host_gpio_pwm_start call.
+struct PwmChannel {
+    uint8_t pin  = 0;
+    bool    used = false;
+};
+std::array<PwmChannel, LEDC_CHANNEL_MAX> s_pwm_channels{};
+
+int pwm_channel_for(uint8_t pin) {
+    for (size_t i = 0; i < s_pwm_channels.size(); ++i)
+        if (s_pwm_channels[i].used && s_pwm_channels[i].pin == pin)
+            return static_cast<int>(i);
+    return -1;
+}
+
+int pwm_channel_alloc(uint8_t pin) {
+    for (size_t i = 0; i < s_pwm_channels.size(); ++i) {
+        if (!s_pwm_channels[i].used) {
+            s_pwm_channels[i] = { pin, true };
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
 // Only the expansion bus (I2C1) is reachable by plugins. Bus 0 carries the
 // charger (BQ25895) and IO expander (TCA9535) and is never exposed. The
 // TROPIC01 is on SPI, not I2C, so it is unreachable here by design.
@@ -159,6 +185,11 @@ int host_gpio_pwm_start(uint8_t pin, uint32_t freq_hz, uint16_t duty_per_mille)
     if (rc != HOST_OK) return rc;
     if (duty_per_mille > 1000) return HOST_ERR_INVALID_ARG;
 
+    int ch = pwm_channel_for(pin);
+    const bool fresh = (ch < 0);
+    if (fresh) ch = pwm_channel_alloc(pin);
+    if (ch < 0) return HOST_ERR_NO_MEMORY;
+
     static bool s_timer_inited = false;
     if (!s_timer_inited) {
         ledc_timer_config_t timer{};
@@ -167,35 +198,45 @@ int host_gpio_pwm_start(uint8_t pin, uint32_t freq_hz, uint16_t duty_per_mille)
         timer.timer_num       = LEDC_TIMER_0;
         timer.freq_hz         = freq_hz ? freq_hz : 5000;
         timer.clk_cfg         = LEDC_AUTO_CLK;
-        if (ledc_timer_config(&timer) != ESP_OK) return HOST_ERR_GENERIC;
+        if (ledc_timer_config(&timer) != ESP_OK) {
+            if (fresh) s_pwm_channels[ch] = PwmChannel{};
+            return HOST_ERR_GENERIC;
+        }
         s_timer_inited = true;
     }
 
-    // Pick a free LEDC channel; for V1 we use channel 0 globally (single-plugin).
-    ledc_channel_config_t ch{};
-    ch.channel    = LEDC_CHANNEL_0;
-    ch.duty       = (1023 * duty_per_mille) / 1000;
-    ch.gpio_num   = pin;
-    ch.speed_mode = LEDC_LOW_SPEED_MODE;
-    ch.hpoint     = 0;
-    ch.timer_sel  = LEDC_TIMER_0;
-    return ledc_channel_config(&ch) == ESP_OK ? HOST_OK : HOST_ERR_GENERIC;
+    ledc_channel_config_t cfg{};
+    cfg.channel    = static_cast<ledc_channel_t>(ch);
+    cfg.duty       = (1023 * duty_per_mille) / 1000;
+    cfg.gpio_num   = pin;
+    cfg.speed_mode = LEDC_LOW_SPEED_MODE;
+    cfg.hpoint     = 0;
+    cfg.timer_sel  = LEDC_TIMER_0;
+    if (ledc_channel_config(&cfg) != ESP_OK) {
+        if (fresh) s_pwm_channels[ch] = PwmChannel{};
+        return HOST_ERR_GENERIC;
+    }
+    return HOST_OK;
 }
 
 int host_gpio_pwm_set_duty(uint8_t pin, uint16_t duty_per_mille)
 {
-    (void)pin;
     if (duty_per_mille > 1000) return HOST_ERR_INVALID_ARG;
+    int ch = pwm_channel_for(pin);
+    if (ch < 0) return HOST_ERR_INVALID_ARG;
+    auto channel  = static_cast<ledc_channel_t>(ch);
     uint32_t duty = (1023 * duty_per_mille) / 1000;
-    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty) != ESP_OK) return HOST_ERR_GENERIC;
-    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0) != ESP_OK)    return HOST_ERR_GENERIC;
+    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty) != ESP_OK) return HOST_ERR_GENERIC;
+    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, channel) != ESP_OK)    return HOST_ERR_GENERIC;
     return HOST_OK;
 }
 
 int host_gpio_pwm_stop(uint8_t pin)
 {
-    (void)pin;
-    ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+    int ch = pwm_channel_for(pin);
+    if (ch < 0) return HOST_ERR_INVALID_ARG;
+    ledc_stop(LEDC_LOW_SPEED_MODE, static_cast<ledc_channel_t>(ch), 0);
+    s_pwm_channels[ch] = PwmChannel{};
     return HOST_OK;
 }
 

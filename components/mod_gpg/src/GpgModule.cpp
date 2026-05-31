@@ -384,7 +384,7 @@ struct WizardState {
     uint8_t curve;
 };
 
-static WizardState s_wizard = {};
+EXT_RAM_BSS_ATTR static WizardState s_wizard = {};
 
 enum GpgMenuAction : uintptr_t {
     GPG_MENU_STATUS = 1,

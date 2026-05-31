@@ -26,7 +26,7 @@ Private key material for SIG and AUT never leaves the secure element.
 | Function | Why on host | Privkey location |
 |----------|-------------|------------------|
 | ECDH P-256 (PSO:DECIPHER) | TROPIC01 has no ECDH | 32-byte buffer in internal DRAM, unwrapped on use, immediately zeroized |
-| DEC privkey wrap storage | Tropic stores no plaintext ECDH key | AES-256-GCM blob in R-Mem slot 502 (64 bytes total) |
+| DEC privkey wrap storage | Tropic stores no plaintext ECDH key | AES-256-GCM blob in R-Mem slot 2 (64 bytes total) |
 | AES-256-GCM wrap/unwrap | Tropic has no AEAD primitive | mbedtls, 12-byte nonce from `getRandomStrict`, 16-byte tag |
 | HKDF-SHA256 storage-key derivation | per-slot wrap key | IKM derived from TROPIC01 chip-bound material |
 | Iterated S2K (PIN, RC, OpenPGP hashes) | OpenPGP spec | analogous to PinManager |
@@ -49,7 +49,7 @@ gpg → PSO:CDS(hash)
 ```
 gpg → PSO:DECIPHER(peer-pubkey)
   ↳ ESP32 OpenPGP app
-    ↳ TROPIC01: rmemRead slot 502 (encrypted DEC blob, 64 B)
+    ↳ TROPIC01: rmemRead slot 2 (encrypted DEC blob, 64 B)
     ↳ mbedtls: HKDF over chip-bound material → AES key
     ↳ mbedtls: AES-GCM-decrypt → 32-byte plaintext privkey in DRAM
     ↳ mbedtls: ECDH P-256 (privkey × peer-pubkey)
@@ -93,7 +93,7 @@ companion slot for ECC slot N):
   Slot 2  : DEC privkey, AES-256-GCM wrapped
             (4 magic "ECDH" + 12 nonce + 32 ciphertext + 16 GCM tag = 64 B)
   Slot 3  : AES symmetric key for PSO:ENCIPHER / PSO:DECIPHER 0x02
-            (same wrap construction, optional)
+            (4 magic "AES1" + 12 nonce + (1 len + 32 key) + 16 GCM tag = 65 B)
 
 ESP32 NVS namespace "openpgp":
   Key "state"  : OpenpgpNvsState payload + 64-byte ECDSA signature.
@@ -184,7 +184,7 @@ Group command: `GPG <subcommand> [args]`. All entries require an authenticated s
 
 ### Reset workflow
 
-`GPG RESET` wipes all three ECC slots, the DEC backup in R-Mem 502, the AES key, and resets PINs to factory defaults. To prevent fat-fingered loss, the command is two-step:
+`GPG RESET` wipes all three ECC slots, the DEC backup in R-Mem slot 2, the AES key in slot 3, and resets PINs to factory defaults. To prevent fat-fingered loss, the command is two-step:
 
 ```text
 > GPG RESET
@@ -206,7 +206,7 @@ The token is regenerated each time and only valid for 30 seconds. The same reset
 
 ### What is in software
 
-- **DEC private key**: TROPIC01 cannot perform ECDH, so the private key has to be available in plaintext during decryption. It is stored AES-256-GCM-encrypted in R-Mem 502; the wrap key is derived from TROPIC01-resident chip-bound material via HKDF. The plaintext exists in DRAM only for the duration of the ECDH computation (~30 ms on ESP32-S3) and is zeroized immediately.
+- **DEC private key**: TROPIC01 cannot perform ECDH, so the private key has to be available in plaintext during decryption. It is stored AES-256-GCM-encrypted in R-Mem slot 2; the wrap key is derived from TROPIC01-resident chip-bound material via HKDF. The plaintext exists in DRAM only for the duration of the ECDH computation and is zeroized immediately.
 - **AES PSO key**: same construction as the DEC privkey, used for OpenPGP-style symmetric encryption (PSO:ENCIPHER / PSO:DECIPHER aes-128/256).
 
 ### Threat model summary
@@ -238,7 +238,7 @@ The token is regenerated each time and only valid for 30 seconds. The same reset
 | `gpg --card-status`: `General key info..: [none]` | Generate flow aborted before `public and secret key created and signed.` was printed | Run `gpg --card-edit → admin → generate → n` again, all the way through |
 | `ssh-add -L`: `The agent has no identities.` | `SSH_AUTH_SOCK` points at OS-native ssh-agent, or `sshcontrol` is missing the AUT keygrip | See bootstrap section above |
 | `ssh ...`: `agent refused operation` | `pinentry-program` missing or pinentry can't open a dialog from the SSH context | Configure `pinentry-program` and `export GPG_TTY=$(tty); gpg-connect-agent updatestartuptty /bye` |
-| `read_public_key DEC: load_dec_privkey failed` in serial log | R-Mem slot 502 was written by an older firmware version with a different wrap-key derivation | Run `gpg --card-edit → admin → generate` to rewrite the slot with the current scheme |
+| `read_public_key DEC: load_dec_privkey failed` in serial log | R-Mem slot 2 was written by an older firmware version with a different wrap-key derivation | Run `gpg --card-edit → admin → generate` to rewrite the slot with the current scheme |
 | Serial console silent on boot | Release build (`DEBUG_MODE=0`); console is auth-gated until `auth <pin>` | Authenticate, or build with `DEBUG_MODE=1` (the default for development) |
 
 ## Reference

@@ -266,7 +266,7 @@ void ViewStack::dispatchTick(uint32_t nowMs) {
     }
 }
 
-void ViewStack::render() {
+void ViewStack::render(bool synchronous) {
     StackLock lock(mutex_);
     IView* view = (depth_ == 0) ? nullptr : stack_[depth_ - 1];
     if (!view) {
@@ -294,7 +294,8 @@ void ViewStack::render() {
         if (display) {
             hal::RefreshMode mode = (baseDirty || needsFullRefresh_)
                 ? hal::RefreshMode::FULL : hal::RefreshMode::PARTIAL;
-            display->flush(mode);
+            if (synchronous) display->flushSync(mode);
+            else             display->flush(mode);
         }
         needsFullRefresh_ = false;
         return;
@@ -308,7 +309,8 @@ void ViewStack::render() {
 
     hal::RefreshMode mode = needsFullRefresh_ ? hal::RefreshMode::FULL : hal::RefreshMode::PARTIAL;
     if (display) {
-        display->flush(mode);
+        if (synchronous) display->flushSync(mode);
+        else             display->flush(mode);
     }
     needsFullRefresh_ = false;
 }

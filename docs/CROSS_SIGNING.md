@@ -34,12 +34,16 @@ Badge A                             Badge B
 
 ## BLE Protocol
 
-### UUIDs
+### Service and Characteristics
 
-Uses the same GATT service as vCard Exchange:
-- Service: `8E2F1F20-8B5D-4D7A-9A6E-4C9D6A8B1A01`
+Dedicated GATT service, separate from the vCard exchange service:
+- Service: `8E2F1F30-8B5D-4D7A-9A6E-4C9D6A8B1A01`
+- **RX** (Write): `8E2F1F31-8B5D-4D7A-9A6E-4C9D6A8B1A01` - peer pushes its public key here
+- **Status** (Read + Notify): `8E2F1F32-8B5D-4D7A-9A6E-4C9D6A8B1A01` - server reports completion
 
-### GPG-Specific Opcodes
+### Opcodes
+
+Transport mirrors the vCard exchange ([BLE vCard Protocol](ble_vcard_protocol.md)):
 
 | Opcode | Name | Direction | Description |
 |--------|------|-----------|-------------|
@@ -48,7 +52,16 @@ Uses the same GATT service as vCard Exchange:
 | `0x13` | GPG_WRITE_END | Client→Server | Complete |
 | `0x91` | GPG_DATA_START | Server→Client | Start GPG key response, +2 byte length |
 | `0x92` | GPG_DATA_CONT | Server→Client | Continue |
-| `0x93` | GPG_DATA_END | Server→Client | Complete |
+| `0x93` | GPG_DATA_END | Server→Client | Complete; trailing 1-byte status code |
+
+The `0x93` END frame carries a trailing status byte:
+
+| Status | Meaning |
+|--------|---------|
+| `0x00` | OK |
+| `0x01` | Bad payload |
+| `0x02` | Store full |
+| `0x03` | Internal error |
 
 ### Payload Format
 
@@ -98,19 +111,10 @@ Uses the same GATT service as vCard Exchange:
 
 ### Data Being Signed
 
-```c
-// SHA256 over:
-uint8_t data_to_sign[84];  // 20 + 64
-memcpy(data_to_sign, fingerprint, 20);       // GPG Fingerprint
-memcpy(data_to_sign + 20, user_id, 64);      // User ID (padded)
-
-// Hash
-uint8_t hash[32];
-SHA256(data_to_sign, 84, hash);
-
-// Signature with own GPG Signature Key (Slot 27)
-gpg_sign_hash(hash, 32, signature, &sig_len);
-```
+The cross-signature is a full RFC 4880 V4 certification signature (type `0x10`)
+over the target's public-key packet and User ID packet, including the hashed
+subpackets and a signature creation timestamp. It is produced with the badge's
+own GPG SIG key (the SIG ECC slot returned by `gpg_storage_sig_slot()`).
 
 ### Signature Format
 
@@ -185,7 +189,9 @@ bool gpgCrossSignDigest(const uint8_t fp_v4[20],
 
 // Sign the target key with the badge's own SIG ECC slot.
 // Output is 64 bytes (R || S) regardless of curve.
-bool gpgCrossSign(const gpg_recv_key_t& target, uint8_t out_sig[64]);
+bool gpgCrossSign(const gpg_recv_key_t& target,
+                  uint32_t sig_creation_time,
+                  uint8_t out_sig[64]);
 
 // Build an ASCII-armored OpenPGP block: Public Key + User ID + Cert Sig.
 bool gpgBuildSignedKeyArmored(const gpg_recv_key_t& key,
@@ -210,38 +216,9 @@ void gpg_xsig_set_received_callback(gpg_xsig_received_cb_t cb);
 
 ## Serial Commands
 
-Group command: `GPG <subcommand> [args]`. All entries require an authenticated session.
-
-| Sub-command | Description |
-|-------------|-------------|
-| `GPG RECV_LIST` | List all received keys |
-| `GPG RECV_INFO <index>` | Details for a key |
-| `GPG CROSS_SIGN <index>` | Sign key |
-| `GPG RECV_DELETE <index>` | Delete key |
-| `GPG EXPORT_SIGNED <index>` | Export signed key as ASCII-armored OpenPGP block |
-
-### Example Output
-
-```
-> GPG RECV_LIST
-OK: 2 received keys
-[0] Max Mustermann <max@example.com>
-    FP: ABCD1234...
-    Signed: Yes
-[1] Anna Schmidt <anna@example.org>
-    FP: 5678EFGH...
-    Signed: No
-
-> GPG RECV_INFO 0
-OK: Key details
-User-ID: Max Mustermann <max@example.com>
-Curve: Ed25519
-Fingerprint V4: ABCD1234567890ABCDEF1234567890ABCDEF1234
-Fingerprint V5: 1122334455667788...1122334455667788 (64 hex)
-Received: 2026-01-19 14:30:00
-Signed: Yes
-Signature: (hex dump)
-```
+The `GPG` command group (`RECV_LIST`, `RECV_INFO`, `CROSS_SIGN`, `RECV_DELETE`,
+`EXPORT_SIGNED`) is documented in [Serial Commands](SERIAL_COMMANDS.md). All
+entries require an authenticated session.
 
 ## Security
 

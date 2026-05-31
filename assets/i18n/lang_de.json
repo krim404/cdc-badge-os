@@ -113,6 +113,7 @@
   "core.hw_entries": "Einträge",
   "core.hw_battery": "Batterie",
   "core.hw_temp": "Temperatur",
+  "core.hw_cpu_load": "CPU-Last",
   "core.hw_charging_suffix": " (laden)",
   "core.hw_not_available": "n/v",
   "core.actions": "Aktionen",

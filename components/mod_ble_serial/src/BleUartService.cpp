@@ -33,8 +33,8 @@ static const uint8_t NUS_TX_UUID[16] = {
  * \return Service singleton reference.
  */
 BleUartService& BleUartService::instance() {
-    static BleUartService inst;
-    return inst;
+    static BleUartService* inst = new BleUartService();
+    return *inst;
 }
 
 /**

@@ -6,6 +6,7 @@
 #include "cdc_views/T9InputView.h"
 #include "cdc_views/ToastView.h"
 #include "cdc_log.h"
+#include "esp_attr.h"
 
 #include <cstdio>
 #include <cstring>
@@ -97,7 +98,7 @@ struct WizardState {
     uint8_t currentStep;
 };
 
-static WizardState s_wizard = {};
+EXT_RAM_BSS_ATTR static WizardState s_wizard = {};
 static ui::T9InputView s_t9Input;
 
 static VcardWizard::StringResolver s_resolver = nullptr;
