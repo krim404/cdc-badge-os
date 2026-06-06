@@ -41,6 +41,7 @@ void DateInputView::init(const char* title, uint8_t day, uint8_t month, uint16_t
     year_ = year;
     currentField_ = Field::DAY;
     digitPos_ = 0;
+    onCancel_ = nullptr;
     dirty_ = true;
 }
 
@@ -181,7 +182,11 @@ InputResult DateInputView::onKey(char key) {
                 clearField();
                 return InputResult::CONSUMED;
             }
-            return InputResult::REQUEST_POP;
+            cdc::ui::ViewStack::instance().pop();
+            if (onCancel_) {
+                onCancel_();
+            }
+            return InputResult::CONSUMED;
 
         case KEY_YES:  // Confirm
             validateAndClamp();

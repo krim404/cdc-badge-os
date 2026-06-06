@@ -17,7 +17,7 @@ namespace cdc::ui {
  */
 class ViewStack {
 public:
-    static constexpr uint8_t MAX_DEPTH = 8;
+    static constexpr uint8_t MAX_DEPTH = 20;
 
     /**
      * Get singleton instance
@@ -57,6 +57,15 @@ public:
      * Useful for returning to a list view after wizard completion.
      */
     void popToAnchor(IView* anchor);
+
+    /**
+     * \brief Pops views until the stack depth is at most targetDepth.
+     * \param targetDepth Depth to collapse down to; never pops below the root.
+     *
+     * Used by host_ui_pop_to_plugin to return to a plugin's first view in one
+     * step, since plugin root views have no stable pointer for popToAnchor.
+     */
+    void popToDepth(uint8_t targetDepth);
 
     /**
      * Get current (top) view
@@ -116,25 +125,38 @@ public:
     // === Modal support ===
 
     /**
-     * Show a modal overlay (e.g., toast, context menu)
+     * Show a modal overlay (e.g., toast, context menu). Modals stack: the new
+     * one is pushed on top of any already-shown modal and receives input
+     * exclusively. If the same modal is already stacked it is lifted to the top.
      * @param modal Modal view
      */
     void showModal(IView* modal);
 
     /**
-     * Hide current modal
+     * Hide the top modal, revealing the next modal beneath it (or the base view).
      */
     void hideModal();
 
     /**
-     * Check if modal is active
+     * \brief Remove a specific modal from any position in the modal stack.
+     *
+     * Unlike hideModal() this does not require the modal to be on top; modals
+     * stacked above it stay in place. Used to retract an overlay whose backing
+     * view object is about to be destroyed (e.g. plugin teardown), so the stack
+     * keeps no dangling pointer. No-op if the modal is not currently shown.
+     * \param modal The modal view to remove.
      */
-    bool hasModal() const { return modal_ != nullptr; }
+    void removeModal(IView* modal);
 
     /**
-     * Get modal view
+     * Check if any modal is active
      */
-    IView* getModal() const { return modal_; }
+    bool hasModal() const { return modalDepth_ > 0; }
+
+    /**
+     * Get the top (input-receiving) modal view, or nullptr if none.
+     */
+    IView* getModal() const { return modalDepth_ > 0 ? modals_[modalDepth_ - 1] : nullptr; }
 
     /**
      * Force next render to use FULL refresh
@@ -194,9 +216,12 @@ public:
 private:
     ViewStack() = default;
 
+    static constexpr uint8_t MAX_MODAL_DEPTH = 4;
+
     IView* stack_[MAX_DEPTH] = {};
     uint8_t depth_ = 0;
-    IView* modal_ = nullptr;
+    IView* modals_[MAX_MODAL_DEPTH] = {};
+    uint8_t modalDepth_ = 0;
     IView* pendingPush_ = nullptr;
     void* pendingContext_ = nullptr;
     bool needsFullRefresh_ = true;  // True after view changes
@@ -209,6 +234,7 @@ private:
     void push_unlocked(IView* view, void* context);
     void pop_unlocked();
     void hideModal_unlocked();
+    void removeModal_unlocked(IView* modal);
 
     // Inactivity timeout
     InactivityCallback inactivityCallback_ = nullptr;

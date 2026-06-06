@@ -40,6 +40,12 @@ public:
     using StepCallback = uint16_t(*)(uint16_t currentValue, bool increasing);
 
     /**
+     * Cancel callback (called when the user dismisses the view with N).
+     * The view pops itself before this fires, so do not call pop() in the handler.
+     */
+    using CancelCallback = void(*)();
+
+    /**
      * Initialize slider view
      * @param title Slider title
      * @param minVal Minimum value
@@ -66,6 +72,11 @@ public:
      * For example: brightness uses smaller steps at low values
      */
     void setStepCallback(StepCallback callback) { stepCallback_ = callback; }
+
+    /**
+     * Set cancel callback (called when the view is dismissed without saving)
+     */
+    void setOnCancel(CancelCallback callback) { onCancel_ = callback; }
 
     /**
      * Get current value
@@ -105,6 +116,7 @@ private:
     uint16_t step_ = 1;
     int16_t displayOffset_ = 0;
     SaveCallback onSave_ = nullptr;
+    CancelCallback onCancel_ = nullptr;
     ChangeCallback onChange_ = nullptr;
     StepCallback stepCallback_ = nullptr;
     uint32_t repeatStartMs_ = 0;

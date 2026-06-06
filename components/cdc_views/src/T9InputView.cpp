@@ -27,7 +27,7 @@ static const char* TAG = "T9InputView";
  */
 static const char* t9_chars[] = {
     " 0",                                                                                                  // 0
-    ".?!,;:'\"()-_@#$%&*+=/\\<>[]{}|^~`1"
+    ".@?!,;:'\"()-_#$%&*+=/\\<>[]{}|^~`1"
         "\x9B\x9C\x9D\xA8\xAD\xAE\xAF\xAB\xAC\xF1\xF8\xFD\xE6\xF6",                                        // 1: ¢ £ ¥ ¿ ¡ « » ½ ¼ ± ° ² µ ÷
     "abcABC2\x84\xA0\x83\x85\x86\x91\x8E\x8F\x92\x87\x80",                                                 // 2: ä á â à å æ Ä Å Æ ç Ç
     "defDEF3\x82\x8A\x88\x89\x90",                                                                          // 3: é è ê ë É
@@ -82,6 +82,7 @@ void T9InputView::init(const char* title, const char* initialText, uint16_t maxL
     lastPressMs_ = 0;
     cursorActive_ = false;
     onSave_ = nullptr;
+    onCancel_ = nullptr;
     hintOverride_ = nullptr;
     placeholder_ = nullptr;
     dirty_ = true;
@@ -280,12 +281,12 @@ InputResult T9InputView::onKey(char key) {
  */
 InputResult T9InputView::onLongPress(char key) {
     if (key == KEY_NO) {
-        // Clear all text
-        text_[0] = '\0';
-        len_ = 0;
-        lastKey_ = 0;
-        cursorActive_ = false;
-        dirty_ = true;
+        // Cancel: pop ourselves FIRST, then notify, so a view pushed by the
+        // callback is not popped by the dispatcher (mirrors the confirm path).
+        ViewStack::instance().pop();
+        if (onCancel_) {
+            onCancel_();
+        }
         return InputResult::CONSUMED;
     }
 

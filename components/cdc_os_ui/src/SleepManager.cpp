@@ -170,7 +170,9 @@ void SleepManager::handleWakeup() {
         updatePowerStatusIcons();
 
         // Render clock update synchronously so the panel update completes
-        // before we re-enter light sleep below.
+        // before we re-enter light sleep below. The lock screen declares
+        // prefersLightRefresh(), so this stays a pure partial (never promoted
+        // to a flickering full refresh).
         ViewStack::instance().render(true);
 
         // Check if USB was connected during sleep

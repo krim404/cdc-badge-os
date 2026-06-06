@@ -24,6 +24,9 @@ docs/plans/
 components/*/.patched
 components/wamr_runtime/wasm-micro-runtime/.patched
 
+# Custom TROPIC01 pairing key (never commit real keys)
+components/cdc_hal/include/cdc_hal/pairing_key_custom.h
+
 # Backup/temp files
 *.bak
 *.orig
@@ -51,3 +54,8 @@ agents.md
 .claude/
 find.md
 plan.md
+
+# open-mem: Auto-generated folder context files.
+# Uncomment to exclude from version control (recommended for large projects):
+# **/AGENTS.md
+skill/

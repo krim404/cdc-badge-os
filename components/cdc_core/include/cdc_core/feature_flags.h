@@ -28,6 +28,13 @@
 #define FEATURE_NVS_EDIT 0
 #endif
 
+// Plugin AOT (ahead-of-time native code). Default off: AOT artifacts run as
+// native machine code and bypass the WASM bounds-checked sandbox, so only
+// interpreted bytecode is loaded/accepted unless this is explicitly enabled.
+#ifndef FEATURE_PLUGIN_AOT
+#define FEATURE_PLUGIN_AOT 0
+#endif
+
 // Debug Mode (disables lockouts, useful for development)
 #ifndef DEBUG_MODE
 #define DEBUG_MODE 1

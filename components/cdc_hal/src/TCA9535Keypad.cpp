@@ -67,6 +67,9 @@ static constexpr uint16_t KEY_STATE_IDLE = KEY_MASK_ALL;
 /** \brief Sentinel value returned when an I2C read fails or no key is mapped. */
 static constexpr uint16_t KEY_STATE_INVALID = 0xFFFF;
 
+/** \brief Reserved rescue chord: N and Y held together (anti-block instant lock). */
+static constexpr uint16_t PANIC_CHORD_BITS = (1u << KEY_BIT_NO) | (1u << KEY_BIT_YES);
+
 /**
  * \brief Builds the active-low raw state for a single pressed key.
  * \param bit Bit index of the pressed key (0..11).
@@ -145,6 +148,15 @@ public:
     void setCallback(KeyCallback callback) override { callback_ = callback; }
     void setLongPressEnabled(bool enabled, uint32_t thresholdMs) override;
     void setLongPressCallback(LongPressCallback callback) override { longPressCallback_ = callback; }
+    void setPanicChordCallback(PanicChordCallback callback) override { panicChordCallback_ = callback; }
+    void setDeferShortPress(uint32_t source, bool enabled) override {
+        if (enabled) deferSources_ |= source;
+        else deferSources_ &= ~source;
+    }
+    void setKeyRepeat(uint16_t initial_ms, uint16_t period_ms) override {
+        keyRepeatInitialMs_ = initial_ms;
+        keyRepeatPeriodMs_  = period_ms;
+    }
     void prepareForSleep() override;
     void recoverFromSleep() override;
     void clearBuffer() override;
@@ -179,6 +191,9 @@ private:
     // Callbacks
     KeyCallback callback_ = nullptr;
     LongPressCallback longPressCallback_ = nullptr;
+    PanicChordCallback panicChordCallback_ = nullptr;
+    bool panicChordFired_ = false;
+    uint32_t deferSources_ = 0;
     bool longPressEnabled_ = false;
     uint32_t longPressThresholdMs_ = LONG_PRESS_THRESHOLD_MS;
 
@@ -186,6 +201,11 @@ private:
     Key pressedKey_ = Key::KEY_NONE;
     uint32_t pressStartTime_ = 0;
     bool longPressFired_ = false;
+
+    // Key-repeat (re-emit held key; mutually exclusive with long-press)
+    uint16_t keyRepeatInitialMs_ = 0;
+    uint16_t keyRepeatPeriodMs_  = 0;
+    uint32_t lastRepeatMs_       = 0;
 };
 
 /**
@@ -242,9 +262,13 @@ bool TCA9535Keypad::init() {
         return false;
     }
 
-    // Create task
+    // Stack must live in internal RAM, never PSRAM: this task runs the
+    // ViewStack dispatch, which performs SPI-flash IO (FAT plugin partition,
+    // NVS). The flash driver disables the cache during such operations, which
+    // makes a PSRAM-resident stack unreachable (esp_task_stack_is_sane_cache_disabled).
     BaseType_t ret = xTaskCreateWithCaps(taskFunc, "keypad", TASK_STACK_SIZE,
-                                  this, TASK_PRIORITY, &taskHandle_, MALLOC_CAP_SPIRAM);
+                                  this, TASK_PRIORITY, &taskHandle_,
+                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (ret != pdPASS) {
         LOG_E(TAG, "Failed to create task");
         vSemaphoreDelete(semaphore_);
@@ -446,26 +470,43 @@ void TCA9535Keypad::taskFunc(void* arg) {
             uint8_t pressedCount = __builtin_popcount(pressedBits);
 
             if (pressedCount > 1) {
-                // Ambiguous chord-press, do not emit events this tick.
+                // Ambiguous chord-press: emit no single-key events. The reserved
+                // N+Y rescue chord is the one recognized combination; fire once
+                // per hold.
+                if (pressedBits == PANIC_CHORD_BITS && !self->panicChordFired_) {
+                    self->panicChordFired_ = true;
+                    if (self->panicChordCallback_) self->panicChordCallback_();
+                }
             } else {
+                self->panicChordFired_ = false;
                 Key key = rawToKey(raw);
 
                 // Key press detection
                 if (key != Key::KEY_NONE) {
-                    self->bufferAddKey(key);
+                    // In deferred mode the short press is buffered on release
+                    // (and only if no long-press fired), so a hold yields the
+                    // long-press alone. Default mode buffers on key-down.
+                    if (self->deferSources_ == 0) {
+                        self->bufferAddKey(key);
+                    }
 
                     if (self->callback_) {
                         self->callback_(key, true);
                     }
 
-                    // Start long-press tracking
+                    // Start long-press / key-repeat tracking
                     if (self->longPressEnabled_) {
                         self->pressedKey_ = key;
                         self->pressStartTime_ = xTaskGetTickCount() * portTICK_PERIOD_MS;
+                        self->lastRepeatMs_ = self->pressStartTime_;
                         self->longPressFired_ = false;
                     }
                 } else {
                     // Key release
+                    if (self->deferSources_ != 0 && !self->longPressFired_ &&
+                        self->pressedKey_ != Key::KEY_NONE) {
+                        self->bufferAddKey(self->pressedKey_);
+                    }
                     if (self->callback_ && self->pressedKey_ != Key::KEY_NONE) {
                         self->callback_(self->pressedKey_, false);
                     }
@@ -476,13 +517,22 @@ void TCA9535Keypad::taskFunc(void* arg) {
             }
         }
 
-        // Long-press check
-        if (self->longPressEnabled_ && self->pressedKey_ != Key::KEY_NONE && !self->longPressFired_) {
+        // While a single key is held: either repeat it (key-repeat enabled) or
+        // fire the long-press once. The two are mutually exclusive.
+        if (self->pressedKey_ != Key::KEY_NONE) {
             uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
-            if (now - self->pressStartTime_ >= self->longPressThresholdMs_) {
-                self->longPressFired_ = true;
-                if (self->longPressCallback_) {
-                    self->longPressCallback_(self->pressedKey_);
+            if (self->keyRepeatPeriodMs_ > 0) {
+                if (now - self->pressStartTime_ >= self->keyRepeatInitialMs_ &&
+                    now - self->lastRepeatMs_ >= self->keyRepeatPeriodMs_) {
+                    self->lastRepeatMs_ = now;
+                    self->bufferAddKey(self->pressedKey_);
+                }
+            } else if (self->longPressEnabled_ && !self->longPressFired_) {
+                if (now - self->pressStartTime_ >= self->longPressThresholdMs_) {
+                    self->longPressFired_ = true;
+                    if (self->longPressCallback_) {
+                        self->longPressCallback_(self->pressedKey_);
+                    }
                 }
             }
         }

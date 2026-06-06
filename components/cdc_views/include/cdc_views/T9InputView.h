@@ -14,7 +14,7 @@ namespace cdc::ui {
  * Keys:
  *   0-9 = Character input (multi-tap)
  *   Long-press 0-9 = Insert digit directly
- *   N = Backspace (short) / Clear (long)
+ *   N = Backspace (short) / Cancel (long)
  *   Y = Confirm (triggers callback)
  */
 class T9InputView : public ViewBase {
@@ -29,6 +29,12 @@ public:
     using SaveCallback = void(*)(const char* text);
 
     /**
+     * Cancel callback (called when the user dismisses the view via long-press N).
+     * The view pops itself before this fires, so do not call pop() in the handler.
+     */
+    using CancelCallback = void(*)();
+
+    /**
      * Initialize T9 input view
      * @param title View title
      * @param initialText Initial text (optional)
@@ -40,6 +46,11 @@ public:
      * Set save callback (called on Y key)
      */
     void setOnSave(SaveCallback callback) { onSave_ = callback; }
+
+    /**
+     * Set cancel callback (called when the view is dismissed without confirming)
+     */
+    void setOnCancel(CancelCallback callback) { onCancel_ = callback; }
 
     /**
      * Get current text
@@ -90,6 +101,7 @@ protected:
     uint16_t len_ = 0;
     uint16_t maxLen_ = MAX_TEXT_LEN;
     SaveCallback onSave_ = nullptr;
+    CancelCallback onCancel_ = nullptr;
 
     // T9 state
     char lastKey_ = 0;

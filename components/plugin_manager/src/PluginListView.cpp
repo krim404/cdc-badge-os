@@ -14,9 +14,9 @@ static const char* TAG = "PLG_UI";
 static PluginListView* s_active = nullptr;
 
 // Plugin id targeted by the currently-open context menu (key 3). The menu's
-// Stop callback takes no arguments, so the selection is stashed here.
+// callbacks take no arguments, so the selection is stashed here.
 static std::string s_ctxPluginId;
-static cdc::ui::ContextMenuItem s_ctxItems[1];
+static cdc::ui::ContextMenuItem s_ctxItems[2];
 
 /**
  * \brief Context-menu Stop callback: force-unloads the selected plugin.
@@ -26,6 +26,42 @@ static void onCtxStop()
     cdc::ui::hideContextMenu();
     if (!s_ctxPluginId.empty()) {
         PluginManager::instance().unloadFromRam(s_ctxPluginId);
+    }
+    if (s_active) {
+        s_active->refresh();
+    }
+}
+
+/**
+ * \brief Context-menu Disable callback: persistently disables and unloads.
+ */
+static void onCtxDisable()
+{
+    cdc::ui::hideContextMenu();
+    if (!s_ctxPluginId.empty()) {
+        if (PluginManager::instance().setPluginDisabled(s_ctxPluginId, true)) {
+            cdc::ui::showToastInfo(cdc::ui::tr("core.plugin_disabled"), 1800);
+        } else {
+            cdc::ui::showToastError("Disable failed", 3000);
+        }
+    }
+    if (s_active) {
+        s_active->refresh();
+    }
+}
+
+/**
+ * \brief Context-menu Enable callback: removes the persistent disabled marker.
+ */
+static void onCtxEnable()
+{
+    cdc::ui::hideContextMenu();
+    if (!s_ctxPluginId.empty()) {
+        if (PluginManager::instance().setPluginDisabled(s_ctxPluginId, false)) {
+            cdc::ui::showToastInfo(cdc::ui::tr("core.plugin_enabled"), 1800);
+        } else {
+            cdc::ui::showToastError("Enable failed", 3000);
+        }
     }
     if (s_active) {
         s_active->refresh();
@@ -46,6 +82,8 @@ static void reportStartResult(StartResult result)
         case StartResult::PluginInitFailed:     label = "plugin_init failed"; break;
         case StartResult::PrerequisiteFailed:   label = "Prerequisite failed"; break;
         case StartResult::PluginOnEnterFailed:  label = "plugin_on_enter missing"; break;
+        case StartResult::Busy:                 label = "Plugin busy"; break;
+        case StartResult::PluginDisabled:       label = cdc::ui::tr("core.plugin_disabled"); break;
         default: break;
     }
     std::snprintf(msg, sizeof(msg), "%s\nErr %d", label, static_cast<int>(result));
@@ -145,7 +183,10 @@ void PluginListView::rebuildItems()
         // async, so this would otherwise miss the indicator on first open).
         const bool running = mgr.isRunningInBackground(id) ||
                              (mgr.activePluginIsBackground() && mgr.activePluginId() == id);
-        const uint8_t icon = running ? UI_ICON_SUN : 0;
+        const bool disabled = mgr.isPluginDisabled(id);
+        // List icons are drawn as raw CP437 glyphs; 'X' marks a disabled plugin.
+        const uint8_t icon = disabled ? static_cast<uint8_t>('X')
+                                      : (running ? UI_ICON_SUN : 0);
         items_.push_back(cdc::ui::ListItem{labels_.back().c_str(), icon, false, nullptr});
     }
 
@@ -181,11 +222,18 @@ void PluginListView::onMenu(uint16_t index)
     auto& mgr = PluginManager::instance();
     const bool running = mgr.isRunningInBackground(s_ctxPluginId) ||
                          (mgr.activePluginIsBackground() && mgr.activePluginId() == s_ctxPluginId);
+    const bool disabled = mgr.isPluginDisabled(s_ctxPluginId);
 
-    s_ctxItems[0] = running
-        ? cdc::ui::ContextMenuItem{cdc::ui::tr("core.stop"),  &onCtxStop}
-        : cdc::ui::ContextMenuItem{cdc::ui::tr("core.start"), &onCtxStart};
-    cdc::ui::showContextMenu(cdc::ui::tr("core.actions"), s_ctxItems, 1);
+    uint8_t count = 0;
+    if (disabled) {
+        s_ctxItems[count++] = cdc::ui::ContextMenuItem{cdc::ui::tr("core.enable"), &onCtxEnable};
+    } else {
+        s_ctxItems[count++] = running
+            ? cdc::ui::ContextMenuItem{cdc::ui::tr("core.stop"),  &onCtxStop}
+            : cdc::ui::ContextMenuItem{cdc::ui::tr("core.start"), &onCtxStart};
+        s_ctxItems[count++] = cdc::ui::ContextMenuItem{cdc::ui::tr("core.disable"), &onCtxDisable};
+    }
+    cdc::ui::showContextMenu(cdc::ui::tr("core.actions"), s_ctxItems, count);
 }
 
 }  // namespace cdc::plugin_manager

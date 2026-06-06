@@ -66,6 +66,7 @@ public:
 
     [[nodiscard]] int pushCanvas (const char* title, uint32_t key_action_id,
                                   uint32_t widget_action_id);
+    [[nodiscard]] int setCanvasLongPressAction(uint32_t action_id);
     [[nodiscard]] cdc::ui::CanvasView* canvasView();
 
     [[nodiscard]] int acquireExclusive();
@@ -140,8 +141,9 @@ private:
         std::unique_ptr<cdc::ui::CanvasView> view;
         PsramUniquePtr<char>                 title_buf;
         PsramUniquePtr<char>                 footer_buf;
-        uint32_t                             key_action_id    = 0;
-        uint32_t                             widget_action_id = 0;
+        uint32_t                             key_action_id        = 0;
+        uint32_t                             widget_action_id     = 0;
+        uint32_t                             long_press_action_id = 0;
     };
 
     // Callbacks invoked by ViewStack-managed views. They forward via the
@@ -156,9 +158,14 @@ private:
     static void onDateSave  (uint8_t day, uint8_t month, uint16_t year);
     static void onTimeSave  (uint8_t hour, uint8_t minute);
     static void onColorSave (uint8_t r, uint8_t g, uint8_t b);
+    // Cancel trampolines: onInputCancel for self-popping inputs (T9, slider,
+    // date, time, color); onPinCancel pops the PinEntryView first.
+    static void onInputCancel();
+    static void onPinCancel ();
     static void onInactivity();
-    static void onCanvasKey   (char key, uint32_t focused_widget);
-    static void onCanvasWidget(uint32_t widget_id, cdc::ui::CanvasView::WidgetEvent event);
+    static void onCanvasKey      (char key, uint32_t focused_widget);
+    static void onCanvasLongPress(char key);
+    static void onCanvasWidget   (uint32_t widget_id, cdc::ui::CanvasView::WidgetEvent event);
 
     /// Grow the active list's capacity arrays (and re-point the view) so an
     /// insert has room. Returns false on OOM. Caller must hold listEditMutex.

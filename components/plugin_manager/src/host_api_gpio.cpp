@@ -21,6 +21,7 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_adc/adc_oneshot.h"
+#include "cdc_log.h"
 
 #include <array>
 #include <cstring>
@@ -29,6 +30,8 @@ extern "C" void* plg_get_active_plugin(void);
 extern "C" void  plg_log_warn(const char* msg);
 
 namespace {
+
+constexpr const char* TAG = "plg_gpio";
 
 struct PinLock {
     void* owner = nullptr;
@@ -75,8 +78,9 @@ void release_lock(uint8_t pin) {
 // are independent. All channels share LEDC_TIMER_0 and therefore the frequency
 // set by the first host_gpio_pwm_start call.
 struct PwmChannel {
-    uint8_t pin  = 0;
-    bool    used = false;
+    uint8_t pin   = 0;
+    bool    used  = false;
+    void*   owner = nullptr;
 };
 std::array<PwmChannel, LEDC_CHANNEL_MAX> s_pwm_channels{};
 
@@ -90,7 +94,7 @@ int pwm_channel_for(uint8_t pin) {
 int pwm_channel_alloc(uint8_t pin) {
     for (size_t i = 0; i < s_pwm_channels.size(); ++i) {
         if (!s_pwm_channels[i].used) {
-            s_pwm_channels[i] = { pin, true };
+            s_pwm_channels[i] = { pin, true, active() };
             return static_cast<int>(i);
         }
     }
@@ -177,6 +181,30 @@ int host_gpio_release(uint8_t pin)
     gpio_reset_pin(static_cast<gpio_num_t>(pin));
     release_lock(pin);
     return HOST_OK;
+}
+
+void plg_gpio_on_unload(void* plugin)
+{
+    if (!plugin) return;
+    for (uint8_t pin = 0; pin < MAX_GPIO_PINS; ++pin) {
+        if (!s_pin_locks[pin].in_use || s_pin_locks[pin].owner != plugin) continue;
+        int ch = pwm_channel_for(pin);
+        if (ch >= 0) {
+            ledc_stop(LEDC_LOW_SPEED_MODE, static_cast<ledc_channel_t>(ch), 0);
+            s_pwm_channels[ch] = PwmChannel{};
+            LOG_W(TAG, "force-releasing leaked PWM on GPIO %u", pin);
+        }
+        gpio_reset_pin(static_cast<gpio_num_t>(pin));
+        release_lock(pin);
+        LOG_W(TAG, "force-releasing leaked GPIO %u", pin);
+    }
+    // Sweep PWM channels too, in case one outlived its pin lock.
+    for (size_t i = 0; i < s_pwm_channels.size(); ++i) {
+        if (!s_pwm_channels[i].used || s_pwm_channels[i].owner != plugin) continue;
+        ledc_stop(LEDC_LOW_SPEED_MODE, static_cast<ledc_channel_t>(i), 0);
+        LOG_W(TAG, "force-releasing leaked PWM channel %u", static_cast<unsigned>(i));
+        s_pwm_channels[i] = PwmChannel{};
+    }
 }
 
 int host_gpio_pwm_start(uint8_t pin, uint32_t freq_hz, uint16_t duty_per_mille)

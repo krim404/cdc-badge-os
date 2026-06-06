@@ -99,6 +99,7 @@ void ColorPickerView::init(uint8_t r, uint8_t g, uint8_t b) {
     repeatStartMs_ = 0;
     lastRepeatMs_ = 0;
     onSave_ = nullptr;
+    onCancel_ = nullptr;
     dirty_ = true;
 }
 
@@ -235,7 +236,11 @@ InputResult ColorPickerView::onKey(char key) {
             return InputResult::CONSUMED;
         }
         case KEY_NO:
-            return InputResult::REQUEST_POP;
+            cdc::ui::ViewStack::instance().pop();
+            if (onCancel_) {
+                onCancel_();
+            }
+            return InputResult::CONSUMED;
         default:
             return InputResult::IGNORED;
     }

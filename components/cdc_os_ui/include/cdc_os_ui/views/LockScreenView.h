@@ -116,6 +116,8 @@ public:
     void onResume() override;
     const char* getName() const override { return "LockScreenView"; }
     const char* getFooterHint() const override;
+    // Clock/icon updates are tiny; keep them pure partials (no forced full).
+    bool prefersLightRefresh() const override { return true; }
 
     /**
      * Toggle backlight from context menu

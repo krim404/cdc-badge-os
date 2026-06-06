@@ -39,6 +39,13 @@ Plugin::~Plugin()         = default;
 
 namespace {
 
+// Per-call WASM instruction budget. Caps a runaway or hostile guest loop so the
+// call traps with an exception and returns instead of hanging the plugin tick
+// task forever. Generous enough that legitimate per-tick work (e.g. a few Olm
+// session establishes in one tick) never reaches it, while a true infinite loop
+// still traps within a few seconds of tick-task time.
+constexpr int kInstrLimit = 500'000'000;
+
 // WASM bytecode can be hundreds of KB. Keep it in PSRAM so it does not chew
 // into internal SRAM, which is the project-wide bottleneck (see CLAUDE.md).
 [[nodiscard]] bool load_bytecode_psram(const std::string& path,
@@ -155,7 +162,9 @@ bool Plugin::callI(const char* name,
 
     void* prev_active = plg_get_active_plugin();
     plg_set_active_plugin(this);
+    wasm_runtime_set_instruction_count_limit(exec_env_.get(), kInstrLimit);
     bool ok = true;
+    last_call_trapped_ = false;
     wasm_function_inst_t fn = wasm_runtime_lookup_function(module_inst_.get(), name);
     if (!fn) {
         if (missingExports_.insert(name).second) {
@@ -165,9 +174,11 @@ bool Plugin::callI(const char* name,
         }
         ok = false;
     } else if (!wasm_runtime_call_wasm(exec_env_.get(), fn, argc, argv)) {
-        char buf[160];
-        std::snprintf(buf, sizeof(buf), "plugin: call '%s' failed: %s", name,
-                      wasm_runtime_get_exception(module_inst_.get()));
+        const char* exc = wasm_runtime_get_exception(module_inst_.get());
+        std::snprintf(last_trap_, sizeof(last_trap_), "%s", exc ? exc : "unknown trap");
+        last_call_trapped_ = true;
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), "plugin: call '%s' failed: %s", name, last_trap_);
         plg_log_error(buf);
         wasm_runtime_clear_exception(module_inst_.get());
         ok = false;

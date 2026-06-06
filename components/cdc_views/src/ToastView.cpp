@@ -182,7 +182,10 @@ void ToastView::render(bool partial) {
             memcpy(lineBuf, lineStart, len);
             lineBuf[len] = '\0';
             gfx->setCursor(textX, lineY);
-            render::printText(gfx, lineBuf);
+            // Clip to the box interior: text drawn past the frame is never
+            // cleared by drawDialogFrame, so on a partial refresh the overflow
+            // of the previous message stays on screen (ghosting).
+            render::printTruncated(gfx, lineBuf, (boxX + BOX_WIDTH) - textX - 8);
             if (*p == '\0') break;
             lineStart = p + 1;
             lineY += kLineHeight;

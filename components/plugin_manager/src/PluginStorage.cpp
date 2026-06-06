@@ -1,4 +1,6 @@
 #include "plugin_manager/PluginStorage.h"
+#include "cdc_core/Raii.h"
+#include "cdc_core/feature_flags.h"
 #include "cdc_log.h"
 
 #include "esp_vfs.h"
@@ -6,6 +8,7 @@
 #include "esp_partition.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <cstdio>
 #include <dirent.h>
@@ -99,11 +102,13 @@ std::vector<std::string> PluginStorage::listPluginIds()
 
 std::string PluginStorage::binaryPath(const std::string& id)
 {
+#if FEATURE_PLUGIN_AOT
     std::string aot = aotPath(id);
     struct stat st;
     if (stat(aot.c_str(), &st) == 0 && (st.st_mode & S_IFREG)) {
         return aot;
     }
+#endif
     return wasmPath(id);
 }
 
@@ -125,6 +130,32 @@ std::string PluginStorage::metaPath(const std::string& id)
 std::string PluginStorage::langPath(const std::string& id)
 {
     return std::string(MOUNT_POINT) + "/" + id + ".lang";
+}
+
+std::string PluginStorage::disabledPath(const std::string& id)
+{
+    return std::string(MOUNT_POINT) + "/" + id + ".disabled";
+}
+
+bool PluginStorage::isDisabled(const std::string& id)
+{
+    struct stat st;
+    const std::string path = disabledPath(id);
+    return stat(path.c_str(), &st) == 0 && (st.st_mode & S_IFREG);
+}
+
+bool PluginStorage::setDisabled(const std::string& id, bool disabled)
+{
+    const std::string path = disabledPath(id);
+    if (!disabled) {
+        errno = 0;
+        return std::remove(path.c_str()) == 0 || errno == ENOENT;
+    }
+
+    auto fp = ::cdc::core::openFile(path.c_str(), "wb");
+    if (!fp) return false;
+    static constexpr char kMarker[] = "disabled\n";
+    return std::fwrite(kMarker, 1, sizeof(kMarker) - 1, fp.get()) == sizeof(kMarker) - 1;
 }
 
 bool PluginStorage::stats(uint64_t& free_bytes, uint64_t& total_bytes)

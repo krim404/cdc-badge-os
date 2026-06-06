@@ -14,6 +14,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "cdc_log.h"
+#include <cstdarg>
+#include <cstdio>
 
 static const char* TAG = "TR01-SPI";
 
@@ -37,7 +39,7 @@ extern "C" lt_ret_t lt_port_init(lt_l2_state_t *s2) {
 
     // Initialize shared SPI bus
     if (cdc::hal::initSharedSpiBus() != ESP_OK) {
-        return LT_L1_SPI_ERROR;
+        return LT_HAL_ERROR;
     }
 
     // Add TROPIC01 as device on shared SPI bus
@@ -48,7 +50,7 @@ extern "C" lt_ret_t lt_port_init(lt_l2_state_t *s2) {
     devcfg.queue_size = 1;
 
     if (spi_bus_add_device(cdc::hal::getSharedSpiHost(), &devcfg, &device->spi) != ESP_OK) {
-        return LT_L1_SPI_ERROR;
+        return LT_HAL_ERROR;
     }
 
     LOG_I(TAG, "TROPIC01 SPI initialized (CS=GPIO%d)", device->cs_pin);
@@ -96,7 +98,7 @@ extern "C" lt_ret_t lt_port_spi_transfer(lt_l2_state_t *s2, uint8_t offset, uint
     lt_dev_esp32_t *device = static_cast<lt_dev_esp32_t *>(s2->device);
     if (!device->spi) {
         LOG_E(TAG, "SPI not initialized");
-        return LT_L1_SPI_ERROR;
+        return LT_HAL_ERROR;
     }
 
     // In-place SPI transfer (TX/RX share buffer)
@@ -108,7 +110,7 @@ extern "C" lt_ret_t lt_port_spi_transfer(lt_l2_state_t *s2, uint8_t offset, uint
 
     if (err != ESP_OK) {
         LOG_E(TAG, "SPI transmit failed: %d", err);
-        return LT_L1_SPI_ERROR;
+        return LT_HAL_ERROR;
     }
     return LT_OK;
 }
@@ -134,4 +136,15 @@ extern "C" lt_ret_t lt_port_random_bytes(lt_l2_state_t *s2, void *buff, size_t c
     }
     esp_fill_random(buff, count);
     return LT_OK;
+}
+
+// Required by libtropic's LT_LOG_* macros (libtropic_logging.h). The format
+// strings already carry the level prefix and trailing newline; write them to
+// UART0 stdout.
+extern "C" int lt_port_log(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int ret = vprintf(format, args);
+    va_end(args);
+    return ret;
 }

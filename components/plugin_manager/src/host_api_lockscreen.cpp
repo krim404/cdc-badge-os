@@ -10,10 +10,15 @@
 
 #include "plugin_manager/host_api.h"
 #include "plugin_manager/Plugin.h"
+#include "plugin_manager/PluginManager.h"
 #include "plugin_manager/LockscreenRegistry.h"
 #include "plugin_manager/SlotTable.h"
+#include "cdc_views/ConfirmView.h"
+#include "cdc_ui/ViewStack.h"
+#include "host_str_conv.h"
 
 #include <cstring>
+#include <string>
 
 extern "C" void* plg_get_active_plugin(void);
 
@@ -29,6 +34,38 @@ LockscreenRegistration* slotFor(void* plugin)
     for (auto& s : s_items.slots) if (s.used && s.plugin == plugin) return &s;
     return nullptr;
 }
+
+// Single persistent Y/N alert that overlays whatever is on screen (lock screen
+// included) and routes the answer back to the originating plugin, which may be
+// running headless in the background.
+struct AlertState {
+    cdc::ui::ConfirmView view{};
+    void*    plugin    = nullptr;
+    uint32_t action_id = 0;
+    bool     active    = false;
+};
+AlertState s_alert{};
+
+cdc::ui::ConfirmView::Icon toConfirmIcon(uint8_t icon)
+{
+    switch (icon) {
+        case UI_ICON_ERROR: return cdc::ui::ConfirmView::Icon::ERROR;
+        case UI_ICON_ALERT: return cdc::ui::ConfirmView::Icon::WARNING;
+        default:            return cdc::ui::ConfirmView::Icon::QUESTION;
+    }
+}
+
+void onAlertResult(uint32_t answer)
+{
+    void* p = s_alert.plugin;
+    uint32_t action_id = s_alert.action_id;
+    s_alert.active = false;
+    s_alert.plugin = nullptr;
+    if (p) PluginManager::instance().dispatchActionTo(static_cast<Plugin*>(p), action_id, 0, answer);
+}
+
+void onAlertYes(void*) { onAlertResult(1); }
+void onAlertNo(void*)  { onAlertResult(0); }
 
 }  // namespace
 
@@ -47,6 +84,13 @@ void clearLockscreenRegistrationFor(void* plugin)
 {
     if (auto* slot = slotFor(plugin)) {
         *slot = LockscreenRegistration{};
+    }
+    // Drop ownership of a pending alert so its Y/N no longer dispatches into a
+    // plugin that is being unloaded. The modal view is static and stays valid;
+    // the user dismisses it normally and the answer is discarded.
+    if (s_alert.active && s_alert.plugin == plugin) {
+        s_alert.active = false;
+        s_alert.plugin = nullptr;
     }
 }
 
@@ -84,6 +128,30 @@ int host_lockscreen_unregister_action(void)
     auto* plugin = plg_get_active_plugin();
     if (!plugin) return HOST_ERR_NO_CAPABILITY;
     cdc::plugin_manager::clearLockscreenRegistrationFor(plugin);
+    return HOST_OK;
+}
+
+int host_lockscreen_alert(const char* text, uint8_t icon, uint32_t action_id)
+{
+    auto* plugin = plg_get_active_plugin();
+    if (!plugin) return HOST_ERR_NO_CAPABILITY;
+    if (!text)   return HOST_ERR_INVALID_ARG;
+
+    auto& vs = cdc::ui::ViewStack::instance();
+    // Never clobber an exclusive prompt (FIDO2). Other modals are fine: the
+    // alert stacks on top and receives input until dismissed.
+    if (vs.exclusiveOwner() != nullptr) return HOST_ERR_BUSY;
+
+    std::string cp = cdc::plugin_manager::toDisplay(text);
+    cdc::plugin_manager::s_alert.plugin    = plugin;
+    cdc::plugin_manager::s_alert.action_id = action_id;
+    cdc::plugin_manager::s_alert.active    = true;
+    cdc::plugin_manager::s_alert.view.init(cp.c_str(),
+                                           cdc::plugin_manager::toConfirmIcon(icon));
+    cdc::plugin_manager::s_alert.view.setOnConfirm(&cdc::plugin_manager::onAlertYes, nullptr);
+    cdc::plugin_manager::s_alert.view.setOnCancel (&cdc::plugin_manager::onAlertNo,  nullptr);
+    vs.showModal(&cdc::plugin_manager::s_alert.view);
+    vs.render();
     return HOST_OK;
 }
 

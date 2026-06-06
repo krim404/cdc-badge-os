@@ -12,11 +12,10 @@ set(LIBTROPIC_SRCS
     "${LIBTROPIC_ROOT}/src/lt_crc16.c"
     "${LIBTROPIC_ROOT}/src/lt_hkdf.c"
     "${LIBTROPIC_ROOT}/src/lt_l1.c"
-    "${LIBTROPIC_ROOT}/src/lt_l1_port_wrap.c"
+    "${LIBTROPIC_ROOT}/src/lt_port_wrap.c"
     "${LIBTROPIC_ROOT}/src/lt_l2_frame_check.c"
     "${LIBTROPIC_ROOT}/src/lt_l3_process.c"
-    "${LIBTROPIC_ROOT}/src/lt_random.c"
-    "${LIBTROPIC_ROOT}/src/lt_secure_memzero.c"
+    "${LIBTROPIC_ROOT}/src/libtropic_secure_memzero.c"
     "${LIBTROPIC_ROOT}/src/lt_tr01_attrs.c"
 )
 
@@ -37,9 +36,11 @@ idf_component_register(
     REQUIRES mbedtls
 )
 
-# TROPIC01 silicon revision (ACAB = production silicon)
-target_compile_definitions(${COMPONENT_LIB} PRIVATE
-    ACAB
+# TROPIC01 silicon revision (ACAB = production silicon).
+# PUBLIC so components including libtropic headers (cdc_hal) inherit it:
+# lt_l2_api_structs.h #errors unless a LT_SILICON_REV_* macro is defined.
+target_compile_definitions(${COMPONENT_LIB} PUBLIC
+    LT_SILICON_REV_ACAB
 )
 
 # Enable libtropic error logs (prints PSA error codes on crypto failures).

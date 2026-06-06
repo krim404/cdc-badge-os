@@ -18,6 +18,7 @@
 #include "cdc_hal/ISecureElement.h"
 #include "cdc_hal/libtropic_port_esp32.h"
 #include "cdc_hal/hw_config.h"
+#include "cdc_hal/pairing_key_config.h"
 #include "cdc_core/SystemLock.h"
 #include "cdc_spi_lock.h"
 #include "cdc_log.h"
@@ -42,10 +43,8 @@
 static const char* TAG = "TR01";
 static constexpr uint8_t RMEM_HEADER_MAGIC = 0xCD;
 
-/** \brief Pairing key material references (production slot 0). */
-#define PAIRING_KEY_PRIV sh0priv_prod0
-#define PAIRING_KEY_PUB sh0pub_prod0
-#define PAIRING_KEY_SLOT TR01_PAIRING_KEY_SLOT_INDEX_0
+// PAIRING_KEY_PRIV / PAIRING_KEY_PUB / PAIRING_KEY_SLOT come from
+// cdc_hal/pairing_key_config.h (build-time selectable, default production key).
 
 namespace cdc::hal {
 
@@ -118,6 +117,8 @@ private:
     SeResult rmemErase_unlocked(uint16_t slot);
     SeResult eccGetPublicKey_unlocked(uint8_t slot, uint8_t* pubKey, EccCurve* curve);
     void dumpChipStatus_unlocked(const char* context);
+    bool ensureRConfigBits(lt_config_obj_addr_t addr, uint32_t mask, bool set);
+    lt_ret_t randomChunked_unlocked(uint8_t* buffer, uint16_t size);
 
     SeResult mapResult(lt_ret_t ret) const;
     void handleSessionError(lt_ret_t ret);
@@ -290,6 +291,29 @@ bool Tropic01Element::sessionStart() {
 }
 
 /**
+ * \brief Brings the masked bits of an R-Config object to the desired state.
+ *
+ * Reads the object and writes the adjusted value back only when the masked bits
+ * differ, so it is idempotent across boots. Bus must be held and a secure
+ * session active.
+ * \param addr R-Config object address.
+ * \param mask Bit mask to constrain.
+ * \param set  `true` to set the masked bits, `false` to clear them.
+ * \return `true` if a write was performed and succeeded.
+ */
+bool Tropic01Element::ensureRConfigBits(lt_config_obj_addr_t addr, uint32_t mask, bool set) {
+    uint32_t cfg = 0;
+    if (lt_r_config_read(&handle_, addr, &cfg) != LT_OK) {
+        return false;
+    }
+    const uint32_t desired = set ? (cfg | mask) : (cfg & ~mask);
+    if (desired == cfg) {
+        return false;
+    }
+    return lt_r_config_write(&handle_, addr, desired) == LT_OK;
+}
+
+/**
  * \brief Performs the actual session establishment. Bus must be held.
  */
 bool Tropic01Element::sessionStart_unlocked() {
@@ -324,14 +348,15 @@ bool Tropic01Element::sessionStart_unlocked() {
     sessionActive_.store(true, std::memory_order_release);
     eccCacheValid_.store(false, std::memory_order_release);
 
-    uint32_t sleepCfg = 0;
-    if (lt_r_config_read(&handle_, TR01_CFG_SLEEP_MODE_ADDR, &sleepCfg) == LT_OK) {
-        if (!(sleepCfg & 0x01)) {
-            sleepCfg |= 0x01;
-            if (lt_r_config_write(&handle_, TR01_CFG_SLEEP_MODE_ADDR, sleepCfg) == LT_OK) {
-                LOG_I(TAG, "Auto-sleep enabled");
-            }
-        }
+    if (ensureRConfigBits(TR01_CFG_SLEEP_MODE_ADDR, 0x01u, true)) {
+        LOG_I(TAG, "Auto-sleep enabled");
+    }
+    // Disable maintenance mode (start-up R-Config bit) so the chip rejects
+    // start-up firmware uploads. Reversible R-Config, re-applied automatically
+    // after an R-Memory wipe. Ref: Tropic Square advisory ODR_TR01_SA_2026012900.
+    if (ensureRConfigBits(TR01_CFG_START_UP_ADDR,
+                          BOOTLOADER_CO_CFG_START_UP_MAINTENANCE_ENA_MASK, false)) {
+        LOG_I(TAG, "TROPIC01 maintenance mode disabled (R-Config)");
     }
 
     LOG_I(TAG, "Secure session active");
@@ -611,9 +636,8 @@ bool Tropic01Element::eccSlotUsed(uint8_t slot) const {
 /**
  * \brief Signs a message using ECDSA key in slot.
  *
- * libtropic computes SHA-256 over `msg` internally before signing, so callers
- * pass the raw message and MUST NOT pre-hash. Maximum message length matches
- * libtropic's internal SHA-256 streaming limit.
+ * Callers pass the raw message. ECDSA on the chip signs a 32-byte digest, so
+ * the message is hashed with SHA-256 here before signing.
  */
 SeResult Tropic01Element::ecdsaSign(uint8_t slot, const uint8_t* msg, size_t msgLen,
                                      uint8_t* sig, size_t* sigLen) {
@@ -621,6 +645,15 @@ SeResult Tropic01Element::ecdsaSign(uint8_t slot, const uint8_t* msg, size_t msg
     if (slot >= ECC_SLOT_COUNT || !msg || msgLen == 0 || !sig || !sigLen) {
         return SeResult::INVALID_PARAM;
     }
+
+    uint8_t digest[32];
+    size_t digestLen = 0;
+    if (psa_hash_compute(PSA_ALG_SHA_256, msg, msgLen, digest, sizeof(digest),
+                         &digestLen) != PSA_SUCCESS ||
+        digestLen != sizeof(digest)) {
+        return SeResult::ERROR;
+    }
+
     if (!acquireBus()) return SeResult::ERROR;
 
     SeResult result;
@@ -628,7 +661,7 @@ SeResult Tropic01Element::ecdsaSign(uint8_t slot, const uint8_t* msg, size_t msg
         result = SeResult::SESSION_REQUIRED;
     } else {
         lt_ret_t ret = lt_ecc_ecdsa_sign(&handle_, static_cast<lt_ecc_slot_t>(slot),
-                                          msg, static_cast<uint32_t>(msgLen), sig);
+                                          digest, static_cast<uint32_t>(sizeof(digest)), sig);
         if (ret == LT_OK) {
             *sigLen = TR01_ECDSA_EDDSA_SIGNATURE_LENGTH;
         }
@@ -882,6 +915,27 @@ SeResult Tropic01Element::rmemReadWithHeader(uint16_t slot, RMemHeader* headerOu
 }
 
 /**
+ * \brief Reads `size` random bytes from the TROPIC01 TRNG in <=255-byte chunks.
+ *
+ * lt_random_value_get accepts at most 255 bytes per call. Bus must be held and
+ * a secure session active.
+ * \return LT_OK when the whole buffer was filled, otherwise the failing result.
+ */
+lt_ret_t Tropic01Element::randomChunked_unlocked(uint8_t* buffer, uint16_t size) {
+    uint16_t offset = 0;
+    while (offset < size) {
+        const uint16_t remaining = size - offset;
+        const uint8_t chunk = static_cast<uint8_t>(remaining > 255 ? 255 : remaining);
+        lt_ret_t ret = lt_random_value_get(&handle_, buffer + offset, chunk);
+        if (ret != LT_OK) {
+            return ret;
+        }
+        offset += chunk;
+    }
+    return LT_OK;
+}
+
+/**
  * \brief Fills buffer with random bytes from TROPIC TRNG with ESP fallback.
  *
  * Always returns true on a non-empty request; a WARN is logged whenever the
@@ -907,7 +961,7 @@ bool Tropic01Element::getRandom(uint8_t* buffer, uint16_t size) {
         LOG_W(TAG, "No SE session, ESP32 TRNG fallback (size=%u)", size);
         esp_fill_random(buffer, size);
     } else {
-        lt_ret_t ret = lt_random_value_get(&handle_, buffer, size);
+        lt_ret_t ret = randomChunked_unlocked(buffer, size);
         handleSessionError(ret);
         if (ret != LT_OK) {
             LOG_W(TAG, "TROPIC01 TRNG failed (%s), ESP32 TRNG fallback (size=%u)",
@@ -934,7 +988,7 @@ bool Tropic01Element::getRandomStrict(uint8_t* buffer, uint16_t size) {
     }
     bool ok = false;
     if (ensureSession_unlocked("getRandomStrict")) {
-        lt_ret_t ret = lt_random_value_get(&handle_, buffer, size);
+        lt_ret_t ret = randomChunked_unlocked(buffer, size);
         handleSessionError(ret);
         ok = (ret == LT_OK);
     }

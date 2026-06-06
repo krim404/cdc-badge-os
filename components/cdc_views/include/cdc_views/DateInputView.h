@@ -26,6 +26,12 @@ public:
     using ConfirmCallback = void(*)(uint8_t day, uint8_t month, uint16_t year);
 
     /**
+     * Cancel callback (called when the user dismisses the view with N).
+     * The view pops itself before this fires, so do not call pop() in the handler.
+     */
+    using CancelCallback = void(*)();
+
+    /**
      * Initialize date input view
      * @param title View title
      * @param day Initial day (1-31)
@@ -38,6 +44,11 @@ public:
      * Set confirm callback
      */
     void setOnConfirm(ConfirmCallback callback) { onConfirm_ = callback; }
+
+    /**
+     * Set cancel callback (called when the view is dismissed without confirming)
+     */
+    void setOnCancel(CancelCallback callback) { onCancel_ = callback; }
 
     /**
      * Get current values
@@ -62,6 +73,7 @@ private:
     Field currentField_ = Field::DAY;
     uint8_t digitPos_ = 0;  // Position within current field
     ConfirmCallback onConfirm_ = nullptr;
+    CancelCallback onCancel_ = nullptr;
 
     void nextField();
     void prevField();

@@ -3,11 +3,11 @@
  * \brief Main-menu entry "Plugins" - lists all installed WASM plugins.
  *
  * Y starts the highlighted plugin (delegated to PluginManager::startPlugin).
- * 3 opens a context menu; for a background-running plugin it offers Stop
- * (force-unload via PluginManager::unloadFromRam).
+ * 3 opens a context menu with Start/Stop and Enable/Disable actions.
  * N pops back to the previous menu.
  *
- * A background-running plugin is marked with a leading sun icon in the list.
+ * A background-running plugin is marked with a leading sun icon. A disabled
+ * plugin is marked with a crossed-out error icon and cannot be started.
  */
 
 #pragma once

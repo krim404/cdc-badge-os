@@ -121,6 +121,7 @@ void drawFooterBar(Gdey029T94* gfx, uint16_t width, uint16_t height,
     if (!force && !prefix && !hint) return;
 
     gfx->fillRect(0, height - FOOTER_HEIGHT, width, FOOTER_HEIGHT, EPD_BLACK);
+    gfx->setFont(nullptr);  // built-in 6x8 glcdfont; never inherit a caller's GFX font
     gfx->setTextSize(1);
     gfx->setTextColor(EPD_WHITE);
     gfx->setCursor(4, height - 12);

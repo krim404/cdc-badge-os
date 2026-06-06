@@ -56,6 +56,7 @@ static void parse_capabilities(const cJSON* root, PluginCapabilities& cap)
     cap.wifi             = get_bool("wifi", false);
     cap.ble              = get_bool("ble", false);
     cap.http             = get_bool("http", false);
+    cap.socket           = get_bool("socket", false);
     cap.ui_exclusive     = get_bool("ui_exclusive", false);
     cap.display_lowlevel = get_bool("display_lowlevel", false);
     cap.sao              = get_bool("sao", false);

@@ -9,10 +9,14 @@
  */
 
 #include "plugin_manager/host_api.h"
+#include "plugin_manager/PluginManager.h"
 #include "cdc_hal/IDisplay.h"
 #include "cdc_views/ToastView.h"
 #include "cdc_views/InfoView.h"
 #include "cdc_ui/ViewStack.h"
+#include "host_str_conv.h"
+
+#include <string>
 
 namespace {
 
@@ -35,8 +39,9 @@ extern "C" {
 int host_ui_push_toast(const char* text, uint8_t icon, uint16_t duration_ms)
 {
     if (!text) return HOST_ERR_INVALID_ARG;
+    std::string cp = cdc::plugin_manager::toDisplay(text);
     static cdc::ui::ToastView s_pluginToast;
-    s_pluginToast.init(text, toIcon(icon), duration_ms, true);
+    s_pluginToast.init(cp.c_str(), toIcon(icon), duration_ms, true);
     cdc::ui::ViewStack::instance().showModal(&s_pluginToast);
     cdc::ui::ViewStack::instance().render();
     return HOST_OK;
@@ -50,21 +55,35 @@ int host_ui_push_message(const char* text, uint8_t icon, uint32_t duration_ms)
 int host_ui_push_info(const char* title, const char* body)
 {
     if (!title || !body) return HOST_ERR_INVALID_ARG;
+    std::string cpTitle = cdc::plugin_manager::toDisplay(title);
+    std::string cpBody  = cdc::plugin_manager::toDisplay(body);
     auto* info = new cdc::ui::InfoView();
-    info->init(title, body);
+    info->init(cpTitle.c_str(), cpBody.c_str());
     cdc::ui::ViewStack::instance().push(info);
     return HOST_OK;
 }
 
 int host_ui_pop(void)
 {
-    cdc::ui::ViewStack::instance().pop();
+    // A shown modal (toast/confirm/context menu) owns input and sits above the
+    // view stack, so "go back" must dismiss it first; pop() applies to the view
+    // stack only when no modal is up. Otherwise a plugin's ui::pop() would leave
+    // its modal stranded and pop an unrelated view underneath.
+    auto& vs = cdc::ui::ViewStack::instance();
+    if (vs.hasModal()) {
+        vs.hideModal();
+    } else {
+        vs.pop();
+    }
     return HOST_OK;
 }
 
 int host_ui_pop_to_plugin(void)
 {
-    cdc::ui::ViewStack::instance().pop();
+    uint8_t base = cdc::plugin_manager::PluginManager::instance().pluginBaseDepth();
+    // The plugin's first view sits at base + 1; collapse every overlay above it
+    // in one step. Views below the plugin (launcher, home) stay untouched.
+    cdc::ui::ViewStack::instance().popToDepth(base + 1);
     return HOST_OK;
 }
 

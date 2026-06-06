@@ -12,7 +12,10 @@
 #include "cdc_views/Fonts.h"
 #include "cdc_views/RenderHelpers.h"
 #include "cdc_hal/IDisplay.h"
+#include "host_str_conv.h"
 #include <goodisplay/gdey029T94.h>
+#include <cstring>
+#include <string>
 
 namespace {
 
@@ -90,13 +93,14 @@ int host_text_pick_font_that_fits(const char* text, int16_t max_width_px,
     auto* gfx = static_cast<Gdey029T94*>(display->getNativeHandle());
     if (!gfx) return HOST_ERR_NOT_FOUND;
 
+    std::string cp = cdc::plugin_manager::toDisplay(text);
     const GFXfont* candFonts[HOST_FONT_COUNT];
     if (count > HOST_FONT_COUNT) count = HOST_FONT_COUNT;
     for (uint32_t i = 0; i < count; ++i) {
         candFonts[i] = cdc::ui::getGfxFont(candidates[i]);
     }
     const GFXfont* picked = cdc::ui::render::pickFontThatFits(
-        gfx, text, max_width_px, candFonts, count, false);
+        gfx, cp.c_str(), max_width_px, candFonts, count, false);
 
     uint8_t pickedId = candidates[count - 1];
     for (uint32_t i = 0; i < count; ++i) {
@@ -113,7 +117,7 @@ int host_view_canvas_draw_text(int16_t x, int16_t y, const char* text)
 {
     auto* c = canvas();
     if (!c) return HOST_ERR_NOT_FOUND;
-    c->drawText(x, y, text);
+    c->drawText(x, y, cdc::plugin_manager::toDisplay(text).c_str());
     return HOST_OK;
 }
 
@@ -122,7 +126,7 @@ int host_view_canvas_draw_text_aligned(int16_t x, int16_t y, int16_t w,
 {
     auto* c = canvas();
     if (!c) return HOST_ERR_NOT_FOUND;
-    c->drawTextAligned(x, y, w, text, align);
+    c->drawTextAligned(x, y, w, cdc::plugin_manager::toDisplay(text).c_str(), align);
     return HOST_OK;
 }
 
@@ -178,7 +182,9 @@ int host_view_canvas_add_text(uint32_t widget_id, uint16_t max_len, const char* 
 {
     auto* c = canvas();
     if (!c) return HOST_ERR_NOT_FOUND;
-    return c->addText(widget_id, max_len, initial) ? HOST_OK : HOST_ERR_INVALID_ARG;
+    std::string cp = cdc::plugin_manager::toDisplay(initial);
+    return c->addText(widget_id, max_len, initial ? cp.c_str() : nullptr)
+               ? HOST_OK : HOST_ERR_INVALID_ARG;
 }
 
 int host_view_canvas_add_button(uint32_t widget_id)
@@ -213,15 +219,21 @@ int host_view_canvas_set_text(uint32_t widget_id, const char* text)
 {
     auto* c = canvas();
     if (!c) return HOST_ERR_NOT_FOUND;
-    return c->setText(widget_id, text) ? HOST_OK : HOST_ERR_NOT_FOUND;
+    return c->setText(widget_id, cdc::plugin_manager::toDisplay(text).c_str())
+               ? HOST_OK : HOST_ERR_NOT_FOUND;
 }
 
 int host_view_canvas_get_text(uint32_t widget_id, char* out, size_t cap)
 {
     auto* c = canvas();
     if (!c) return HOST_ERR_NOT_FOUND;
-    int n = c->getText(widget_id, out, cap);
-    return n < 0 ? HOST_ERR_NOT_FOUND : n;
+    if (!out || cap == 0) return HOST_ERR_INVALID_ARG;
+    std::string tmp;
+    tmp.resize(cap);
+    int n = c->getText(widget_id, &tmp[0], cap);
+    if (n < 0) return HOST_ERR_NOT_FOUND;
+    tmp.resize(std::strlen(tmp.c_str()));
+    return cdc::plugin_manager::copyUtf8(tmp.c_str(), out, cap);
 }
 
 int host_view_canvas_set_focus(uint32_t widget_id)
@@ -245,6 +257,12 @@ int host_view_canvas_set_key_repeat(uint16_t initial_ms, uint16_t repeat_ms)
     if (!c) return HOST_ERR_NOT_FOUND;
     c->setKeyRepeat(initial_ms, repeat_ms);
     return HOST_OK;
+}
+
+int host_view_canvas_set_long_press_action(uint32_t action_id)
+{
+    return cdc::plugin_manager::PluginUiState::instance()
+        .setCanvasLongPressAction(action_id);
 }
 
 }  // extern "C"

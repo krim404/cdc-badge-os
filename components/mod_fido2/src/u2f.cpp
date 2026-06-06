@@ -476,6 +476,9 @@ static uint16_t u2f_register(const uint8_t *challenge, const uint8_t *applicatio
         offset += U2F_KEY_HANDLE_SIZE;
 
         // Add attestation cert
+        if (offset + g_attest_cert_len + U2F_MAX_EC_SIG_SIZE + 2 > response_max) {
+            return u2f_response_error(response, U2F_SW_WRONG_LENGTH);
+        }
         memcpy(response + offset, g_attest_cert, g_attest_cert_len);
         offset += g_attest_cert_len;
 

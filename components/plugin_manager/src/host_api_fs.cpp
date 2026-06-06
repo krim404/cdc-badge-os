@@ -13,7 +13,6 @@
 #include "plugin_manager/Plugin.h"
 #include "plugin_manager/PluginStorage.h"
 #include "cdc_core/Raii.h"
-#include "cdc_core/Cp437.h"
 
 #include <cstdio>
 #include <cstring>
@@ -160,10 +159,8 @@ int host_fs_view(const char* name)
     content.resize(VIEW_MAX);
     size_t n = std::fread(&content[0], 1, VIEW_MAX - 1, f.get());
     content.resize(n);
-    // Files are UTF-8; the display pipeline is CP437.
-    std::string title = cdc::core::cp437::fromUtf8(name);
-    std::string body  = cdc::core::cp437::fromUtf8(content.c_str());
-    return host_ui_push_info(title.c_str(), body.c_str());
+    // Files and filenames are UTF-8; host_ui_push_info converts to display.
+    return host_ui_push_info(name, content.c_str());
 }
 
 }  // extern "C"

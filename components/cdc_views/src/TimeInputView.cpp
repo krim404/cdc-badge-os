@@ -39,6 +39,7 @@ void TimeInputView::init(const char* title, uint8_t hour, uint8_t minute) {
     minute_ = (minute <= 59) ? minute : 0;
     currentField_ = Field::HOUR;
     digitPos_ = 0;
+    onCancel_ = nullptr;
     dirty_ = true;
 }
 
@@ -139,7 +140,11 @@ InputResult TimeInputView::onKey(char key) {
                 clearField();
                 return InputResult::CONSUMED;
             }
-            return InputResult::REQUEST_POP;
+            cdc::ui::ViewStack::instance().pop();
+            if (onCancel_) {
+                onCancel_();
+            }
+            return InputResult::CONSUMED;
 
         case KEY_YES:  // Confirm
             if (hour_ > 23) hour_ = 23;

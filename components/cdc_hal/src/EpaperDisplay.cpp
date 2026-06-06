@@ -60,7 +60,7 @@ static bool s_backlightOn = true;
 static SemaphoreHandle_t s_renderMutex = nullptr;
 static TaskHandle_t s_renderTask = nullptr;
 static volatile bool s_renderPending = false;
-static volatile bool s_renderFull = false;
+static volatile RefreshMode s_renderMode = RefreshMode::PARTIAL;
 
 // Serialises the actual SSD1680 SPI transfer. The render task and any
 // synchronous flushSync() caller (e.g. a plugin host edit running on the
@@ -72,17 +72,33 @@ static SemaphoreHandle_t s_panelMutex = nullptr;
 // refresh is promoted to a FULL update to reset the panel. Guarded by
 // s_panelMutex.
 static uint16_t s_partialsSinceFull = 0;
-static constexpr uint16_t kMaxPartialsBeforeFull = 8;
+static constexpr uint16_t kMaxPartialsBeforeFull = 60;
 
 // Decide the effective refresh mode, promoting to FULL periodically to clear
 // ghosting. Caller must hold s_panelMutex.
-static bool resolveFullRefresh(bool wantFull) {
-    if (wantFull || s_partialsSinceFull >= kMaxPartialsBeforeFull) {
+static bool resolveFullRefresh(RefreshMode mode) {
+    // Light partials (e.g. the lock-screen clock) never promote and do not
+    // advance the ghost counter; they stay PARTIAL until a real FULL clears them.
+    if (mode == RefreshMode::PARTIAL_LIGHT) {
+        return false;
+    }
+    if (mode == RefreshMode::FULL || s_partialsSinceFull >= kMaxPartialsBeforeFull) {
         s_partialsSinceFull = 0;
         return true;
     }
     ++s_partialsSinceFull;
     return false;
+}
+
+// Coalescing rank for queued async refreshes: when several flush() calls
+// collapse into one render, the stronger mode wins. FULL > PARTIAL > PARTIAL_LIGHT.
+static int refreshStrength(RefreshMode mode) {
+    switch (mode) {
+        case RefreshMode::FULL:          return 2;
+        case RefreshMode::PARTIAL:       return 1;
+        case RefreshMode::PARTIAL_LIGHT: return 0;
+    }
+    return 1;
 }
 
 /**
@@ -130,16 +146,16 @@ static void renderTask(void* arg) {
     while (true) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        bool doFull;
+        RefreshMode mode;
         {
             cdc::core::MutexGuard guard(s_renderMutex);
-            doFull = s_renderFull;
+            mode = s_renderMode;
             s_renderPending = false;
         }
 
         if (s_epd_display) {
             cdc::core::MutexGuard guard(s_panelMutex);
-            if (resolveFullRefresh(doFull)) {
+            if (resolveFullRefresh(mode)) {
                 s_epd_display->update();
             } else {
                 // updateWindow takes physical coordinates (128 x 296). HAL
@@ -320,10 +336,11 @@ void EpaperDisplay::flush(RefreshMode mode) {
     {
         cdc::core::MutexGuard guard(s_renderMutex);
         if (s_renderPending) {
-            if (mode == RefreshMode::FULL) s_renderFull = true;
+            // Coalesce with the already-queued refresh: keep the stronger mode.
+            if (refreshStrength(mode) > refreshStrength(s_renderMode)) s_renderMode = mode;
         } else {
             s_renderPending = true;
-            s_renderFull = (mode == RefreshMode::FULL);
+            s_renderMode = mode;
         }
     }
 
@@ -337,7 +354,7 @@ void EpaperDisplay::flush(RefreshMode mode) {
 void EpaperDisplay::flushSync(RefreshMode mode) {
     if (!s_epd_display) return;
     cdc::core::MutexGuard guard(s_panelMutex);
-    if (resolveFullRefresh(mode == RefreshMode::FULL)) {
+    if (resolveFullRefresh(mode)) {
         s_epd_display->update();
     } else {
         // updateWindow takes physical coordinates (128 x 296). HAL WIDTH/HEIGHT

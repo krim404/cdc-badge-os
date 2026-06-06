@@ -77,6 +77,14 @@ public:
 
     [[nodiscard]] bool hasExport(const char* name) const;
 
+    /// True if the most recent callI() failed because the WASM module trapped
+    /// (as opposed to a missing export). Reset on every callI().
+    [[nodiscard]] bool lastCallTrapped() const noexcept { return last_call_trapped_; }
+
+    /// WAMR exception text captured by the last trapping callI(). Empty string
+    /// if the last call did not trap.
+    [[nodiscard]] const char* lastTrapMessage() const noexcept { return last_trap_; }
+
     [[nodiscard]] const PluginManifest& manifest() const noexcept { return manifest_; }
     [[nodiscard]] const std::string&    id()       const noexcept { return id_; }
     [[nodiscard]] bool                  isLoaded() const noexcept
@@ -129,6 +137,9 @@ private:
     std::string               langOverlayLang_;
 
     std::set<std::string>     missingExports_;
+
+    bool last_call_trapped_ = false;
+    char last_trap_[160]    = {0};
 };
 
 }  // namespace cdc::plugin_manager

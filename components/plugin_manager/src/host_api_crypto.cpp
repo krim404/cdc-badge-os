@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <string>
 
 namespace {
 
@@ -145,15 +146,33 @@ int host_base64_encode(const uint8_t* in, size_t in_len, char* out, size_t out_s
     size_t olen = 0;
     int rc = mbedtls_base64_encode(reinterpret_cast<unsigned char*>(out), out_size,
                                     &olen, in, in_len);
-    return rc == 0 ? HOST_OK : HOST_ERR_NO_MEMORY;
+    if (rc != 0) return HOST_ERR_NO_MEMORY;
+    // Matrix/vodozemac use unpadded base64 for crypto fields; strip '=' padding so
+    // the output round-trips with strict unpadded decoders on the receiving side.
+    while (olen > 0 && out[olen - 1] == '=') --olen;
+    out[olen] = '\0';
+    return HOST_OK;
 }
 
 int host_base64_decode(const char* in, size_t in_len, uint8_t* out, size_t out_size)
 {
     if (!in || !out) return HOST_ERR_INVALID_ARG;
+    // mbedtls_base64_decode requires the input padded to a multiple of 4: it
+    // drops the trailing partial group otherwise. Some inputs (e.g. Matrix SSSS
+    // secrets) are unpadded, so normalise first - strip whitespace, then pad
+    // with '=' to a multiple of 4 - before decoding with mbedTLS.
+    std::string norm;
+    norm.reserve(in_len + 4);
+    for (size_t i = 0; i < in_len; ++i) {
+        char c = in[i];
+        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') continue;
+        norm.push_back(c);
+    }
+    while (norm.size() % 4 != 0) norm.push_back('=');
     size_t olen = 0;
     int rc = mbedtls_base64_decode(out, out_size, &olen,
-                                    reinterpret_cast<const unsigned char*>(in), in_len);
+                                    reinterpret_cast<const unsigned char*>(norm.data()),
+                                    norm.size());
     if (rc != 0) return HOST_ERR_GENERIC;
     return static_cast<int>(olen);
 }

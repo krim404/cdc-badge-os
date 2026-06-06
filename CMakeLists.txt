@@ -36,25 +36,6 @@ idf_component_register(SRCS \${srcs}
     file(WRITE ${CALEPD_PATCH_MARKER} "Patched for CDC Badge")
 endif()
 
-# Patch libtropic for ESP-IDF Hardware GCM workaround
-set(LIBTROPIC_DIR "${CMAKE_SOURCE_DIR}/third_party/libtropic")
-set(LIBTROPIC_PATCH_MARKER "${LIBTROPIC_DIR}/.patched")
-
-if(NOT EXISTS ${LIBTROPIC_PATCH_MARKER})
-    set(PATCH_GCM "${CMAKE_SOURCE_DIR}/patches/libtropic_espidf_gcm_workaround.patch")
-    if(EXISTS ${PATCH_GCM})
-        execute_process(
-            COMMAND patch -p1 -N -d ${LIBTROPIC_DIR} -i ${PATCH_GCM}
-            RESULT_VARIABLE PATCH_RESULT
-        )
-        if(PATCH_RESULT EQUAL 0)
-            message(STATUS "libtropic: ESP-IDF GCM workaround patch applied")
-        endif()
-    endif()
-
-    file(WRITE ${LIBTROPIC_PATCH_MARKER} "Patched for ESP-IDF GCM")
-endif()
-
 # Patch WAMR ESP-IDF platform port: os_self_thread() must work from any
 # FreeRTOS task, not only pthreads
 set(WAMR_DIR "${CMAKE_SOURCE_DIR}/components/wamr_runtime/wasm-micro-runtime")

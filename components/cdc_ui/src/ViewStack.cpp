@@ -118,11 +118,47 @@ void ViewStack::pop_unlocked() {
 }
 
 void ViewStack::hideModal_unlocked() {
-    if (modal_) {
-        LOG_D(TAG, "Hiding modal '%s'", modal_->getName());
-        modal_->onExit();
-        modal_ = nullptr;
+    if (modalDepth_ == 0) return;
 
+    IView* top = modals_[--modalDepth_];
+    modals_[modalDepth_] = nullptr;
+    LOG_D(TAG, "Hiding modal '%s' (depth=%d)", top->getName(), modalDepth_);
+    top->onExit();
+
+    // The dismissed modal must be erased and whatever it covered repainted, so
+    // force a full composite of the base view plus any modals still beneath.
+    needsFullRefresh_ = true;
+    if (modalDepth_ > 0) {
+        modals_[modalDepth_ - 1]->markDirty();
+    } else {
+        IView* view = (depth_ == 0) ? nullptr : stack_[depth_ - 1];
+        if (view) {
+            view->onResume();
+            view->markDirty();
+        }
+    }
+}
+
+void ViewStack::removeModal_unlocked(IView* modal) {
+    if (!modal) return;
+    int idx = -1;
+    for (uint8_t i = 0; i < modalDepth_; ++i) {
+        if (modals_[i] == modal) { idx = i; break; }
+    }
+    if (idx < 0) return;
+
+    modal->onExit();
+    LOG_D(TAG, "Removing modal '%s' (depth=%d)", modal->getName(), modalDepth_ - 1);
+    for (uint8_t i = static_cast<uint8_t>(idx); i + 1 < modalDepth_; ++i) {
+        modals_[i] = modals_[i + 1];
+    }
+    modalDepth_--;
+    modals_[modalDepth_] = nullptr;
+
+    needsFullRefresh_ = true;
+    if (modalDepth_ > 0) {
+        modals_[modalDepth_ - 1]->markDirty();
+    } else {
         IView* view = (depth_ == 0) ? nullptr : stack_[depth_ - 1];
         if (view) {
             view->onResume();
@@ -191,6 +227,13 @@ void ViewStack::popToAnchor(IView* anchor) {
     }
 }
 
+void ViewStack::popToDepth(uint8_t targetDepth) {
+    StackLock lock(mutex_);
+    while (depth_ > targetDepth && depth_ > 1) {
+        pop_unlocked();
+    }
+}
+
 IView* ViewStack::current() const {
     StackLock lock(mutex_);
     if (depth_ == 0) return nullptr;
@@ -209,8 +252,10 @@ void ViewStack::dispatchKey(char key) {
     StackLock lock(mutex_);
     resetInactivityTimer();
 
-    if (modal_) {
-        InputResult result = modal_->onKey(key);
+    if (modalDepth_ > 0) {
+        // Input stays on the top modal and never falls through to the view (or
+        // lower modals) behind it.
+        InputResult result = modals_[modalDepth_ - 1]->onKey(key);
         if (result == InputResult::REQUEST_POP) {
             hideModal_unlocked();
         }
@@ -227,38 +272,39 @@ void ViewStack::dispatchKey(char key) {
 }
 
 void ViewStack::dispatchLongPress(char key) {
+    cdc::core::EventBus::instance().publish(cdc::core::EventType::KEY_LONG_PRESS,
+                                            static_cast<uint8_t>(key));
     StackLock lock(mutex_);
 
-    if (key == 'N') {
-        if (modal_) {
-            hideModal_unlocked();
-        } else if (depth_ > 1) {
-            pop_unlocked();
-        }
-        return;
-    }
-
-    if (modal_) {
-        InputResult result = modal_->onLongPress(key);
-        if (result == InputResult::REQUEST_POP) {
+    if (modalDepth_ > 0) {
+        InputResult result = modals_[modalDepth_ - 1]->onLongPress(key);
+        // 'N' is the universal back/cancel gesture: hide the top modal unless it
+        // consumed the press itself. Other keys hide only on REQUEST_POP.
+        if (result == InputResult::REQUEST_POP ||
+            (key == 'N' && result != InputResult::CONSUMED)) {
             hideModal_unlocked();
         }
         return;
     }
 
     IView* view = (depth_ == 0) ? nullptr : stack_[depth_ - 1];
-    if (view) {
-        InputResult result = view->onLongPress(key);
-        if (result == InputResult::REQUEST_POP) {
-            pop_unlocked();
-        }
+    if (!view) {
+        return;
+    }
+    InputResult result = view->onLongPress(key);
+    // 'N' is the universal back/cancel gesture: pop unless the view consumed it
+    // (e.g. an input view that cancels itself and notifies its owner). Other
+    // keys pop only on an explicit REQUEST_POP.
+    if (result == InputResult::REQUEST_POP ||
+        (key == 'N' && result != InputResult::CONSUMED && depth_ > 1)) {
+        pop_unlocked();
     }
 }
 
 void ViewStack::dispatchTick(uint32_t nowMs) {
     StackLock lock(mutex_);
-    if (modal_) {
-        modal_->onTick(nowMs);
+    if (modalDepth_ > 0) {
+        modals_[modalDepth_ - 1]->onTick(nowMs);
     }
     IView* view = (depth_ == 0) ? nullptr : stack_[depth_ - 1];
     if (view) {
@@ -275,22 +321,27 @@ void ViewStack::render(bool synchronous) {
 
     hal::IDisplay* display = hal::getDisplayInstance();
 
-    if (modal_) {
-        // A modal normally owns the screen and only it repaints. But when one
-        // modal directly replaces another, the predecessor's hideModal marks
-        // the base view dirty; repaint the base first (clearing a possibly
-        // larger previous modal) and draw the new modal on top in the same
-        // pass with a full refresh, so nothing of the old modal lingers.
+    if (modalDepth_ > 0) {
+        // Modals own the screen and stack on top of the base view. Repaint the
+        // base first (when dirty or on a forced full refresh, e.g. after a modal
+        // was dismissed) and then draw every modal bottom-to-top in the same
+        // pass, so the composite stays correct and nothing of a gone modal lingers.
         bool baseDirty = view->needsRender();
-        if (!baseDirty && !modal_->needsRender()) {
+        bool anyModalDirty = false;
+        for (uint8_t i = 0; i < modalDepth_; ++i) {
+            if (modals_[i]->needsRender()) { anyModalDirty = true; break; }
+        }
+        if (!baseDirty && !anyModalDirty && !needsFullRefresh_) {
             return;
         }
-        if (baseDirty) {
+        if (baseDirty || needsFullRefresh_) {
             view->render(false);
             view->clearDirty();
         }
-        modal_->render(true);
-        modal_->clearDirty();
+        for (uint8_t i = 0; i < modalDepth_; ++i) {
+            modals_[i]->render(true);
+            modals_[i]->clearDirty();
+        }
         if (display) {
             hal::RefreshMode mode = (baseDirty || needsFullRefresh_)
                 ? hal::RefreshMode::FULL : hal::RefreshMode::PARTIAL;
@@ -307,7 +358,9 @@ void ViewStack::render(bool synchronous) {
     view->render(false);
     view->clearDirty();
 
-    hal::RefreshMode mode = needsFullRefresh_ ? hal::RefreshMode::FULL : hal::RefreshMode::PARTIAL;
+    hal::RefreshMode mode = needsFullRefresh_
+        ? hal::RefreshMode::FULL
+        : (view->prefersLightRefresh() ? hal::RefreshMode::PARTIAL_LIGHT : hal::RefreshMode::PARTIAL);
     if (display) {
         if (synchronous) display->flushSync(mode);
         else             display->flush(mode);
@@ -317,31 +370,57 @@ void ViewStack::render(bool synchronous) {
 
 bool ViewStack::needsRender() const {
     StackLock lock(mutex_);
-    if (modal_ && modal_->needsRender()) return true;
+    for (uint8_t i = 0; i < modalDepth_; ++i) {
+        if (modals_[i]->needsRender()) return true;
+    }
     IView* view = (depth_ == 0) ? nullptr : stack_[depth_ - 1];
     return view && view->needsRender();
 }
 
 void ViewStack::showModal(IView* modal) {
     StackLock lock(mutex_);
+    if (!modal) return;
     if (exclusiveOwner_) {
         LOG_W(TAG, "showModal('%s') blocked: exclusive lock held by %p",
-              modal ? modal->getName() : "(null)", exclusiveOwner_);
+              modal->getName(), exclusiveOwner_);
         return;
     }
-    if (modal_) {
-        modal_->onExit();
+
+    // If this modal is already stacked, lift it back to the top rather than
+    // duplicating it (the shared toast/confirm singletons get re-shown in place).
+    for (uint8_t i = 0; i < modalDepth_; ++i) {
+        if (modals_[i] == modal) {
+            for (uint8_t j = i + 1; j < modalDepth_; ++j) modals_[j - 1] = modals_[j];
+            modalDepth_--;
+            break;
+        }
     }
-    modal_ = modal;
-    if (modal_) {
-        modal_->onEnter(nullptr);
-        LOG_D(TAG, "Showing modal '%s'", modal_->getName());
+
+    // Stack full: drop the oldest modal at the bottom to make room.
+    if (modalDepth_ >= MAX_MODAL_DEPTH) {
+        modals_[0]->onExit();
+        for (uint8_t i = 1; i < modalDepth_; ++i) modals_[i - 1] = modals_[i];
+        modalDepth_--;
     }
+
+    // Stacking on top of an existing modal needs a full composite so a smaller
+    // new modal does not leave the previous one's edges showing around it. The
+    // first modal over the base view stays a partial (no toast-refresh regress).
+    if (modalDepth_ > 0) needsFullRefresh_ = true;
+
+    modals_[modalDepth_++] = modal;
+    modal->onEnter(nullptr);
+    LOG_D(TAG, "Showing modal '%s' (depth=%d)", modal->getName(), modalDepth_);
 }
 
 void ViewStack::hideModal() {
     StackLock lock(mutex_);
     hideModal_unlocked();
+}
+
+void ViewStack::removeModal(IView* modal) {
+    StackLock lock(mutex_);
+    removeModal_unlocked(modal);
 }
 
 void ViewStack::setInactivityTimeout(InactivityCallback callback, uint32_t timeoutMs) {

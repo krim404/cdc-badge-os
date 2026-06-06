@@ -132,6 +132,14 @@ reset.
 See [Module Development Guide](docs/MODULE_DEVELOPMENT.md) for the storage map
 (canonical source: `main/tropic_slot_map.h`).
 
+### Anti-Block Instant Lock
+
+Holding **N + Y together** at any time forces the badge back to a clean,
+locked state without a hardware reset: it unloads every running plugin,
+closes all open views and dialogs, notifies modules to reset their session
+state, and returns to the lock screen. Use it to recover if a view ever gets
+stuck with no way back.
+
 ## Hardware
 
 | Component | Model |

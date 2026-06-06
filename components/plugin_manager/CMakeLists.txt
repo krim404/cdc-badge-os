@@ -27,6 +27,7 @@ idf_component_register(
         "src/host_api_gpio.cpp"
         "src/host_api_wifi.cpp"
         "src/host_api_http.cpp"
+        "src/host_api_socket.cpp"
         "src/host_api_crypto.cpp"
         "src/host_api_se.cpp"
         "src/host_api_sysinfo.cpp"
@@ -38,6 +39,7 @@ idf_component_register(
         "src/host_api_pixel_strip.cpp"
         "src/host_api_lockscreen.cpp"
         "src/host_api_strings.cpp"
+        "src/host_str_conv.cpp"
         "src/PluginSerialCommands.cpp"
         "src/GpioSerialCommands.cpp"
     INCLUDE_DIRS
@@ -61,6 +63,7 @@ idf_component_register(
         esp_adc
         esp_http_client
         esp-tls
+        lwip
         mbedtls
         espressif__led_strip
         usb_badge

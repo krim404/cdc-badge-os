@@ -22,6 +22,7 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     set(WAMR_BUILD_REF_TYPES 1)
     set(WAMR_BUILD_BULK_MEMORY 1)
     set(WAMR_BUILD_LIB_PTHREAD 0)
+    set(WAMR_BUILD_INSTRUCTION_METERING 1)
 
     set(WAMR_ROOT_DIR ${CMAKE_CURRENT_LIST_DIR}/wasm-micro-runtime)
     include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)

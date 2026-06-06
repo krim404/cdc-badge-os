@@ -172,7 +172,11 @@ bool TotpStore::readAccount(uint16_t slot, TotpAccount* out) {
     strncpy(out->name, header.name, sizeof(out->name) - 1);
     strncpy(out->issuer, payload.issuer, sizeof(out->issuer) - 1);
     memcpy(out->secret, payload.secret, sizeof(out->secret));
-    out->secretLen = payload.secretLen;
+    // Clamp the persisted length to the fixed buffer so a tampered/corrupt slot
+    // cannot drive an out-of-bounds read in later consumers (e.g. base32Encode).
+    out->secretLen = payload.secretLen > sizeof(out->secret)
+                         ? static_cast<uint8_t>(sizeof(out->secret))
+                         : payload.secretLen;
     out->digits = payload.digits ? payload.digits : DEFAULT_DIGITS;
     out->period = payload.period ? payload.period : DEFAULT_PERIOD;
     out->algorithm = payload.algorithm;

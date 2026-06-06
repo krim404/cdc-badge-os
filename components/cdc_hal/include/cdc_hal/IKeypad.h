@@ -80,6 +80,44 @@ public:
     virtual void setLongPressCallback(LongPressCallback callback) = 0;
 
     /**
+     * Set callback for the reserved rescue chord (N + Y held together).
+     * Fired once per chord hold; used for the anti-block instant lock.
+     */
+    using PanicChordCallback = void(*)();
+    virtual void setPanicChordCallback(PanicChordCallback callback) = 0;
+
+    /** Independent requesters of deferred short-press mode (OR-combined). */
+    static constexpr uint32_t DEFER_SRC_VIEW  = 1u << 0;  ///< active view (e.g. canvas long-press)
+    static constexpr uint32_t DEFER_SRC_EVENT = 1u << 1;  ///< plugin KEY_LONG_PRESS subscription
+
+    /**
+     * Defer the short-press event until key release and suppress it when a
+     * long-press already fired. When no source requests it (default) the short
+     * press is emitted on key-down. Each source is tracked independently and
+     * OR-combined, so a view and an event subscription cannot clobber each
+     * other.
+     * @param source  One of the DEFER_SRC_* bits identifying the requester.
+     * @param enabled Whether that source requests deferred short-press.
+     */
+    virtual void setDeferShortPress(uint32_t source, bool enabled) {
+        (void)source;
+        (void)enabled;
+    }
+
+    /**
+     * Re-emit a held key on a repeat schedule, for every view. While a single
+     * key is held, the key is re-buffered every period_ms after an initial
+     * delay. Mutually exclusive with long-press: a non-zero period suppresses
+     * the long-press for held keys. Pass 0/0 to disable (default).
+     * @param initial_ms Delay before the first repeat.
+     * @param period_ms  Interval between subsequent repeats; 0 disables.
+     */
+    virtual void setKeyRepeat(uint16_t initial_ms, uint16_t period_ms) {
+        (void)initial_ms;
+        (void)period_ms;
+    }
+
+    /**
      * Prepare keypad for sleep mode
      * Disables ISR and interrupt to prevent spurious wakeups
      */

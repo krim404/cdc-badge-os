@@ -170,8 +170,13 @@ InputResult ListView::onKey(char key) {
                     valid = true;
                 }
             }
-            if (valid) onSelect_(sel, userData);
-            return InputResult::CONSUMED;
+            if (valid) {
+                onSelect_(sel, userData);
+                return InputResult::CONSUMED;
+            }
+            // No select callback bound: leave KEY_YES free for the plugin
+            // (delivered via the KEY_PRESSED EventBus) instead of swallowing it.
+            return InputResult::IGNORED;
         }
 
         case KEY_MENU: { // Context menu

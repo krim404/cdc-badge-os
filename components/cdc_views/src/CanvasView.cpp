@@ -10,6 +10,7 @@
 #include "cdc_views/LayoutConstants.h"
 #include "cdc_views/RenderHelpers.h"
 #include "cdc_hal/IDisplay.h"
+#include "cdc_hal/IKeypad.h"
 #include "cdc_log.h"
 #include "esp_timer.h"
 #include <goodisplay/gdey029T94.h>
@@ -20,8 +21,8 @@ namespace cdc::ui {
 
 namespace {
 
-constexpr int TITLE_Y = 12;
-constexpr int HEADER_HEIGHT_DEFAULT = 18;
+constexpr int TITLE_Y = 5;
+constexpr int HEADER_HEIGHT_DEFAULT = 30;
 
 const char* t9_chars(char key) {
     switch (key) {
@@ -64,16 +65,18 @@ void CanvasView::init(const char* title) {
     textInverted_ = false;
     keyCb_ = nullptr;
     widgetCb_ = nullptr;
+    longPressCb_ = nullptr;
     footer_ = nullptr;
     headerHeight_ = (title && title[0] != '\0') ? HEADER_HEIGHT_DEFAULT : 0;
     needsFullRefresh_ = true;
     keyRepeatInitialMs_ = 0;
     keyRepeatPeriodMs_ = 0;
-    lastKeyTimeMs_ = 0;
-    lastKeyRepeatMs_ = 0;
-    heldKey_ = 0;
     headerDrawnOnce_ = false;
     customFooter_ = nullptr;
+    cmdCount_ = 0;
+    textArenaUsed_ = 0;
+    overflowLogged_ = false;
+    fontId_ = 0;
     dirty_ = true;
 }
 
@@ -85,6 +88,7 @@ void CanvasView::setFooter(const char* hint) {
 void CanvasView::setKeyRepeat(uint16_t initial_ms, uint16_t repeat_ms) {
     keyRepeatInitialMs_ = initial_ms;
     keyRepeatPeriodMs_ = repeat_ms;
+    applyKeypadConfig();
 }
 
 void CanvasView::getBodySize(uint16_t* w, uint16_t* h) const {
@@ -99,76 +103,164 @@ void CanvasView::getBodySize(uint16_t* w, uint16_t* h) const {
 }
 
 void CanvasView::clearBody() {
-    auto* g = gfx();
-    auto* display = hal::getDisplayInstance();
-    if (!g || !display) return;
-    g->fillRect(0, bodyTop(), display->getWidth(),
-                bodyBottom() - bodyTop(), EPD_WHITE);
+    cmdCount_ = 0;
+    textArenaUsed_ = 0;
 }
 
-void CanvasView::gfxApplyTextState() {
-    auto* g = gfx();
-    if (!g) return;
-    g->setFont(cdc::ui::getGfxFont(fontId_));
-    g->setTextSize(textSize_);
-    g->setTextColor(textInverted_ ? EPD_WHITE : EPD_BLACK);
-    g->setTextWrap(false);
+uint16_t CanvasView::internText(const char* text, uint16_t* outLen) {
+    size_t len = text ? strlen(text) : 0;
+    uint16_t off = textArenaUsed_;
+    if (off + len + 1 > TEXT_ARENA) {
+        // Truncate to the remaining arena (leave one byte for the NUL).
+        len = (off + 1 < TEXT_ARENA) ? (TEXT_ARENA - off - 1) : 0;
+        if (!overflowLogged_) {
+            LOG_W("CanvasView", "draw text arena full, truncating");
+            overflowLogged_ = true;
+        }
+    }
+    if (len) memcpy(&textArena_[off], text, len);
+    textArena_[off + len] = '\0';
+    textArenaUsed_ = static_cast<uint16_t>(off + len + 1);
+    *outLen = static_cast<uint16_t>(len);
+    return off;
 }
 
 void CanvasView::drawText(int16_t x, int16_t y, const char* text) {
-    auto* g = gfx();
-    if (!g || !text) return;
-    gfxApplyTextState();
-    g->setCursor(x, y + bodyTop());
-    render::drawText(g, text, getGfxFont(fontId_));
+    if (!text || cmdCount_ >= MAX_CMDS) {
+        if (text && !overflowLogged_) {
+            LOG_W("CanvasView", "display list full, dropping draw");
+            overflowLogged_ = true;
+        }
+        return;
+    }
+    DrawCmd c{};
+    c.type = CmdType::Text;
+    c.x = x;
+    c.y = y;
+    c.fontId = fontId_;
+    c.textSize = textSize_;
+    c.inverted = textInverted_;
+    c.strOff = internText(text, &c.strLen);
+    cmds_[cmdCount_++] = c;
 }
 
 void CanvasView::drawTextAligned(int16_t x, int16_t y, int16_t w,
                                   const char* text, uint8_t align) {
+    if (!text || cmdCount_ >= MAX_CMDS) {
+        if (text && !overflowLogged_) {
+            LOG_W("CanvasView", "display list full, dropping draw");
+            overflowLogged_ = true;
+        }
+        return;
+    }
+    DrawCmd c{};
+    c.type = CmdType::TextAligned;
+    c.x = x;
+    c.y = y;
+    c.w = w;
+    c.align = align;
+    c.fontId = fontId_;
+    c.textSize = textSize_;
+    c.inverted = textInverted_;
+    c.strOff = internText(text, &c.strLen);
+    cmds_[cmdCount_++] = c;
+}
+
+void CanvasView::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool filled) {
+    if (cmdCount_ >= MAX_CMDS) return;
+    DrawCmd c{};
+    c.type = CmdType::Rect;
+    c.x = x;
+    c.y = y;
+    c.w = w;
+    c.h = h;
+    c.filled = filled;
+    cmds_[cmdCount_++] = c;
+}
+
+void CanvasView::invertRect(int16_t x, int16_t y, int16_t w, int16_t h) {
+    // No-op: the e-paper GFX backend has no pixel-readback primitive needed to
+    // invert an existing region.
+    (void)x; (void)y; (void)w; (void)h;
+}
+
+void CanvasView::drawHLine(int16_t x, int16_t y, int16_t w) {
+    if (cmdCount_ >= MAX_CMDS) return;
+    DrawCmd c{};
+    c.type = CmdType::HLine;
+    c.x = x;
+    c.y = y;
+    c.w = w;
+    cmds_[cmdCount_++] = c;
+}
+
+void CanvasView::drawVLine(int16_t x, int16_t y, int16_t h) {
+    if (cmdCount_ >= MAX_CMDS) return;
+    DrawCmd c{};
+    c.type = CmdType::VLine;
+    c.x = x;
+    c.y = y;
+    c.h = h;
+    cmds_[cmdCount_++] = c;
+}
+
+void CanvasView::paintText(int16_t x, int16_t y, int16_t w, const char* text,
+                           uint8_t align, uint8_t fontId, uint8_t textSize,
+                           bool inverted) {
     auto* g = gfx();
     if (!g || !text) return;
-    gfxApplyTextState();
-
-    const GFXfont* font = getGfxFont(fontId_);
-    int16_t bx, by;
-    uint16_t bw, bh;
-    render::measureText(g, text, font, 0, 0, &bx, &by, &bw, &bh);
+    const GFXfont* font = getGfxFont(fontId);
+    g->setFont(font);
+    g->setTextSize(textSize);
+    g->setTextColor(inverted ? EPD_WHITE : EPD_BLACK);
+    g->setTextWrap(false);
 
     int16_t draw_x = x;
-    if (align == 1) {
-        draw_x = x + (w - static_cast<int16_t>(bw)) / 2;
-    } else if (align == 2) {
-        draw_x = x + w - static_cast<int16_t>(bw);
+    if (align == 1 || align == 2) {
+        int16_t bx, by;
+        uint16_t bw, bh;
+        render::measureText(g, text, font, 0, 0, &bx, &by, &bw, &bh);
+        if (align == 1) {
+            draw_x = x + (w - static_cast<int16_t>(bw)) / 2;
+        } else {
+            draw_x = x + w - static_cast<int16_t>(bw);
+        }
     }
     g->setCursor(draw_x, y + bodyTop());
     render::drawText(g, text, font);
 }
 
-void CanvasView::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool filled) {
+void CanvasView::replayDisplayList() {
     auto* g = gfx();
     if (!g) return;
-    int16_t yy = y + bodyTop();
-    if (filled) {
-        g->fillRect(x, yy, w, h, EPD_BLACK);
-    } else {
-        g->drawRect(x, yy, w, h, EPD_BLACK);
+    for (uint16_t i = 0; i < cmdCount_; ++i) {
+        const DrawCmd& c = cmds_[i];
+        switch (c.type) {
+            case CmdType::Text:
+                paintText(c.x, c.y, 0, &textArena_[c.strOff], 0,
+                          c.fontId, c.textSize, c.inverted);
+                break;
+            case CmdType::TextAligned:
+                paintText(c.x, c.y, c.w, &textArena_[c.strOff], c.align,
+                          c.fontId, c.textSize, c.inverted);
+                break;
+            case CmdType::Rect: {
+                int16_t yy = c.y + bodyTop();
+                if (c.filled) {
+                    g->fillRect(c.x, yy, c.w, c.h, EPD_BLACK);
+                } else {
+                    g->drawRect(c.x, yy, c.w, c.h, EPD_BLACK);
+                }
+                break;
+            }
+            case CmdType::HLine:
+                g->drawFastHLine(c.x, c.y + bodyTop(), c.w, EPD_BLACK);
+                break;
+            case CmdType::VLine:
+                g->drawFastVLine(c.x, c.y + bodyTop(), c.h, EPD_BLACK);
+                break;
+        }
     }
-}
-
-void CanvasView::invertRect(int16_t x, int16_t y, int16_t w, int16_t h) {
-    (void)x; (void)y; (void)w; (void)h;
-}
-
-void CanvasView::drawHLine(int16_t x, int16_t y, int16_t w) {
-    auto* g = gfx();
-    if (!g) return;
-    g->drawFastHLine(x, y + bodyTop(), w, EPD_BLACK);
-}
-
-void CanvasView::drawVLine(int16_t x, int16_t y, int16_t h) {
-    auto* g = gfx();
-    if (!g) return;
-    g->drawFastVLine(x, y + bodyTop(), h, EPD_BLACK);
 }
 
 void CanvasView::commit(bool full_refresh) {
@@ -428,10 +520,6 @@ InputResult CanvasView::dispatchKeyToWidget(Widget& w, char key) {
 }
 
 InputResult CanvasView::onKey(char key) {
-    lastKeyTimeMs_ = nowMs();
-    heldKey_ = key;
-    lastKeyRepeatMs_ = lastKeyTimeMs_;
-
     Widget* focused = focusedWidget();
     if (focused) {
         InputResult r = dispatchKeyToWidget(*focused, key);
@@ -451,18 +539,45 @@ InputResult CanvasView::onKey(char key) {
     return InputResult::IGNORED;
 }
 
-void CanvasView::onTick(uint32_t now) {
-    if (heldKey_ == 0 || keyRepeatInitialMs_ == 0 || keyRepeatPeriodMs_ == 0) {
-        return;
+// Push this canvas's keypad modes (deferred short-press while a long-press
+// handler is registered, and key-repeat) to the global keypad. Applied while
+// the canvas is the active view; onExit restores the defaults for other views.
+void CanvasView::applyKeypadConfig() {
+    if (auto* kp = hal::getKeypadInstance()) {
+        kp->setDeferShortPress(hal::IKeypad::DEFER_SRC_VIEW, longPressCb_ != nullptr);
+        kp->setKeyRepeat(keyRepeatInitialMs_, keyRepeatPeriodMs_);
     }
-    uint32_t elapsed = now - lastKeyTimeMs_;
-    if (elapsed < keyRepeatInitialMs_) return;
+}
 
-    uint32_t sinceLastRepeat = now - lastKeyRepeatMs_;
-    if (sinceLastRepeat < keyRepeatPeriodMs_) return;
+void CanvasView::setLongPressCallback(LongPressCallback cb) {
+    longPressCb_ = cb;
+    applyKeypadConfig();
+}
 
-    lastKeyRepeatMs_ = now;
-    onKey(heldKey_);
+InputResult CanvasView::onLongPress(char key) {
+    if (longPressCb_) {
+        longPressCb_(key);
+        return InputResult::CONSUMED;
+    }
+    return InputResult::IGNORED;
+}
+
+void CanvasView::onEnter(void* context) {
+    ViewBase::onEnter(context);
+    applyKeypadConfig();
+}
+
+void CanvasView::onResume() {
+    ViewBase::onResume();
+    applyKeypadConfig();
+}
+
+void CanvasView::onExit() {
+    if (auto* kp = hal::getKeypadInstance()) {
+        kp->setDeferShortPress(hal::IKeypad::DEFER_SRC_VIEW, false);
+        kp->setKeyRepeat(0, 0);
+    }
+    ViewBase::onExit();
 }
 
 void CanvasView::render(bool partial) {
@@ -487,6 +602,8 @@ void CanvasView::render(bool partial) {
         render::drawHeaderLeft(g, title_, 4, TITLE_Y, width);
         headerDrawnOnce_ = true;
     }
+
+    replayDisplayList();
 
     const char* hint = customFooter_ ? customFooter_ : footer_;
     render::drawFooterBar(g, width, height, nullptr, hint, hint != nullptr);

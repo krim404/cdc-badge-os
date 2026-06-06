@@ -9,6 +9,7 @@
  */
 
 #include "cdc_core/EventBus.h"
+#include "cdc_hal/IKeypad.h"
 #include "plugin_manager/host_api.h"
 #include "plugin_manager/Plugin.h"
 #include "plugin_manager/PluginManager.h"
@@ -30,8 +31,32 @@ struct PluginSubscription {
 constexpr size_t MAX_PLUGIN_SUBSCRIPTIONS = 16;
 cdc::plugin_manager::SlotTable<PluginSubscription, MAX_PLUGIN_SUBSCRIPTIONS> s_subs{};
 
+// on_bus_event is registered with the core EventBus exactly once; the per-plugin
+// fan-out happens in on_bus_event, so plugin subscriptions never consume more
+// than one slot of the small core handler table.
+bool    s_core_subscribed = false;
+uint8_t s_core_bus_id     = 0;
+
 PluginSubscription* slotForId(uint32_t id) {
     return s_subs.lookup(static_cast<int>(id));
+}
+
+// Keep the keypad in deferred short-press mode whenever any plugin is
+// subscribed to KEY_LONG_PRESS, so a held key yields only the long-press and
+// not the tap. Recomputed from the table on every subscribe/unsubscribe.
+void update_long_press_defer() {
+    constexpr uint32_t kLongPressBit =
+        1u << static_cast<uint8_t>(cdc::core::EventType::KEY_LONG_PRESS);
+    bool wanted = false;
+    for (auto& s : s_subs.slots) {
+        if (s.used && (s.mask & kLongPressBit)) {
+            wanted = true;
+            break;
+        }
+    }
+    if (auto* kp = cdc::hal::getKeypadInstance()) {
+        kp->setDeferShortPress(cdc::hal::IKeypad::DEFER_SRC_EVENT, wanted);
+    }
 }
 
 void on_bus_event(const cdc::core::Event& evt) {
@@ -67,8 +92,13 @@ int host_event_subscribe(uint32_t event_mask, uint32_t action_id)
     slot->action_id = action_id;
     slot->mask      = event_mask;
     slot->used      = true;
-    slot->bus_id    = cdc::core::EventBus::instance().subscribe(on_bus_event, event_mask);
+    if (!s_core_subscribed) {
+        s_core_bus_id = cdc::core::EventBus::instance().subscribe(on_bus_event, 0xFFFFFFFFu);
+        s_core_subscribed = true;
+    }
+    slot->bus_id    = s_core_bus_id;
 
+    update_long_press_defer();
     return slot_id;
 }
 
@@ -76,8 +106,10 @@ int host_event_unsubscribe(uint32_t subscription_id)
 {
     auto* slot = slotForId(subscription_id);
     if (!slot) return HOST_ERR_NOT_FOUND;
-    cdc::core::EventBus::instance().unsubscribe(slot->bus_id);
+    // The shared core subscription stays registered for the process lifetime;
+    // only the per-plugin fan-out slot is released here.
     *slot = PluginSubscription{};
+    update_long_press_defer();
     return HOST_OK;
 }
 

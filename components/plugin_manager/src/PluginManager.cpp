@@ -26,6 +26,9 @@ extern "C" {
 
 extern "C" void plg_ble_pump(void);
 extern "C" void plg_ble_on_unload(void* plugin);
+extern "C" void plg_gpio_on_unload(void* plugin);
+extern "C" void plg_http_on_unload(void* plugin);
+extern "C" void plg_socket_on_unload(void* plugin);
 
 #include <algorithm>
 #include <cstdio>
@@ -39,8 +42,12 @@ static const char* TAG = "PLG_MGR";
 namespace {
 
 constexpr uint32_t   TICK_INTERVAL_MS = 50;
-constexpr uint32_t   TICK_STACK_BYTES = 8192;
+constexpr uint32_t   TICK_STACK_BYTES = 12288;
 constexpr UBaseType_t TICK_PRIORITY    = 5;
+
+// Upper bound on background plugins force-unloaded for trapping in a single
+// dispatch pass. Any beyond this are handled on the next pass.
+constexpr size_t     kMaxTrapsPerDispatch = 8;
 
 void invokeDeinit(Plugin& plugin)
 {
@@ -76,9 +83,10 @@ struct ScopedLock {
     SemaphoreHandle_t m;
     bool taken = false;
     explicit ScopedLock(SemaphoreHandle_t s, uint32_t timeout_ms = 1000) : m(s) {
-        if (m) taken = xSemaphoreTake(m, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+        if (m) taken = xSemaphoreTakeRecursive(m, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
     }
-    ~ScopedLock() { if (taken && m) xSemaphoreGive(m); }
+    ~ScopedLock() { if (taken && m) xSemaphoreGiveRecursive(m); }
+    explicit operator bool() const { return taken; }
 };
 
 }  // namespace
@@ -124,11 +132,7 @@ void PluginManager::deinit()
         ScopedLock l(static_cast<SemaphoreHandle_t>(call_mutex_));
         for (auto& p : background_) {
             (void)p->callI("plugin_on_exit");
-            clearLockscreenRegistrationFor(p.get());
-            plg_ble_on_unload(p.get());
-            invokeDeinit(*p);
-            Prerequisites::release(*p);
-            p->unload();
+            teardownPlugin(*p, /*runWasmDeinit=*/true);
         }
         background_.clear();
     }
@@ -167,13 +171,36 @@ PluginManager::getManifest(const std::string& id) const
     return out;
 }
 
+bool PluginManager::isPluginDisabled(const std::string& id) const
+{
+    return PluginStorage::isDisabled(id);
+}
+
+bool PluginManager::setPluginDisabled(const std::string& id, bool disabled)
+{
+    if (!getManifest(id)) return false;
+    if (!PluginStorage::setDisabled(id, disabled)) return false;
+    if (disabled) {
+        (void)unloadFromRam(id);
+    }
+    return true;
+}
+
 StartResult PluginManager::startPlugin(const std::string& id_ref)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return StartResult::Busy;
     const std::string id = id_ref;
+
+    if (isPluginDisabled(id)) {
+        LOG_W(TAG, "plugin %s is disabled", id.c_str());
+        return StartResult::PluginDisabled;
+    }
 
     if (active_ && active_->id() == id) {
         (void)active_->callI("plugin_on_enter");
+        // Discard a stop queued by the modal that was dismissed to launch this.
+        pending_stop_.store(false, std::memory_order_release);
         return StartResult::Ok;
     }
 
@@ -182,11 +209,7 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
         if (active_->manifest().capabilities.background) {
             background_.push_back(std::move(active_));
         } else {
-            clearLockscreenRegistrationFor(active_.get());
-            plg_ble_on_unload(active_.get());
-            invokeDeinit(*active_);
-            Prerequisites::release(*active_);
-            active_->unload();
+            teardownPlugin(*active_, /*runWasmDeinit=*/true);
         }
         active_.reset();
     }
@@ -201,6 +224,7 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
         auto plugin = std::move(*it);
         background_.erase(it);
 
+        plugin_base_depth_ = cdc::ui::ViewStack::instance().depth();
         int32_t enter_rc = 0;
         if (!plugin->callI("plugin_on_enter", {}, &enter_rc)) {
             LOG_E(TAG, "plugin_on_enter missing for %s", id.c_str());
@@ -208,6 +232,8 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
             return StartResult::PluginOnEnterFailed;
         }
         active_ = std::move(plugin);
+        // Discard a stop queued by the modal that was dismissed to launch this.
+        pending_stop_.store(false, std::memory_order_release);
         LOG_I(TAG, "plugin %s promoted bg->fg", id.c_str());
         return StartResult::Ok;
     }
@@ -237,7 +263,7 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
     if (!plugin->callI("plugin_init", {}, &init_rc) || init_rc != 0) {
         LOG_E(TAG, "plugin_init failed for %s (rc=%ld)", id.c_str(),
               static_cast<long>(init_rc));
-        plugin->unload();
+        teardownPlugin(*plugin, /*runWasmDeinit=*/!plugin->lastCallTrapped());
         return StartResult::PluginInitFailed;
     }
 
@@ -246,9 +272,7 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
     if (pr == PrereqResult::HardFailed) {
         LOG_E(TAG, "prerequisite '%s' aborted start of %s",
               failed_name.c_str(), id.c_str());
-        Prerequisites::release(*plugin);
-        invokeDeinit(*plugin);
-        plugin->unload();
+        teardownPlugin(*plugin, /*runWasmDeinit=*/true);
         return StartResult::PrerequisiteFailed;
     }
     if (pr == PrereqResult::SoftFailed) {
@@ -270,6 +294,7 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
     }
     s_loading_toast.init(loading_msg, cdc::ui::ToastView::Icon::TASK, 0, true);
     cdc::ui::ViewStack::instance().showModal(&s_loading_toast);
+    cdc::ui::ViewStack::instance().render(true);  // paint loading toast before the blocking plugin_on_enter
 
     auto hide_loading_if_top = []() {
         auto& vs = cdc::ui::ViewStack::instance();
@@ -278,17 +303,17 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
         }
     };
 
+    plugin_base_depth_ = cdc::ui::ViewStack::instance().depth();
     int32_t enter_rc = 0;
     if (!plugin->callI("plugin_on_enter", {}, &enter_rc)) {
         hide_loading_if_top();
-        if (plugin->hasExport("plugin_on_enter")) {
-            LOG_E(TAG, "plugin_on_enter trapped for %s", id.c_str());
+        if (plugin->lastCallTrapped()) {
+            LOG_E(TAG, "plugin_on_enter trapped for %s: %s", id.c_str(),
+                  plugin->lastTrapMessage());
         } else {
             LOG_E(TAG, "plugin_on_enter export missing for %s", id.c_str());
         }
-        Prerequisites::release(*plugin);
-        invokeDeinit(*plugin);
-        plugin->unload();
+        teardownPlugin(*plugin, /*runWasmDeinit=*/!plugin->lastCallTrapped());
         return StartResult::PluginOnEnterFailed;
     }
     hide_loading_if_top();
@@ -298,6 +323,8 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
     }
 
     active_ = std::move(plugin);
+    // Discard a stop queued by the modal that was dismissed to launch this.
+    pending_stop_.store(false, std::memory_order_release);
     applySleepInhibitor(*active_, true);
     LOG_I(TAG, "plugin %s started", id.c_str());
     return StartResult::Ok;
@@ -311,9 +338,19 @@ void PluginManager::requestStopActivePlugin()
 bool PluginManager::stopActivePlugin()
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return false;
     if (!active_) return false;
     LOG_I(TAG, "stopping plugin %s", active_->id().c_str());
     (void)active_->callI("plugin_on_exit");
+
+    // Pop the plugin's foreground views and reset its UI state before changing
+    // residency or tearing the instance down, so no live view can reference a
+    // freed/demoted plugin (mirrors unloadFromRam). The GUI stop path already
+    // runs with the views popped; the serial STOP path does not.
+    while (cdc::ui::ViewStack::instance().depth() > 1) {
+        cdc::ui::ViewStack::instance().pop();
+    }
+    PluginUiState::instance().resetForPluginStop();
 
     // If the plugin is also a background service, demote it back instead of
     // unloading.
@@ -323,19 +360,15 @@ bool PluginManager::stopActivePlugin()
         return true;
     }
 
-    applySleepInhibitor(*active_, false);
-    clearLockscreenRegistrationFor(active_.get());
-    invokeDeinit(*active_);
-    Prerequisites::release(*active_);
-    active_->unload();
+    teardownPlugin(*active_, /*runWasmDeinit=*/true);
     active_.reset();
-    PluginUiState::instance().resetForPluginStop();
     return true;
 }
 
 bool PluginManager::unloadFromRam(const std::string& id)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return false;
     if (active_ && active_->id() == id) {
         LOG_I(TAG, "unloading active plugin %s from RAM", id.c_str());
         (void)active_->callI("plugin_on_exit");
@@ -343,11 +376,7 @@ bool PluginManager::unloadFromRam(const std::string& id)
             cdc::ui::ViewStack::instance().pop();
         }
         PluginUiState::instance().resetForPluginStop();
-        applySleepInhibitor(*active_, false);
-        clearLockscreenRegistrationFor(active_.get());
-        invokeDeinit(*active_);
-        Prerequisites::release(*active_);
-        active_->unload();
+        teardownPlugin(*active_, /*runWasmDeinit=*/true);
         active_.reset();
         return true;
     }
@@ -357,18 +386,78 @@ bool PluginManager::unloadFromRam(const std::string& id)
                            });
     if (it == background_.end()) return false;
     LOG_I(TAG, "unloading background plugin %s from RAM", id.c_str());
-    applySleepInhibitor(**it, false);
-    clearLockscreenRegistrationFor(it->get());
-    plg_ble_on_unload(it->get());
-    invokeDeinit(**it);
-    Prerequisites::release(**it);
-    (*it)->unload();
+    teardownPlugin(**it, /*runWasmDeinit=*/true);
     background_.erase(it);
     return true;
 }
 
+void PluginManager::unloadAllFromRam()
+{
+    ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return;
+    if (active_) {
+        LOG_I(TAG, "unloading active plugin %s from RAM", active_->id().c_str());
+        (void)active_->callI("plugin_on_exit");
+        while (cdc::ui::ViewStack::instance().depth() > 1) {
+            cdc::ui::ViewStack::instance().pop();
+        }
+        PluginUiState::instance().resetForPluginStop();
+        teardownPlugin(*active_, /*runWasmDeinit=*/true);
+        active_.reset();
+    }
+    for (auto& p : background_) {
+        if (p) {
+            LOG_I(TAG, "unloading background plugin %s from RAM", p->id().c_str());
+            teardownPlugin(*p, /*runWasmDeinit=*/true);
+        }
+    }
+    background_.clear();
+}
+
+void PluginManager::teardownPlugin(Plugin& p, bool runWasmDeinit)
+{
+    if (runWasmDeinit) invokeDeinit(p);
+    applySleepInhibitor(p, false);
+    clearLockscreenRegistrationFor(&p);
+    plg_ble_on_unload(&p);
+    plg_gpio_on_unload(&p);
+    plg_http_on_unload(&p);
+    plg_socket_on_unload(&p);
+    Prerequisites::release(p);
+    p.unload();
+}
+
+void PluginManager::handleTrap(Plugin& p, const char* fn)
+{
+    LOG_E(TAG, "==================== PLUGIN TRAP ====================");
+    LOG_E(TAG, "plugin '%s' trapped in %s", p.id().c_str(), fn);
+    LOG_E(TAG, "  reason : %s", p.lastTrapMessage());
+    LOG_E(TAG, "  action : force-unload + release all held resources");
+
+    if (&p == active_.get()) {
+        auto& vs = cdc::ui::ViewStack::instance();
+        while (vs.depth() > plugin_base_depth_ && vs.depth() > 1) vs.pop();
+        PluginUiState::instance().resetForPluginStop();
+        teardownPlugin(p, /*runWasmDeinit=*/false);
+        active_.reset();
+        LOG_E(TAG, "=====================================================");
+        return;
+    }
+    for (auto it = background_.begin(); it != background_.end(); ++it) {
+        if (it->get() == &p) {
+            teardownPlugin(**it, /*runWasmDeinit=*/false);
+            background_.erase(it);
+            LOG_E(TAG, "=====================================================");
+            return;
+        }
+    }
+    LOG_E(TAG, "=====================================================");
+}
+
 bool PluginManager::reloadBackgroundPlugin(const std::string& id)
 {
+    if (isPluginDisabled(id)) return false;
+
     auto manifest = getManifest(id);
     if (!manifest || !manifest->capabilities.background) return false;
 
@@ -380,6 +469,7 @@ bool PluginManager::reloadBackgroundPlugin(const std::string& id)
     (void)unloadFromRam(id);
 
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return false;
     if (!loadIntoBackground(id, *manifest)) return false;
     LOG_I(TAG, "background plugin %s reloaded", id.c_str());
     return true;
@@ -387,6 +477,11 @@ bool PluginManager::reloadBackgroundPlugin(const std::string& id)
 
 bool PluginManager::loadIntoBackground(const std::string& id, const PluginManifest& mf)
 {
+    if (isPluginDisabled(id)) {
+        LOG_I(TAG, "bg load %s skipped: disabled", id.c_str());
+        return false;
+    }
+
     auto plugin = std::make_unique<Plugin>();
     if (!plugin->load(id, mf)) {
         LOG_E(TAG, "bg load %s: load failed", id.c_str());
@@ -397,16 +492,14 @@ bool PluginManager::loadIntoBackground(const std::string& id, const PluginManife
     if (!plugin->callI("plugin_init", {}, &init_rc) || init_rc != 0) {
         LOG_E(TAG, "bg load %s: plugin_init failed (rc=%ld)", id.c_str(),
               static_cast<long>(init_rc));
-        plugin->unload();
+        teardownPlugin(*plugin, /*runWasmDeinit=*/!plugin->lastCallTrapped());
         return false;
     }
     std::string failed_name, on_fail;
     PrereqResult pr = Prerequisites::walk(*plugin, failed_name, on_fail);
     if (pr == PrereqResult::HardFailed) {
         LOG_E(TAG, "bg load %s: prereq '%s' aborted", id.c_str(), failed_name.c_str());
-        Prerequisites::release(*plugin);
-        invokeDeinit(*plugin);
-        plugin->unload();
+        teardownPlugin(*plugin, /*runWasmDeinit=*/true);
         return false;
     }
     background_.push_back(std::move(plugin));
@@ -418,9 +511,14 @@ void PluginManager::loadAutoloadPlugins()
 {
     auto ids = PluginStorage::listPluginIds();
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return;
     for (const auto& id : ids) {
         auto mf = getManifest(id);
         if (!mf || !mf->capabilities.autoload) continue;
+        if (isPluginDisabled(id)) {
+            LOG_I(TAG, "autoload %s skipped: disabled", id.c_str());
+            continue;
+        }
         if (isLoaded(id)) continue;
 
         auto check = CapabilityChecker::validate(*mf);
@@ -513,21 +611,25 @@ bool PluginManager::hasBackgroundPlugin() const noexcept
 void PluginManager::dispatchButton(uint32_t button_code)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return;
     if (!active_) return;
     int32_t rc = 0;
     (void)active_->callI("plugin_on_button",
                          {static_cast<int32_t>(button_code)}, &rc);
+    if (active_->lastCallTrapped()) handleTrap(*active_, "plugin_on_button");
 }
 
 void PluginManager::dispatchAction(uint32_t action_id, uint32_t idx, uint32_t user_data)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return;
     if (!active_) return;
     int32_t rc = 0;
     (void)active_->callI("plugin_on_action",
                          {static_cast<int32_t>(action_id),
                           static_cast<int32_t>(idx),
                           static_cast<int32_t>(user_data)}, &rc);
+    if (active_->lastCallTrapped()) handleTrap(*active_, "plugin_on_action");
 }
 
 void PluginManager::dispatchActionTo(Plugin* plugin, uint32_t action_id,
@@ -535,6 +637,7 @@ void PluginManager::dispatchActionTo(Plugin* plugin, uint32_t action_id,
 {
     if (!plugin) return;
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return;
 
     bool found = (active_.get() == plugin);
     if (!found) {
@@ -547,40 +650,58 @@ void PluginManager::dispatchActionTo(Plugin* plugin, uint32_t action_id,
                         {static_cast<int32_t>(action_id),
                          static_cast<int32_t>(idx),
                          static_cast<int32_t>(user_data)}, &rc);
+    if (plugin->lastCallTrapped()) handleTrap(*plugin, "plugin_on_action");
 }
 
 void PluginManager::dispatchTick(uint64_t uptime_ms)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return;
     int32_t rc = 0;
     const int32_t hi = static_cast<int32_t>(uptime_ms >> 32);
     const int32_t lo = static_cast<int32_t>(uptime_ms & 0xFFFFFFFFu);
-    if (active_) (void)active_->callI("plugin_on_tick", {lo, hi}, &rc);
+    if (active_) {
+        (void)active_->callI("plugin_on_tick", {lo, hi}, &rc);
+        if (active_->lastCallTrapped()) handleTrap(*active_, "plugin_on_tick");
+    }
+    Plugin* trapped[kMaxTrapsPerDispatch];
+    size_t n_trapped = 0;
     for (auto& p : background_) {
         (void)p->callI("plugin_on_tick", {lo, hi}, &rc);
+        if (p->lastCallTrapped() && n_trapped < kMaxTrapsPerDispatch)
+            trapped[n_trapped++] = p.get();
     }
+    for (size_t i = 0; i < n_trapped; ++i) handleTrap(*trapped[i], "plugin_on_tick");
     plg_ble_pump();
 }
 
 void PluginManager::dispatchEventAll(uint32_t event_type, uint32_t value)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return;
     int32_t rc = 0;
     if (active_) {
         (void)active_->callI("plugin_on_event",
                              {static_cast<int32_t>(event_type),
                               static_cast<int32_t>(value)}, &rc);
+        if (active_->lastCallTrapped()) handleTrap(*active_, "plugin_on_event");
     }
+    Plugin* trapped[kMaxTrapsPerDispatch];
+    size_t n_trapped = 0;
     for (auto& p : background_) {
         (void)p->callI("plugin_on_event",
                        {static_cast<int32_t>(event_type),
                         static_cast<int32_t>(value)}, &rc);
+        if (p->lastCallTrapped() && n_trapped < kMaxTrapsPerDispatch)
+            trapped[n_trapped++] = p.get();
     }
+    for (size_t i = 0; i < n_trapped; ++i) handleTrap(*trapped[i], "plugin_on_event");
 }
 
 bool PluginManager::dispatchCmd(const std::string& id, const char* cmd, size_t len)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return false;
 
     Plugin* target = (active_ && active_->id() == id) ? active_.get() : nullptr;
     if (!target) {
@@ -592,6 +713,7 @@ bool PluginManager::dispatchCmd(const std::string& id, const char* cmd, size_t l
     int32_t rc = 0;
     (void)target->callI("plugin_on_cmd", {static_cast<int32_t>(len)}, &rc);
     pending_cmd_.clear();
+    if (target->lastCallTrapped()) handleTrap(*target, "plugin_on_cmd");
     return true;
 }
 
@@ -609,6 +731,7 @@ int PluginManager::consumeCmd(char* out, size_t out_size)
 void PluginManager::forEachPlugin(const std::function<bool(Plugin&)>& visitor)
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return;
     if (active_) { if (!visitor(*active_)) return; }
     for (auto& p : background_) {
         if (!visitor(*p)) return;
@@ -618,6 +741,7 @@ void PluginManager::forEachPlugin(const std::function<bool(Plugin&)>& visitor)
 void PluginManager::reloadActiveLangOverlay()
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return;
     if (active_) active_->loadLangOverlay();
     for (auto& p : background_) p->loadLangOverlay();
 }

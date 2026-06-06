@@ -7,6 +7,7 @@
 
 #include "cdc_hal/IBluetoothController.h"
 #include "cdc_hal/hw_config.h"
+#include "cdc_core/Raii.h"
 #include "cdc_log.h"
 #include "sdkconfig.h"
 #include "esp_attr.h"
@@ -209,7 +210,10 @@ static int gattStaticDescriptorAccessCb(uint16_t connHandle, uint16_t attrHandle
  */
 class BluetoothController : public IBluetoothController {
 public:
-    BluetoothController() { instance_ = this; }
+    BluetoothController() {
+        instance_ = this;
+        lifecycleMutex_ = xSemaphoreCreateRecursiveMutex();
+    }
 
     /**
      * \name IService implementation
@@ -374,6 +378,14 @@ public:
 
 private:
     core::ServiceState state_ = core::ServiceState::UNINITIALIZED;
+
+    // Serializes stack lifecycle transitions (enable/disable and the GATT
+    // register/unregister rebuild) across caller tasks. NimBLE host-task
+    // callbacks never take it, so holding it across the blocking teardown
+    // cannot deadlock against the host task. Recursive: register -> disable ->
+    // enable re-enter on the same task.
+    SemaphoreHandle_t lifecycleMutex_ = nullptr;
+
     bool enabled_ = false;
     bool synced_ = false;
     bool advertising_ = false;
@@ -614,6 +626,7 @@ bool BluetoothController::start() {
  * \brief Stops the service and disables BLE if currently active.
  */
 void BluetoothController::stop() {
+    cdc::core::RecursiveMutexGuard guard(lifecycleMutex_);
     if (state_ == core::ServiceState::STARTED) {
         if (enabled_) {
             disable();
@@ -627,6 +640,7 @@ void BluetoothController::stop() {
  * \return `true` if BLE was enabled successfully.
  */
 bool BluetoothController::enable() {
+    cdc::core::RecursiveMutexGuard guard(lifecycleMutex_);
     if (enabled_) {
         return true;
     }
@@ -692,9 +706,25 @@ bool BluetoothController::enable() {
  * \brief Disables BLE stack and clears runtime connection state.
  */
 void BluetoothController::disable() {
+    cdc::core::RecursiveMutexGuard guard(lifecycleMutex_);
     if (!enabled_) {
         return;
     }
+
+    // Down before teardown: GAP callbacks dispatched while the host task drains
+    // gate advertising restarts on these flags.
+    enabled_ = false;
+    synced_ = false;
+
+    // A GAP procedure with a duration timer (scan, pending connection) must be
+    // cancelled before nimble_port_deinit() releases the event queue its callout
+    // is bound to.
+    if (scanning_) {
+        ble_gap_disc_cancel();
+        scanning_ = false;
+        scanWasAdvertising_ = false;
+    }
+    ble_gap_conn_cancel();
 
     // Disconnect any active connection
     for (uint8_t i = 0; i < MAX_CONNECTIONS; i++) {
@@ -706,6 +736,7 @@ void BluetoothController::disable() {
 
     // Stop advertising if active
     ble_gap_adv_stop();
+    advertising_ = false;
 
     // Shutdown NimBLE and wait for the host task to actually exit before deinit
     int rc = nimble_port_stop();
@@ -715,8 +746,6 @@ void BluetoothController::disable() {
         nimble_port_deinit();
     }
 
-    enabled_ = false;
-    synced_ = false;
     for (uint8_t i = 0; i < MAX_CONNECTIONS; i++) connections_[i].active = false;
     for (uint8_t i = 0; i < MAX_SUBSCRIBE_ENTRIES; i++) subscribes_[i].active = false;
 
@@ -1285,6 +1314,7 @@ uint8_t BluetoothController::getScanResults(BleScanResult* results, uint8_t maxR
  */
 bool BluetoothController::registerGattService(const GattServiceDef& service,
                                               bool pluginReserved) {
+    cdc::core::RecursiveMutexGuard guard(lifecycleMutex_);
     // Reuse the slot already holding this service UUID (idempotent re-register),
     // otherwise take a free slot. Registration is allowed while BLE is disabled:
     // the slot is stored and committed to NimBLE later from enable().
@@ -1406,6 +1436,7 @@ bool BluetoothController::registerGattService(const GattServiceDef& service,
 }
 
 bool BluetoothController::unregisterGattService(const BleUuid& serviceUuid) {
+    cdc::core::RecursiveMutexGuard guard(lifecycleMutex_);
     ble_uuid_any_t wantUuid;
     convertUuid(serviceUuid, wantUuid);
     int slot = -1;

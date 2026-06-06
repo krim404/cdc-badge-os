@@ -52,6 +52,7 @@ void SliderView::init(const char* title, uint16_t minVal, uint16_t maxVal,
     unit_ = unit;
     displayOffset_ = 0;
     zeroLabel_ = nullptr;
+    onCancel_ = nullptr;
     dirty_ = true;
 }
 
@@ -123,7 +124,11 @@ InputResult SliderView::onKey(char key) {
             return InputResult::CONSUMED;
 
         case KEY_NO: // Cancel
-            return InputResult::REQUEST_POP;
+            ViewStack::instance().pop();
+            if (onCancel_) {
+                onCancel_();
+            }
+            return InputResult::CONSUMED;
 
         default:
             return InputResult::IGNORED;

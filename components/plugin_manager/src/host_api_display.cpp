@@ -10,6 +10,10 @@
 #include "plugin_manager/host_api.h"
 #include "plugin_manager/Plugin.h"
 #include "cdc_hal/IDisplay.h"
+#include "cdc_views/RenderHelpers.h"
+#include "host_str_conv.h"
+#include <goodisplay/gdey029T94.h>
+#include <string>
 
 extern "C" void* plg_get_active_plugin(void);
 
@@ -93,11 +97,12 @@ int host_display_draw_text(int16_t x, int16_t y, const char* text, uint8_t size,
     if (!text) return HOST_ERR_INVALID_ARG;
     auto* d = disp();
     if (!d) return HOST_ERR_GENERIC;
-    d->setFont(nullptr);
+    auto* gfx = static_cast<Gdey029T94*>(d->getNativeHandle());
+    if (!gfx) return HOST_ERR_GENERIC;
     d->setTextSize(size ? size : 1);
     d->setTextColor(color);
     d->setCursor(x, y);
-    d->print(text);
+    cdc::ui::render::printText(gfx, cdc::plugin_manager::toDisplay(text).c_str());
     return HOST_OK;
 }
 

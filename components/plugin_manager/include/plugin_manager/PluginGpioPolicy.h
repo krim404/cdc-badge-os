@@ -30,6 +30,7 @@ inline constexpr uint8_t BLOCKED[] = {
     20,   // USB D+
     21,   // CHG_DSEL (charger detection select)
     26, 27, 28, 29, 30, 31, 32,  // PSRAM/flash (not exposed via GPIO peripheral)
+    33, 34, 35, 36, 37,  // Octal PSRAM data lines SPIIO4-7 + DQS (CONFIG_SPIRAM_MODE_OCT)
     39,   // CHG_IRQ
     41,   // EPD_CS
     42,   // EPD_BUSY
@@ -50,11 +51,6 @@ inline constexpr uint8_t ALLOWED[] = {
     14,   // Header (ADC2)
     15,   // SAO GPIO1
     16,   // SAO GPIO2
-    33,   // Header
-    34,   // Header
-    35,   // Header
-    36,   // Header
-    37,   // Header (TROPIC01 interrupt also routed here)
     38,   // Header
     40,   // Header (JTAG TDO - safe unless USB-JTAG-Serial debugger is active)
     43,   // Header (UART0 TX - safe once serial console moves to CDC-only)

@@ -52,7 +52,10 @@ int host_wifi_ssid(char* out, size_t out_size)
     if (!out || out_size == 0) return HOST_ERR_INVALID_ARG;
     auto* w = wifi();
     if (!w) return HOST_ERR_NOT_FOUND;
-    std::strncpy(out, w->getCurrentSsid(), out_size - 1);
+    // The IWifiController contract does not guarantee a non-null SSID, so never
+    // hand a NULL source to strncpy.
+    const char* ssid = w->getCurrentSsid();
+    std::strncpy(out, ssid ? ssid : "", out_size - 1);
     out[out_size - 1] = '\0';
     return HOST_OK;
 }

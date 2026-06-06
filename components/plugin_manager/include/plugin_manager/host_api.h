@@ -26,8 +26,8 @@ extern "C" {
 /* ------------------------------------------------------------------------- */
 
 #define HOST_API_LEVEL_MAJOR  0
-#define HOST_API_LEVEL_MINOR  6
-#define HOST_API_LEVEL_STR    "0.6"
+#define HOST_API_LEVEL_MINOR  7
+#define HOST_API_LEVEL_STR    "0.7"
 #define HOST_API_LEVEL_PACKED (((uint32_t)HOST_API_LEVEL_MAJOR << 16) | HOST_API_LEVEL_MINOR)
 
 /* ------------------------------------------------------------------------- */
@@ -360,6 +360,50 @@ size_t host_http_content_length(int handle);
 
 /// \brief Release a request handle.
 int    host_http_close         (int handle);
+
+/** \} */
+
+/**
+ * \defgroup socket Socket (TCP / UDP client)
+ * \brief Generic outbound byte-stream / datagram transport for plugin protocols.
+ *
+ * Opens a connection to a single remote endpoint, reads/writes bytes, and
+ * closes the handle. Both protocols are connected: UDP fixes the peer at open
+ * time, so write/read behave like the TCP path (no per-call address). Requires
+ * manifest capability "socket" and an active network connection. The host owns
+ * DNS resolution, timeouts, socket limits, and cleanup of leaked handles when a
+ * plugin unloads.
+ * \{
+ */
+
+/** \brief Protocol selector for \ref host_socket_open. */
+#define HOST_SOCK_TCP  0
+#define HOST_SOCK_UDP  1
+
+/**
+ * \brief Open an outbound connection to a single remote endpoint.
+ * \param proto HOST_SOCK_TCP or HOST_SOCK_UDP.
+ * \param host Hostname or numeric IP address.
+ * \param port Remote port.
+ * \param timeout_ms Connect timeout (TCP handshake; ignored for UDP).
+ * \return Handle > 0 on success, negative HostError on failure.
+ */
+int host_socket_open(uint8_t proto, const char* host, uint16_t port, uint32_t timeout_ms);
+
+/**
+ * \brief Write bytes to the stream / send a datagram to the connected peer.
+ * \return Number of bytes written, or negative HostError on failure.
+ */
+int host_socket_write(int handle, const uint8_t* data, size_t len, uint32_t timeout_ms);
+
+/**
+ * \brief Read bytes from the stream / receive a datagram from the connected peer.
+ * \return Number of bytes read, 0 on EOF (TCP), or negative HostError on failure.
+ */
+int host_socket_read(int handle, uint8_t* out, size_t cap, uint32_t timeout_ms);
+
+/// \brief Close a socket handle.
+int host_socket_close(int handle);
 
 /** \} */
 
@@ -741,7 +785,7 @@ int host_ui_push_message    (const char* text, uint8_t icon, uint32_t duration_m
 
 /**
  * \brief Show a Y/N confirmation.
- * \param action_id Fired with idx = 1 on Y, idx = 0 on N.
+ * \param action_id Fired with user_data = 1 on Y, user_data = 0 on N (idx unused).
  */
 int host_ui_push_confirm    (const char* text, uint8_t icon, uint32_t action_id);
 
@@ -750,7 +794,8 @@ int host_ui_push_info       (const char* title, const char* body);
 
 /**
  * \brief Show a context menu.
- * \param select_action_id Fired with idx = items[i].item_id on selection.
+ * \param select_action_id Fired on selection with idx = selected item position
+ *        (0-based) and user_data = items[i].item_id.
  */
 int host_ui_push_context_menu(const char* title, const ui_item_t* items, uint16_t count,
                               uint32_t select_action_id);
@@ -758,7 +803,10 @@ int host_ui_push_context_menu(const char* title, const ui_item_t* items, uint16_
 /**
  * \brief Show a T9-style text entry.
  * \param initial Pre-filled text, or NULL/empty for blank.
- * \param action_id Fired on commit; consume the value via host_ui_consume_input_text.
+ * \param action_id Fired on both outcomes; the view pops itself before it
+ *        fires. On confirm: user_data = 1, idx = entered text length, read the
+ *        text via host_ui_consume_input_text. On cancel: user_data = 0, idx = 0
+ *        and no text is pending (host_ui_consume_input_text returns nothing).
  */
 int host_ui_push_t9_input   (const char* title, const char* initial,
                              uint16_t max_len, uint32_t action_id);
@@ -766,6 +814,8 @@ int host_ui_push_t9_input   (const char* title, const char* initial,
 /**
  * \brief Show a password entry (masked T9).
  * \param initial Pre-filled text, or NULL/empty for blank.
+ * \param action_id Same contract as host_ui_push_t9_input: confirm fires with
+ *        user_data = 1 and idx = text length; cancel fires with user_data = 0.
  */
 int host_ui_push_password   (const char* title, const char* initial,
                              uint16_t max_len, uint32_t action_id);
@@ -773,32 +823,44 @@ int host_ui_push_password   (const char* title, const char* initial,
 /**
  * \brief Show a numeric PIN entry.
  * \param max_attempts 0 for unlimited.
+ * \param action_id On confirm fires with user_data = 1 and idx = PIN length;
+ *        on cancel fires with user_data = 0. The view pops itself first.
  */
 int host_ui_push_pin_entry  (const char* title, uint8_t max_len, uint8_t max_attempts,
                              uint32_t action_id);
 
-/// \brief Show an integer slider; consume the picked value via host_ui_consume_input_int.
+/* On confirm fires action_id with user_data = 1 (read the value via
+ * host_ui_consume_input_int); on cancel fires with user_data = 0 and no value
+ * pending. The view pops itself before the action fires. */
+/// \brief Show an integer slider.
 int host_ui_push_slider     (const char* title, int32_t min, int32_t max, int32_t init,
                              int32_t step, const char* unit, uint32_t action_id);
 
 /* RGB color picker. On Y the host fires action_id with idx = packed RGB
- * (0xRRGGBB) and user_data = 1. On N the action_id is not fired (view pops).
- * Read the packed value via host_ui_consume_input_int(). */
+ * (0xRRGGBB) and user_data = 1; on N it fires with user_data = 0 and no value
+ * pending. The view pops itself first. Read the packed value via
+ * host_ui_consume_input_int(). */
 /// \brief Show an RGB color picker.
 int host_ui_push_color_picker(uint8_t initial_r, uint8_t initial_g, uint8_t initial_b,
                               uint32_t action_id);
 
+/* On confirm fires action_id with user_data = 1 (read via
+ * host_ui_consume_input_int); on cancel fires with user_data = 0. Pops first. */
 /// \brief Show a date picker.
 int host_ui_push_date       (const char* title, uint8_t d, uint8_t m, uint16_t y,
                              uint32_t action_id);
 
+/* On confirm fires action_id with user_data = 1 (read via
+ * host_ui_consume_input_int); on cancel fires with user_data = 0. Pops first. */
 /// \brief Show a time-of-day picker.
 int host_ui_push_time       (const char* title, uint8_t h, uint8_t m, uint32_t action_id);
 
 /**
  * \brief Show a list view.
- * \param select_action_id Fired on item select with idx = items[i].item_id.
- * \param menu_action_id Fired when the user opens the per-item context menu; 0 to disable.
+ * \param select_action_id Fired on item select with idx = selected row index
+ *        and user_data = items[i].item_id.
+ * \param menu_action_id Fired when the user opens the per-item context menu
+ *        (same idx/user_data as select); 0 to disable.
  */
 int host_ui_push_list       (const char* title, const ui_item_t* items, uint16_t count,
                              uint32_t select_action_id, uint32_t menu_action_id);
@@ -847,7 +909,13 @@ int host_ui_remove_list_item(uint16_t index);
 /// \brief Pop the topmost view.
 int host_ui_pop                (void);
 
-/// \brief Pop views until the plugin's first view is on top.
+/**
+ * \brief Pop back to the plugin's first view.
+ *
+ * Pops every view the plugin pushed during or after plugin_on_enter, back to
+ * its first view (the stack depth recorded at entry). Views below the plugin
+ * are untouched. No-op if the plugin pushed nothing.
+ */
 int host_ui_pop_to_plugin      (void);
 
 /// \brief Force a repaint of the current view.
@@ -903,8 +971,10 @@ int host_ui_wink               (uint8_t count, uint16_t period_ms);
 
 /**
  * \brief Push a new canvas view.
- * \param key_action_id Fired on raw key events not consumed by a focused widget.
- * \param widget_action_id Fired for widget interaction events (see CANVAS_WIDGET_*).
+ * \param key_action_id Fired on raw key events not consumed by a focused
+ *        widget, with idx = focused widget id and user_data = the ASCII key code.
+ * \param widget_action_id Fired for widget interaction events with idx = widget
+ *        id and user_data = the event subtype (see CANVAS_WIDGET_*).
  */
 int host_view_canvas_push          (const char* title, uint32_t key_action_id,
                                     uint32_t widget_action_id);
@@ -932,9 +1002,9 @@ int host_view_canvas_set_text_size (uint8_t size);
  * \brief Switch the canvas font to one of the canonical HOST_FONT_* ids.
  *
  * Persists across draw calls until the next \ref host_view_canvas_clear or
- * a further set_font call. The 8b custom fonts (HOST_FONT_BOLD_9PT/12PT)
- * are Latin-1 indexed; pass Latin-1 bytes if you need umlauts. The builtin
- * 6x8 font (HOST_FONT_BUILTIN) holds umlauts at their CP437 codepoints.
+ * a further set_font call. All text drawing functions take UTF-8; the host
+ * renders umlauts correctly for whichever font is active, both the builtin
+ * 6x8 font (HOST_FONT_BUILTIN) and the Latin-1-indexed FreeMonoBold fonts.
  *
  * \param font_id One of HOST_FONT_*.
  * \return HOST_OK on success, HOST_ERR_INVALID_ARG for out-of-range ids.
@@ -1030,6 +1100,17 @@ int host_view_canvas_get_focus     (uint32_t* out);
  */
 int host_view_canvas_set_key_repeat(uint16_t initial_ms, uint16_t repeat_ms);
 
+/**
+ * \brief Set the action id fired on a canvas long-press.
+ *
+ * Registering a non-zero action opts the canvas into deferred short-press
+ * input: a tap fires the key callback on release while a hold (>= long-press
+ * threshold) fires this action with idx = 0 and user_data = the ASCII key code,
+ * and suppresses the short press. Pass 0 to disable.
+ * \param action_id Action fired on long-press, or 0 to disable.
+ */
+int host_view_canvas_set_long_press_action(uint32_t action_id);
+
 /** \} */
 
 /**
@@ -1110,7 +1191,11 @@ uint8_t  host_i18n_current_language(void);
  * \brief Subscribe to system events and publish module events.
  *
  * Subscriptions are dispatched as plugin actions. Background-capable
- * plugins receive events even when not on screen.
+ * plugins receive events even when not on screen. The action fires with
+ * idx = the event-type ordinal (the bit position of the matching EVENT_*
+ * flag: EVENT_KEY_PRESSED -> 0, EVENT_KEY_RELEASED -> 1, ...) and
+ * user_data = the event payload. For key events user_data is the ASCII key
+ * code ('0'..'9', 'Y' = 89, 'N' = 78).
  * \{
  */
 
@@ -1233,19 +1318,17 @@ int host_cmd_consume (char* out, size_t out_size);
 /** \} */
 
 /**
- * \defgroup strings Strings (Display normalisation)
- * \brief Convert web payloads into single-byte display characters.
+ * \defgroup strings Strings (explicit display normalisation)
+ * \brief Optional UTF-8 <-> display-codepage conversion helpers.
  *
- * Different display fonts use different codepage layouts:
- *   - The GFX builtin glcdfont (active after `setFont(nullptr)`) uses
- *     CP437 - umlauts sit at 0x84/0x94/0x81 (a/o/u), 0xE1 (sz).
- *   - The FreeMonoBold*pt8b fonts use Latin-1 - the same umlauts sit at
- *     0xE4/0xF6/0xFC/0xDF.
+ * The whole host API speaks UTF-8: text passed to UI / canvas / display
+ * functions is converted to the display codepage internally, and text read
+ * back (host_ui_consume_input_text, host_view_canvas_get_text) is returned as
+ * UTF-8. Plugins normally never need to convert anything themselves.
  *
- * Plugins call this on data sourced from the web (RSS bodies, REST JSON,
- * HA entity names) before handing it to a UI push function. The
- * `target` parameter picks the right codepage for the rendering context.
- * Calling it on already-normalised strings is harmless.
+ * These two helpers remain for advanced cases, e.g. pre-rendering a string to
+ * a specific codepage. Do not feed their output back into the auto-converting
+ * UI functions, or the text is encoded twice.
  * \{
  */
 
@@ -1256,10 +1339,10 @@ int host_cmd_consume (char* out, size_t out_size);
 /// \brief Decode HTML entities + UTF-8 in `in` into single-byte display
 ///        characters in `out`.
 ///
-/// `target` selects the output codepage so the result is valid for the
-/// active GFX font without further conversion. Unknown codepoints are
-/// dropped. Truncates if the result would exceed `out_size - 1` bytes.
-/// Output is always NUL-terminated.
+/// Optional: the UI / canvas / display functions already perform this on the
+/// text you pass them. `target` selects the output codepage. Unknown
+/// codepoints are dropped. Truncates if the result would exceed `out_size - 1`
+/// bytes. Output is always NUL-terminated.
 /// \param in       Source string (UTF-8 with optional HTML entities).
 /// \param out      Destination buffer.
 /// \param out_size Capacity of `out` in bytes (including the NUL).
@@ -1267,9 +1350,10 @@ int host_cmd_consume (char* out, size_t out_size);
 /// \return HOST_OK on success, HOST_ERR_INVALID_ARG when inputs are NULL or `out_size==0`.
 int host_str_to_display(const char* in, char* out, size_t out_size, uint32_t target);
 
-/// \brief Inverse of the CP437 display encoding: convert CP437 display bytes
-///        in `in` to a UTF-8 string in `out`. Use this before persisting or
-///        transmitting on-screen-edited text so it stays UTF-8.
+/// \brief Convert CP437 display bytes in `in` to a UTF-8 string in `out`.
+///
+/// Optional: host_ui_consume_input_text and host_view_canvas_get_text already
+/// return UTF-8.
 /// \param in       Source CP437 string.
 /// \param out      Destination buffer (always NUL-terminated, truncated to fit).
 /// \param out_size Capacity of `out` in bytes (including the NUL).
@@ -1412,6 +1496,23 @@ int host_lockscreen_register_action  (const char* label_key, uint32_t action_id)
 
 /// \brief Remove the plugin's lockscreen quick-action.
 int host_lockscreen_unregister_action(void);
+
+/// \brief Raise a persistent Y/N alert over whatever is on screen, lock screen
+///        included, that stays until the user answers.
+///
+/// Intended for background plugins that need to reach the user while their view
+/// is not in front. The alert overlays the current screen as a modal and does
+/// not auto-dismiss. When the user answers, the originating plugin's
+/// `plugin_on_action(action_id, 0, user_data)` fires with `user_data=1` for Y
+/// (confirm) or `user_data=0` for N (cancel); the answer is routed to that plugin
+/// even while it is running in the background. Only one alert can be pending at a time.
+/// \param text      Message to display (UTF-8; HTML entities are decoded).
+/// \param icon      One of UI_ICON_* (ERROR/ALERT pick a matching glyph).
+/// \param action_id Action id echoed back to the plugin with the answer.
+/// \return HOST_OK, HOST_ERR_INVALID_ARG for a NULL text, HOST_ERR_NO_CAPABILITY
+///         without an active plugin, or HOST_ERR_BUSY when another modal or an
+///         exclusive prompt is already on screen.
+int host_lockscreen_alert            (const char* text, uint8_t icon, uint32_t action_id);
 
 /** \} */
 

@@ -26,6 +26,9 @@ public:
     /// \brief Save callback. Values are pre-multiplied with brightness.
     using SaveCallback = void(*)(uint8_t r, uint8_t g, uint8_t b);
 
+    /// \brief Cancel callback. The view pops itself before this fires.
+    using CancelCallback = void(*)();
+
     /**
      * \brief Initialize the picker with a starting color.
      * \param r Initial red value (0..255).
@@ -36,6 +39,9 @@ public:
 
     /// \brief Register a save callback (fired on Y).
     void setOnSave(SaveCallback cb) { onSave_ = cb; }
+
+    /// \brief Register a cancel callback (fired when dismissed with N).
+    void setOnCancel(CancelCallback cb) { onCancel_ = cb; }
 
     /// \brief Read the currently chosen color (post brightness scaling).
     void currentColor(uint8_t& r, uint8_t& g, uint8_t& b) const;
@@ -49,6 +55,7 @@ public:
 
 private:
     SaveCallback onSave_ = nullptr;
+    CancelCallback onCancel_ = nullptr;
 
     int16_t cursorX_ = 0;
     int16_t cursorY_ = 0;

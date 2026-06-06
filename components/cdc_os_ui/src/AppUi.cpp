@@ -42,6 +42,7 @@
 #include "serial_cmd/SerialCmd.h"
 #include "nvs.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -148,6 +149,10 @@ static uint32_t s_lastBatterySampleMs = 0;
 
 /** \brief Prevents stale key events directly after unlock transition. */
 static bool s_ignoreKeyUntilRelease = false;
+
+// Set from the keypad task when the N+Y rescue chord is held; consumed by
+// ui_process on the UI task, which performs the anti-block instant lock.
+static std::atomic<bool> s_antiBlockLockRequested{false};
 
 /** \brief Returns main-menu index of the fixed "Plugins" item. */
 static inline uint8_t getPluginsIndex()  { return s_mainMenuPluginCount + MM_PLUGINS; }
@@ -376,6 +381,28 @@ static void onInactivityTimeout() {
     }
     s_ignoreKeyUntilRelease = true;
     clearKeypadBuffer();
+}
+
+/**
+ * \brief Anti-block instant lock: force the badge into a clean locked state.
+ *
+ * Triggered by the reserved N+Y rescue chord. Unloads every loaded plugin,
+ * dismisses all modals and views back to the lock screen, and notifies modules
+ * so the badge recovers from a wedged view or undefined UI state without a
+ * hardware reset.
+ */
+static void performAntiBlockLock() {
+    cdc::plugin_manager::PluginManager::instance().unloadAllFromRam();
+
+    auto& stack = ViewStack::instance();
+    while (stack.hasModal()) stack.hideModal();
+    while (stack.depth() > 1) stack.pop();
+
+    core::ModuleRegistry::instance().dispatchLock();
+
+    s_ignoreKeyUntilRelease = true;
+    clearKeypadBuffer();
+    if (s_lockScreen) s_lockScreen->markDirty();
 }
 
 /**
@@ -716,6 +743,9 @@ void ui_init(const UiDeps& deps) {
             char keyChar = static_cast<char>(key);
             ViewStack::instance().dispatchLongPress(keyChar);
         });
+        s_deps.keypad->setPanicChordCallback([]() {
+            s_antiBlockLockRequested.store(true, std::memory_order_relaxed);
+        });
     }
 
     // Load display texts from NVS
@@ -976,7 +1006,9 @@ void prepareForBootloaderReset() {
     }
 
     auto& stack = ViewStack::instance();
-    stack.hideModal();
+    while (stack.hasModal()) {
+        stack.hideModal();
+    }
     while (stack.depth() > 1) {
         stack.pop();
     }
@@ -1000,6 +1032,12 @@ void prepareForBootloaderReset() {
  * \param nowMs Current monotonic time in milliseconds.
  */
 void ui_process(uint32_t nowMs) {
+    // Rescue chord (N+Y) requested an anti-block lock: bypass the current view
+    // entirely and force a clean locked state before any key dispatch.
+    if (s_antiBlockLockRequested.exchange(false, std::memory_order_relaxed)) {
+        performAntiBlockLock();
+    }
+
     // Update status icons when on lock screen
     if (s_lockScreen && ViewStack::instance().current() == s_lockScreen) {
         updatePowerStatusIcons();

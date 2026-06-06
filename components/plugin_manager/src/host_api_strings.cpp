@@ -1,14 +1,15 @@
 /**
  * \file host_api_strings.cpp
- * \brief Thin WAMR-facing wrapper around cdc::ui::render::decodeWebText.
+ * \brief WAMR-facing wrappers around the plugin-boundary string codecs.
+ *
+ * Since the host API unified on UTF-8, the UI/canvas/display functions convert
+ * internally and plugins no longer need to pre-convert. These two functions
+ * remain for explicit use (e.g. targeting a Latin-1 GFX font).
  */
 
 #include "plugin_manager/host_api.h"
 #include "cdc_views/RenderHelpers.h"
-#include "cdc_core/Cp437.h"
-
-#include <cstring>
-#include <string>
+#include "host_str_conv.h"
 
 extern "C" int host_str_to_display(const char* in, char* out, size_t out_size, uint32_t target)
 {
@@ -22,10 +23,5 @@ extern "C" int host_str_to_display(const char* in, char* out, size_t out_size, u
 
 extern "C" int host_str_to_utf8(const char* in, char* out, size_t out_size)
 {
-    if (!in || !out || out_size == 0) return HOST_ERR_INVALID_ARG;
-    std::string u = cdc::core::cp437::toUtf8(in);
-    size_t n = (u.size() < out_size - 1) ? u.size() : out_size - 1;
-    std::memcpy(out, u.data(), n);
-    out[n] = '\0';
-    return static_cast<int>(n);
+    return cdc::plugin_manager::copyUtf8(in, out, out_size);
 }

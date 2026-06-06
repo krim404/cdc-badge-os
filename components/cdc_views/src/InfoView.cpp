@@ -160,10 +160,11 @@ InputResult InfoView::onKey(char key) {
             return InputResult::CONSUMED;
 
         case KEY_NO:  // Back
-        case KEY_YES: // Also back (info is read-only)
             return InputResult::REQUEST_POP;
 
         default:
+            // KEY_YES (and any other key) is left free: the plugin can bind it
+            // via the KEY_PRESSED EventBus or an explicit onYes_ callback.
             return InputResult::IGNORED;
     }
 }

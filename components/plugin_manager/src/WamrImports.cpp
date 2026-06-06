@@ -32,6 +32,21 @@ namespace cdc::plugin_manager {
 
 #define W(name, fn, sig)  { name, (void*)fn, sig, nullptr }
 
+// WAMR validates only 1 byte for a bare '*' pointer parameter (a pointer not
+// immediately followed by '~length' in the signature). Any host call that reads
+// or writes more than 1 byte through such a pointer must re-validate the full
+// extent against the calling instance's linear memory, otherwise a plugin can
+// place the pointer at the end of linear memory and drive an out-of-bounds
+// access into native heap. Returns false (caller maps to HOST_ERR_INVALID_ARG)
+// when [ptr, ptr+len) is not fully inside the plugin's linear memory.
+static inline bool wbuf_ok(wasm_exec_env_t env, const void* ptr, size_t len)
+{
+    if (len == 0) return true;
+    wasm_module_inst_t inst = wasm_runtime_get_module_inst(env);
+    return ptr && wasm_runtime_validate_native_addr(inst, const_cast<void*>(ptr),
+                                                     static_cast<uint64_t>(len));
+}
+
 // -- Logging ----------------------------------------------------------------
 
 static void w_host_log(wasm_exec_env_t, uint32_t level, const char* tag, const char* msg)
@@ -77,12 +92,15 @@ int translate_and_call(wasm_exec_env_t exec_env, const char* title, const ui_ite
     }
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
     if (count > cdc::ui::ListView::MAX_ITEMS) count = cdc::ui::ListView::MAX_ITEMS;
+    if (!wasm_runtime_validate_native_addr(inst, const_cast<ui_item_t*>(items),
+                                           static_cast<uint64_t>(count) * sizeof(ui_item_t)))
+        return HOST_ERR_INVALID_ARG;
     auto native = cdc::core::psramAlloc<ui_item_t>(count);
     if (!native) return HOST_ERR_NO_MEMORY;
     for (uint32_t i = 0; i < count; ++i) {
         native[i] = items[i];
         uint32_t off = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(items[i].label));
-        if (off != 0 && wasm_runtime_validate_app_addr(inst, off, 1)) {
+        if (off != 0 && wasm_runtime_validate_app_str_addr(inst, off)) {
             native[i].label = static_cast<const char*>(wasm_runtime_addr_app_to_native(inst, off));
         } else {
             native[i].label = "";
@@ -120,9 +138,11 @@ static int32_t w_host_ui_update_list_item(wasm_exec_env_t exec_env, uint32_t ind
 {
     if (!item) return HOST_ERR_INVALID_ARG;
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
+    if (!wasm_runtime_validate_native_addr(inst, const_cast<ui_item_t*>(item), sizeof(ui_item_t)))
+        return HOST_ERR_INVALID_ARG;
     ui_item_t native = *item;
     uint32_t off = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(item->label));
-    if (off != 0 && wasm_runtime_validate_app_addr(inst, off, 1)) {
+    if (off != 0 && wasm_runtime_validate_app_str_addr(inst, off)) {
         native.label = static_cast<const char*>(wasm_runtime_addr_app_to_native(inst, off));
     } else {
         native.label = "";
@@ -135,9 +155,11 @@ static int32_t w_host_ui_insert_list_item(wasm_exec_env_t exec_env, uint32_t ind
 {
     if (!item) return HOST_ERR_INVALID_ARG;
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
+    if (!wasm_runtime_validate_native_addr(inst, const_cast<ui_item_t*>(item), sizeof(ui_item_t)))
+        return HOST_ERR_INVALID_ARG;
     ui_item_t native = *item;
     uint32_t off = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(item->label));
-    if (off != 0 && wasm_runtime_validate_app_addr(inst, off, 1)) {
+    if (off != 0 && wasm_runtime_validate_app_str_addr(inst, off)) {
         native.label = static_cast<const char*>(wasm_runtime_addr_app_to_native(inst, off));
     } else {
         native.label = "";
@@ -157,11 +179,14 @@ static int32_t w_host_ui_push_context_menu(wasm_exec_env_t exec_env, const char*
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
     constexpr uint32_t kMaxItems = cdc::ui::ContextMenuView::MAX_ITEMS;
     if (count > kMaxItems) count = kMaxItems;
+    if (!wasm_runtime_validate_native_addr(inst, const_cast<ui_item_t*>(items),
+                                           static_cast<uint64_t>(count) * sizeof(ui_item_t)))
+        return HOST_ERR_INVALID_ARG;
     ui_item_t native[kMaxItems];
     for (uint32_t i = 0; i < count; ++i) {
         native[i] = items[i];
         uint32_t off = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(items[i].label));
-        if (off != 0 && wasm_runtime_validate_app_addr(inst, off, 1)) {
+        if (off != 0 && wasm_runtime_validate_app_str_addr(inst, off)) {
             native[i].label = static_cast<const char*>(wasm_runtime_addr_app_to_native(inst, off));
         } else {
             native[i].label = "";
@@ -201,8 +226,11 @@ static int32_t w_host_ui_push_color_picker(wasm_exec_env_t, uint32_t r, uint32_t
 static int32_t w_host_ui_consume_input_text(wasm_exec_env_t, char* out, uint32_t out_size)
 { return host_ui_consume_input_text(out, out_size); }
 
-static int32_t w_host_ui_consume_input_int(wasm_exec_env_t, int32_t* out)
-{ return host_ui_consume_input_int(out); }
+static int32_t w_host_ui_consume_input_int(wasm_exec_env_t exec_env, int32_t* out)
+{
+    if (!wbuf_ok(exec_env, out, sizeof(int32_t))) return HOST_ERR_INVALID_ARG;
+    return host_ui_consume_input_int(out);
+}
 
 // -- Canvas view -----------------------------------------------------------
 
@@ -210,8 +238,12 @@ static int32_t w_host_view_canvas_push(wasm_exec_env_t, const char* title,
                                         uint32_t key_action_id, uint32_t widget_action_id)
 { return host_view_canvas_push(title, key_action_id, widget_action_id); }
 
-static int32_t w_host_view_canvas_get_body_size(wasm_exec_env_t, uint16_t* w, uint16_t* h)
-{ return host_view_canvas_get_body_size(w, h); }
+static int32_t w_host_view_canvas_get_body_size(wasm_exec_env_t exec_env, uint16_t* w, uint16_t* h)
+{
+    if (!wbuf_ok(exec_env, w, sizeof(uint16_t)) || !wbuf_ok(exec_env, h, sizeof(uint16_t)))
+        return HOST_ERR_INVALID_ARG;
+    return host_view_canvas_get_body_size(w, h);
+}
 
 static int32_t w_host_view_canvas_set_footer(wasm_exec_env_t, const char* hint)
 { return host_view_canvas_set_footer(hint); }
@@ -284,8 +316,11 @@ static int32_t w_host_view_canvas_remove_widget(wasm_exec_env_t, uint32_t widget
 static int32_t w_host_view_canvas_set_value(wasm_exec_env_t, uint32_t widget_id, int32_t value)
 { return host_view_canvas_set_value(widget_id, value); }
 
-static int32_t w_host_view_canvas_get_value(wasm_exec_env_t, uint32_t widget_id, int32_t* out)
-{ return host_view_canvas_get_value(widget_id, out); }
+static int32_t w_host_view_canvas_get_value(wasm_exec_env_t exec_env, uint32_t widget_id, int32_t* out)
+{
+    if (!wbuf_ok(exec_env, out, sizeof(int32_t))) return HOST_ERR_INVALID_ARG;
+    return host_view_canvas_get_value(widget_id, out);
+}
 
 static int32_t w_host_view_canvas_set_text(wasm_exec_env_t, uint32_t widget_id, const char* text)
 { return host_view_canvas_set_text(widget_id, text); }
@@ -297,12 +332,18 @@ static int32_t w_host_view_canvas_get_text(wasm_exec_env_t, uint32_t widget_id,
 static int32_t w_host_view_canvas_set_focus(wasm_exec_env_t, uint32_t widget_id)
 { return host_view_canvas_set_focus(widget_id); }
 
-static int32_t w_host_view_canvas_get_focus(wasm_exec_env_t, uint32_t* out)
-{ return host_view_canvas_get_focus(out); }
+static int32_t w_host_view_canvas_get_focus(wasm_exec_env_t exec_env, uint32_t* out)
+{
+    if (!wbuf_ok(exec_env, out, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;
+    return host_view_canvas_get_focus(out);
+}
 
 static int32_t w_host_view_canvas_set_key_repeat(wasm_exec_env_t, uint32_t initial_ms, uint32_t repeat_ms)
 { return host_view_canvas_set_key_repeat(static_cast<uint16_t>(initial_ms),
                                           static_cast<uint16_t>(repeat_ms)); }
+
+static int32_t w_host_view_canvas_set_long_press_action(wasm_exec_env_t, uint32_t action_id)
+{ return host_view_canvas_set_long_press_action(action_id); }
 
 // -- I18n -------------------------------------------------------------------
 
@@ -323,8 +364,11 @@ static int32_t w_host_nvs_get_blob(wasm_exec_env_t, const char* key, uint8_t* bu
 static int32_t w_host_nvs_set_blob(wasm_exec_env_t, const char* key, const uint8_t* buf, uint32_t len)
 { return host_nvs_set_blob(key, buf, len); }
 
-static int32_t w_host_nvs_get_u32(wasm_exec_env_t, const char* key, uint32_t* out)
-{ return host_nvs_get_u32(key, out); }
+static int32_t w_host_nvs_get_u32(wasm_exec_env_t exec_env, const char* key, uint32_t* out)
+{
+    if (!wbuf_ok(exec_env, out, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;
+    return host_nvs_get_u32(key, out);
+}
 
 static int32_t w_host_nvs_set_u32(wasm_exec_env_t, const char* key, uint32_t value)
 { return host_nvs_set_u32(key, value); }
@@ -372,12 +416,18 @@ static int32_t w_host_fs_view(wasm_exec_env_t, const char* name) { return host_f
 static int32_t w_host_random(wasm_exec_env_t, uint8_t* buf, uint32_t len)
 { return host_random(buf, len); }
 
-static int32_t w_host_sha256(wasm_exec_env_t, const uint8_t* data, uint32_t len, uint8_t* out)
-{ return host_sha256(data, len, out); }
+static int32_t w_host_sha256(wasm_exec_env_t exec_env, const uint8_t* data, uint32_t len, uint8_t* out)
+{
+    if (!wbuf_ok(exec_env, out, 32)) return HOST_ERR_INVALID_ARG;
+    return host_sha256(data, len, out);
+}
 
-static int32_t w_host_hmac_sha256(wasm_exec_env_t, const uint8_t* key, uint32_t klen,
+static int32_t w_host_hmac_sha256(wasm_exec_env_t exec_env, const uint8_t* key, uint32_t klen,
                                   const uint8_t* data, uint32_t dlen, uint8_t* out)
-{ return host_hmac_sha256(key, klen, data, dlen, out); }
+{
+    if (!wbuf_ok(exec_env, out, 32)) return HOST_ERR_INVALID_ARG;
+    return host_hmac_sha256(key, klen, data, dlen, out);
+}
 
 static int32_t w_host_base32_encode(wasm_exec_env_t, const uint8_t* in, uint32_t in_len, char* out, uint32_t out_size)
 { return host_base32_encode(in, in_len, out, out_size); }
@@ -409,6 +459,23 @@ static int32_t w_host_http_read_chunk(wasm_exec_env_t, int32_t h, uint8_t* buf, 
     int rc = host_http_read_chunk(h, buf, buf_size, &out_len);
     return rc == HOST_OK ? static_cast<int32_t>(out_len) : rc;
 }
+
+// -- Socket -----------------------------------------------------------------
+
+static int32_t w_host_socket_open(wasm_exec_env_t, uint32_t proto, const char* host,
+                                  uint32_t port, uint32_t timeout)
+{ return host_socket_open(static_cast<uint8_t>(proto), host,
+                          static_cast<uint16_t>(port), timeout); }
+
+static int32_t w_host_socket_write(wasm_exec_env_t, int32_t h, const uint8_t* data,
+                                   uint32_t len, uint32_t timeout)
+{ return host_socket_write(h, data, len, timeout); }
+
+static int32_t w_host_socket_read(wasm_exec_env_t, int32_t h, uint8_t* out,
+                                  uint32_t cap, uint32_t timeout)
+{ return host_socket_read(h, out, cap, timeout); }
+
+static int32_t w_host_socket_close(wasm_exec_env_t, int32_t h) { return host_socket_close(h); }
 
 // -- WiFi -------------------------------------------------------------------
 
@@ -445,18 +512,30 @@ static uint32_t w_host_rmem_slot_size(wasm_exec_env_t)
 
 static int32_t w_host_ecc_generate(wasm_exec_env_t, const char* name, uint32_t curve)
 { return host_ecc_generate(name, static_cast<uint8_t>(curve)); }
-static int32_t w_host_ecc_import(wasm_exec_env_t, const char* name, const uint8_t* priv, uint32_t curve)
-{ return host_ecc_import(name, priv, static_cast<uint8_t>(curve)); }
-static int32_t w_host_ecc_pubkey(wasm_exec_env_t, const char* name, uint8_t* pub, uint32_t curve)
-{ return host_ecc_pubkey(name, pub, static_cast<uint8_t>(curve)); }
+static int32_t w_host_ecc_import(wasm_exec_env_t exec_env, const char* name, const uint8_t* priv, uint32_t curve)
+{
+    if (!wbuf_ok(exec_env, priv, 32)) return HOST_ERR_INVALID_ARG;
+    return host_ecc_import(name, priv, static_cast<uint8_t>(curve));
+}
+static int32_t w_host_ecc_pubkey(wasm_exec_env_t exec_env, const char* name, uint8_t* pub, uint32_t curve)
+{
+    if (!wbuf_ok(exec_env, pub, 64)) return HOST_ERR_INVALID_ARG;
+    return host_ecc_pubkey(name, pub, static_cast<uint8_t>(curve));
+}
 static int32_t w_host_ecc_delete(wasm_exec_env_t, const char* name)
 { return host_ecc_delete(name); }
 static int32_t w_host_ecc_exists(wasm_exec_env_t, const char* name)
 { return host_ecc_exists(name) ? 1 : 0; }
-static int32_t w_host_ecdsa_sign(wasm_exec_env_t, const char* name, const uint8_t* msg, uint32_t len, uint8_t* sig)
-{ return host_ecdsa_sign(name, msg, len, sig); }
-static int32_t w_host_eddsa_sign(wasm_exec_env_t, const char* name, const uint8_t* msg, uint32_t len, uint8_t* sig)
-{ return host_eddsa_sign(name, msg, len, sig); }
+static int32_t w_host_ecdsa_sign(wasm_exec_env_t exec_env, const char* name, const uint8_t* msg, uint32_t len, uint8_t* sig)
+{
+    if (!wbuf_ok(exec_env, sig, 64)) return HOST_ERR_INVALID_ARG;
+    return host_ecdsa_sign(name, msg, len, sig);
+}
+static int32_t w_host_eddsa_sign(wasm_exec_env_t exec_env, const char* name, const uint8_t* msg, uint32_t len, uint8_t* sig)
+{
+    if (!wbuf_ok(exec_env, sig, 64)) return HOST_ERR_INVALID_ARG;
+    return host_eddsa_sign(name, msg, len, sig);
+}
 
 // -- EventBus ---------------------------------------------------------------
 
@@ -472,11 +551,12 @@ static int32_t w_host_gpio_set_pull(wasm_exec_env_t, uint32_t pin, uint32_t pull
 { return host_gpio_set_pull(static_cast<uint8_t>(pin), static_cast<uint8_t>(pull)); }
 static int32_t w_host_gpio_write(wasm_exec_env_t, uint32_t pin, int32_t level)
 { return host_gpio_write(static_cast<uint8_t>(pin), level != 0); }
-static int32_t w_host_gpio_read(wasm_exec_env_t, uint32_t pin, int32_t* out)
+static int32_t w_host_gpio_read(wasm_exec_env_t exec_env, uint32_t pin, int32_t* out)
 {
+    if (!wbuf_ok(exec_env, out, sizeof(int32_t))) return HOST_ERR_INVALID_ARG;
     bool level = false;
     int rc = host_gpio_read(static_cast<uint8_t>(pin), &level);
-    if (rc == HOST_OK && out) *out = level ? 1 : 0;
+    if (rc == HOST_OK) *out = level ? 1 : 0;
     return rc;
 }
 static int32_t w_host_gpio_release(wasm_exec_env_t, uint32_t pin)
@@ -555,6 +635,10 @@ static int32_t w_host_lockscreen_register_action(wasm_exec_env_t,
 static int32_t w_host_lockscreen_unregister_action(wasm_exec_env_t)
 { return host_lockscreen_unregister_action(); }
 
+static int32_t w_host_lockscreen_alert(wasm_exec_env_t, const char* text,
+                                       uint32_t icon, uint32_t action_id)
+{ return host_lockscreen_alert(text, static_cast<uint8_t>(icon), action_id); }
+
 // -- Additional crypto ------------------------------------------------------
 
 static int32_t w_host_random_strict(wasm_exec_env_t, uint8_t* buf, uint32_t len)
@@ -565,28 +649,43 @@ static int32_t w_host_base64_decode(wasm_exec_env_t, const char* in, uint32_t in
 { return host_base64_decode(in, in_len, out, out_size); }
 static int32_t w_host_hex_decode(wasm_exec_env_t, const char* in, uint32_t in_len, uint8_t* out, uint32_t out_size)
 { return host_hex_decode(in, in_len, out, out_size); }
-static int32_t w_host_aes_gcm_encrypt(wasm_exec_env_t, const uint8_t* key, const uint8_t* iv,
+static int32_t w_host_aes_gcm_encrypt(wasm_exec_env_t exec_env, const uint8_t* key, const uint8_t* iv,
                                       const uint8_t* aad, uint32_t aad_len,
                                       const uint8_t* pt, uint32_t pt_len, uint8_t* ct, uint8_t* tag)
-{ return host_aes_gcm_encrypt(key, iv, aad, aad_len, pt, pt_len, ct, tag); }
-static int32_t w_host_aes_gcm_decrypt(wasm_exec_env_t, const uint8_t* key, const uint8_t* iv,
+{
+    if (!wbuf_ok(exec_env, key, 32) || !wbuf_ok(exec_env, iv, 12) ||
+        !wbuf_ok(exec_env, ct, pt_len) || !wbuf_ok(exec_env, tag, 16))
+        return HOST_ERR_INVALID_ARG;
+    return host_aes_gcm_encrypt(key, iv, aad, aad_len, pt, pt_len, ct, tag);
+}
+static int32_t w_host_aes_gcm_decrypt(wasm_exec_env_t exec_env, const uint8_t* key, const uint8_t* iv,
                                       const uint8_t* aad, uint32_t aad_len,
                                       const uint8_t* ct, uint32_t ct_len, const uint8_t* tag, uint8_t* pt)
-{ return host_aes_gcm_decrypt(key, iv, aad, aad_len, ct, ct_len, tag, pt); }
+{
+    if (!wbuf_ok(exec_env, key, 32) || !wbuf_ok(exec_env, iv, 12) ||
+        !wbuf_ok(exec_env, tag, 16) || !wbuf_ok(exec_env, pt, ct_len))
+        return HOST_ERR_INVALID_ARG;
+    return host_aes_gcm_decrypt(key, iv, aad, aad_len, ct, ct_len, tag, pt);
+}
 
 // -- Additional time / logging / nvs / sysinfo ------------------------------
 
-static int32_t w_host_local_time(wasm_exec_env_t, void* out)
-{ return host_local_time(reinterpret_cast<struct host_tm*>(out)); }
+static int32_t w_host_local_time(wasm_exec_env_t exec_env, void* out)
+{
+    if (!wbuf_ok(exec_env, out, sizeof(struct host_tm))) return HOST_ERR_INVALID_ARG;
+    return host_local_time(reinterpret_cast<struct host_tm*>(out));
+}
 
 static void w_host_log_hex(wasm_exec_env_t, const char* tag, const char* label,
                            const uint8_t* data, uint32_t len)
 { host_log_hex(tag, label, data, len); }
 
 static int32_t w_host_nvs_erase_all(wasm_exec_env_t) { return host_nvs_erase_all(); }
-static int32_t w_host_nvs_list_keys(wasm_exec_env_t, char* out, uint32_t* out_len)
+static int32_t w_host_nvs_list_keys(wasm_exec_env_t exec_env, char* out, uint32_t* out_len)
 {
+    if (!wbuf_ok(exec_env, out_len, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;
     size_t len = *out_len;
+    if (!wbuf_ok(exec_env, out, len)) return HOST_ERR_INVALID_ARG;
     int rc = host_nvs_list_keys(out, &len);
     *out_len = static_cast<uint32_t>(len);
     return rc;
@@ -594,13 +693,17 @@ static int32_t w_host_nvs_list_keys(wasm_exec_env_t, char* out, uint32_t* out_le
 
 // -- Additional wifi --------------------------------------------------------
 
-static int32_t w_host_wifi_mac(wasm_exec_env_t, uint8_t* out)  { return host_wifi_mac(out); }
+static int32_t w_host_wifi_mac(wasm_exec_env_t exec_env, uint8_t* out)
+{ return wbuf_ok(exec_env, out, 6) ? host_wifi_mac(out) : HOST_ERR_INVALID_ARG; }
 static int32_t w_host_wifi_rssi(wasm_exec_env_t)               { return host_wifi_rssi(); }
 static int32_t w_host_wifi_start_scan(wasm_exec_env_t)         { return host_wifi_start_scan(); }
 static int32_t w_host_wifi_scan_done(wasm_exec_env_t)          { return host_wifi_scan_done() ? 1 : 0; }
-static int32_t w_host_wifi_scan_results(wasm_exec_env_t, void* out, uint32_t* count)
+static int32_t w_host_wifi_scan_results(wasm_exec_env_t exec_env, void* out, uint32_t* count)
 {
+    if (!wbuf_ok(exec_env, count, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;
     size_t c = *count;
+    size_t cap = c > 32 ? 32 : c;  // host clamps to IWifiController::MAX_SCAN_RESULTS (32)
+    if (!wbuf_ok(exec_env, out, cap * sizeof(wifi_scan_result_t))) return HOST_ERR_INVALID_ARG;
     int rc = host_wifi_scan_results(reinterpret_cast<wifi_scan_result_t*>(out), &c);
     *count = static_cast<uint32_t>(c);
     return rc;
@@ -610,8 +713,12 @@ static int32_t w_host_wifi_scan_results(wasm_exec_env_t, void* out, uint32_t* co
 
 static int32_t w_host_gpio_pwm_set_duty(wasm_exec_env_t, uint32_t pin, uint32_t duty)
 { return host_gpio_pwm_set_duty(static_cast<uint8_t>(pin), static_cast<uint16_t>(duty)); }
-static int32_t w_host_adc_read(wasm_exec_env_t, uint32_t pin, uint16_t* raw, uint16_t* mv)
-{ return host_adc_read(static_cast<uint8_t>(pin), raw, mv); }
+static int32_t w_host_adc_read(wasm_exec_env_t exec_env, uint32_t pin, uint16_t* raw, uint16_t* mv)
+{
+    if (!wbuf_ok(exec_env, raw, sizeof(uint16_t)) || !wbuf_ok(exec_env, mv, sizeof(uint16_t)))
+        return HOST_ERR_INVALID_ARG;
+    return host_adc_read(static_cast<uint8_t>(pin), raw, mv);
+}
 
 static int32_t w_host_i2c_write(wasm_exec_env_t, uint32_t bus, uint32_t addr, const uint8_t* data, uint32_t len)
 { return host_i2c_write(static_cast<uint8_t>(bus), static_cast<uint8_t>(addr), data, len); }
@@ -620,9 +727,12 @@ static int32_t w_host_i2c_read(wasm_exec_env_t, uint32_t bus, uint32_t addr, uin
 static int32_t w_host_i2c_write_read(wasm_exec_env_t, uint32_t bus, uint32_t addr,
                                      const uint8_t* wr, uint32_t wr_len, uint8_t* rd, uint32_t rd_len)
 { return host_i2c_write_read(static_cast<uint8_t>(bus), static_cast<uint8_t>(addr), wr, wr_len, rd, rd_len); }
-static int32_t w_host_i2c_scan(wasm_exec_env_t, uint32_t bus, uint8_t* found, uint32_t* count)
+static int32_t w_host_i2c_scan(wasm_exec_env_t exec_env, uint32_t bus, uint8_t* found, uint32_t* count)
 {
+    if (!wbuf_ok(exec_env, count, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;
     size_t c = *count;
+    size_t cap = c > 112 ? 112 : c;  // host probes I2C addresses 0x08..0x77 (<=112)
+    if (!wbuf_ok(exec_env, found, cap)) return HOST_ERR_INVALID_ARG;
     int rc = host_i2c_scan(static_cast<uint8_t>(bus), found, &c);
     *count = static_cast<uint32_t>(c);
     return rc;
@@ -640,15 +750,21 @@ static uint32_t w_host_http_content_length(wasm_exec_env_t, int32_t h)
 static int32_t w_host_event_publish(wasm_exec_env_t, uint32_t subtype, uint32_t value)
 { return host_event_publish(subtype, value); }
 
-static int32_t w_host_se_chip_id(wasm_exec_env_t, uint8_t* serial, uint32_t* len)
+static int32_t w_host_se_chip_id(wasm_exec_env_t exec_env, uint8_t* serial, uint32_t* len)
 {
+    if (!wbuf_ok(exec_env, len, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;
     size_t l = *len;
+    size_t cap = l > 16 ? 16 : l;  // getChipId writes at most sizeof(ser_num) = 16 bytes
+    if (!wbuf_ok(exec_env, serial, cap)) return HOST_ERR_INVALID_ARG;
     int rc = host_se_chip_id(serial, &l);
     *len = static_cast<uint32_t>(l);
     return rc;
 }
-static int32_t w_host_se_fw_version(wasm_exec_env_t, uint8_t* riscv, uint8_t* spect)
-{ return host_se_fw_version(riscv, spect); }
+static int32_t w_host_se_fw_version(wasm_exec_env_t exec_env, uint8_t* riscv, uint8_t* spect)
+{
+    if (!wbuf_ok(exec_env, riscv, 4) || !wbuf_ok(exec_env, spect, 4)) return HOST_ERR_INVALID_ARG;
+    return host_se_fw_version(riscv, spect);
+}
 
 // -- Display (low-level GFX) ------------------------------------------------
 
@@ -681,13 +797,20 @@ static int32_t w_host_usb_cdc_write(wasm_exec_env_t, const uint8_t* data, uint32
 // -- BLE --------------------------------------------------------------------
 
 static int32_t  w_host_ble_is_enabled(wasm_exec_env_t) { return host_ble_is_enabled() ? 1 : 0; }
-static int32_t  w_host_ble_mac(wasm_exec_env_t, uint8_t* out) { return host_ble_mac(out); }
+static int32_t  w_host_ble_mac(wasm_exec_env_t exec_env, uint8_t* out)
+{ return wbuf_ok(exec_env, out, 6) ? host_ble_mac(out) : HOST_ERR_INVALID_ARG; }
 static int32_t  w_host_ble_device_name(wasm_exec_env_t, char* out, uint32_t size) { return host_ble_device_name(out, size); }
 static int32_t  w_host_ble_rssi(wasm_exec_env_t) { return host_ble_rssi(); }
 
-static int32_t  w_host_ble_register_service(wasm_exec_env_t, void* def, void* chars, uint32_t num)
-{ return host_ble_register_service(reinterpret_cast<ble_service_def_t*>(def),
-                                   reinterpret_cast<ble_char_def_t*>(chars), num); }
+static int32_t  w_host_ble_register_service(wasm_exec_env_t exec_env, void* def, void* chars, uint32_t num)
+{
+    size_t nchars = num > 6 ? 6 : num;  // host rejects num > MAX_PLUGIN_CHARS (6)
+    if (!wbuf_ok(exec_env, def, sizeof(ble_service_def_t)) ||
+        !wbuf_ok(exec_env, chars, nchars * sizeof(ble_char_def_t)))
+        return HOST_ERR_INVALID_ARG;
+    return host_ble_register_service(reinterpret_cast<ble_service_def_t*>(def),
+                                     reinterpret_cast<ble_char_def_t*>(chars), num);
+}
 static int32_t  w_host_ble_unregister_service(wasm_exec_env_t, uint32_t h) { return host_ble_unregister_service(h); }
 static int32_t  w_host_ble_send_notification(wasm_exec_env_t, uint32_t ch, const uint8_t* data, uint32_t len)
 { return host_ble_send_notification(ch, data, len); }
@@ -698,9 +821,12 @@ static int32_t  w_host_ble_consume_write(wasm_exec_env_t, uint32_t ch, uint8_t* 
 
 static int32_t  w_host_ble_scan_start(wasm_exec_env_t, uint32_t dur) { return host_ble_scan_start(dur); }
 static int32_t  w_host_ble_scan_done(wasm_exec_env_t) { return host_ble_scan_done() ? 1 : 0; }
-static int32_t  w_host_ble_scan_results(wasm_exec_env_t, void* out, uint32_t* count)
+static int32_t  w_host_ble_scan_results(wasm_exec_env_t exec_env, void* out, uint32_t* count)
 {
+    if (!wbuf_ok(exec_env, count, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;
     size_t c = *count;
+    size_t cap = c > 32 ? 32 : c;  // host clamps to 32 scan results
+    if (!wbuf_ok(exec_env, out, cap * sizeof(ble_scan_result_t))) return HOST_ERR_INVALID_ARG;
     int rc = host_ble_scan_results(reinterpret_cast<ble_scan_result_t*>(out), &c);
     *count = static_cast<uint32_t>(c);
     return rc;
@@ -711,9 +837,12 @@ static uint32_t w_host_ble_conn_handle(wasm_exec_env_t) { return host_ble_conn_h
 static int32_t  w_host_ble_disconnect(wasm_exec_env_t, uint32_t conn) { return host_ble_disconnect(conn); }
 static int32_t  w_host_ble_discover(wasm_exec_env_t, uint32_t conn, const uint8_t* uuid, uint32_t aid)
 { return host_ble_discover(conn, uuid, aid); }
-static int32_t  w_host_ble_consume_discovery(wasm_exec_env_t, void* out, uint32_t* count)
+static int32_t  w_host_ble_consume_discovery(wasm_exec_env_t exec_env, void* out, uint32_t* count)
 {
+    if (!wbuf_ok(exec_env, count, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;
     size_t c = *count;
+    size_t cap = c > 8 ? 8 : c;  // host clamps to MAX_DISC_CHARS (8)
+    if (!wbuf_ok(exec_env, out, cap * sizeof(ble_remote_char_t))) return HOST_ERR_INVALID_ARG;
     int rc = host_ble_consume_discovery(reinterpret_cast<ble_remote_char_t*>(out), &c);
     *count = static_cast<uint32_t>(c);
     return rc;
@@ -727,8 +856,11 @@ static int32_t  w_host_ble_write_char(wasm_exec_env_t, uint32_t conn, uint32_t v
 { return host_ble_write_char(conn, static_cast<uint16_t>(vh), data, len, static_cast<uint8_t>(wr)); }
 static int32_t  w_host_ble_subscribe(wasm_exec_env_t, uint32_t conn, uint32_t cccd, uint32_t aid)
 { return host_ble_subscribe(conn, static_cast<uint16_t>(cccd), aid); }
-static int32_t  w_host_ble_consume_notification(wasm_exec_env_t, uint16_t* vh_out, uint8_t* buf, uint32_t size)
-{ return host_ble_consume_notification(vh_out, buf, size); }
+static int32_t  w_host_ble_consume_notification(wasm_exec_env_t exec_env, uint16_t* vh_out, uint8_t* buf, uint32_t size)
+{
+    if (!wbuf_ok(exec_env, vh_out, sizeof(uint16_t))) return HOST_ERR_INVALID_ARG;
+    return host_ble_consume_notification(vh_out, buf, size);
+}
 
 // -- Symbol table -----------------------------------------------------------
 
@@ -798,6 +930,7 @@ static const NativeSymbol s_symbols[] = {
     W("host_view_canvas_set_focus",     w_host_view_canvas_set_focus,     "(i)i"),
     W("host_view_canvas_get_focus",     w_host_view_canvas_get_focus,     "(*)i"),
     W("host_view_canvas_set_key_repeat",w_host_view_canvas_set_key_repeat,"(ii)i"),
+    W("host_view_canvas_set_long_press_action",w_host_view_canvas_set_long_press_action,"(i)i"),
 
     W("host_i18n_tr_key",        w_host_i18n_tr_key,        "($*~)i"),
     W("host_i18n_tr_meta",       w_host_i18n_tr_meta,       "($*~)i"),
@@ -833,6 +966,11 @@ static const NativeSymbol s_symbols[] = {
     W("host_http_status",        w_host_http_status,        "(i)i"),
     W("host_http_read_chunk",    w_host_http_read_chunk,    "(i*~)i"),
     W("host_http_close",         w_host_http_close,         "(i)i"),
+
+    W("host_socket_open",        w_host_socket_open,        "(i$ii)i"),
+    W("host_socket_write",       w_host_socket_write,       "(i*~i)i"),
+    W("host_socket_read",        w_host_socket_read,        "(i*~i)i"),
+    W("host_socket_close",       w_host_socket_close,       "(i)i"),
 
     W("host_wifi_request",       w_host_wifi_request,       "(i)i"),
     W("host_wifi_release",       w_host_wifi_release,       "()i"),
@@ -890,6 +1028,7 @@ static const NativeSymbol s_symbols[] = {
 
     W("host_lockscreen_register_action",   w_host_lockscreen_register_action,   "($i)i"),
     W("host_lockscreen_unregister_action", w_host_lockscreen_unregister_action, "()i"),
+    W("host_lockscreen_alert",             w_host_lockscreen_alert,             "($ii)i"),
 
     W("host_random_strict",      w_host_random_strict,      "(*~)i"),
     W("host_base64_encode",      w_host_base64_encode,      "(*~*~)i"),

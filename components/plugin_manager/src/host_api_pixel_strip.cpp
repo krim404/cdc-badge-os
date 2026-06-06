@@ -10,6 +10,7 @@
 
 #include "plugin_manager/host_api.h"
 #include "plugin_manager/Plugin.h"
+#include "plugin_manager/PluginGpioPolicy.h"
 
 #include "led_strip.h"
 #include "led_strip_rmt.h"
@@ -109,6 +110,8 @@ extern "C" {
 int host_pixel_strip_init(uint8_t gpio_pin, uint16_t num_pixels, uint8_t format)
 {
     if (!manifest_allows())            return HOST_ERR_NO_CAPABILITY;
+    if (!cdc::plugin_manager::gpio_policy::isAllowed(gpio_pin))
+                                       return HOST_ERR_NO_CAPABILITY;
     if (num_pixels == 0)               return HOST_ERR_INVALID_ARG;
     if (num_pixels > MAX_PIXELS)       return HOST_ERR_INVALID_ARG;
 

@@ -67,6 +67,21 @@ public:
     static std::string langPath(const std::string& id);
 
     /**
+     * \brief Returns the full VFS path of `<id>.disabled`.
+     */
+    static std::string disabledPath(const std::string& id);
+
+    /**
+     * \brief True when the plugin has a persistent disabled marker.
+     */
+    static bool isDisabled(const std::string& id);
+
+    /**
+     * \brief Create or remove the persistent disabled marker for a plugin.
+     */
+    static bool setDisabled(const std::string& id, bool disabled);
+
+    /**
      * \brief Returns the free and total bytes on the plugins partition.
      */
     static bool stats(uint64_t& free_bytes, uint64_t& total_bytes);

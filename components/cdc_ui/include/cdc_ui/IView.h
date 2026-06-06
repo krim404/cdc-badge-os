@@ -69,6 +69,15 @@ public:
      */
     virtual void clearDirty() = 0;
 
+    /**
+     * Whether this view's partial updates should use RefreshMode::PARTIAL_LIGHT,
+     * i.e. never be periodically promoted to a full refresh. Views whose updates
+     * are tiny and low-churn (e.g. the lock-screen clock) return true so the
+     * panel does not flicker through a forced full refresh while idle. A full
+     * refresh still happens on the next view change.
+     */
+    virtual bool prefersLightRefresh() const { return false; }
+
     // === Input ===
 
     /**

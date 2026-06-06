@@ -1,7 +1,7 @@
 /**
  * \file PluginSerialCommands.cpp
  * \brief Serial console commands for managing installed plugins:
- *        LIST, INFO, START, STOP, DELETE, UPLOAD.
+ *        LIST, INFO, START, STOP, ENABLE, DISABLE, DELETE, UPLOAD.
  *
  * Upload uses a chunked protocol with CRC32 per chunk and ACK/NACK retries.
  * While an upload session is active, a line interceptor steals all serial
@@ -249,8 +249,10 @@ void cmdList(const char*)
                 else                                name = it->second.by_lang.begin()->second;
             }
         }
-        sendf("  {\"id\":\"%s\",\"name\":\"%s\",\"version\":\"%s\"}%s",
+        const bool disabled = PluginManager::instance().isPluginDisabled(ids[i]);
+        sendf("  {\"id\":\"%s\",\"name\":\"%s\",\"version\":\"%s\",\"disabled\":%s}%s",
               ids[i].c_str(), name.c_str(), version.c_str(),
+              disabled ? "true" : "false",
               (i + 1 < ids.size()) ? "," : "");
     }
     send("]");
@@ -267,6 +269,8 @@ void cmdInfo(const char* args)
     sendf("author:       %s", mf->author.c_str());
     sendf("api_level:    %s", mf->host_api_level_min.c_str());
     sendf("linear_kb:    %u", static_cast<unsigned>(mf->linear_memory_kb));
+    sendf("disabled:     %s",
+          PluginManager::instance().isPluginDisabled(id) ? "yes" : "no");
 
     const auto& c = mf->capabilities;
 
@@ -278,6 +282,7 @@ void cmdInfo(const char* args)
     addCap(c.wifi, "wifi");
     addCap(c.ble, "ble");
     addCap(c.http, "http");
+    addCap(c.socket, "socket");
     addCap(c.ui_exclusive, "ui_exclusive");
     addCap(c.display_lowlevel, "display_lowlevel");
     addCap(c.sao, "sao");
@@ -331,15 +336,33 @@ void cmdDelete(const char* args)
 {
     if (!args || !*args) { send("ERR missing_id"); return; }
     std::string id = args;
-    if (PluginManager::instance().hasActivePlugin() &&
-        PluginManager::instance().activePluginId() == id) {
-        PluginManager::instance().stopActivePlugin();
-    }
+    (void)PluginManager::instance().unloadFromRam(id);
     std::remove(PluginStorage::wasmPath(id).c_str());
     std::remove(PluginStorage::aotPath(id).c_str());
     std::remove(PluginStorage::metaPath(id).c_str());
     std::remove(PluginStorage::langPath(id).c_str());
+    std::remove(PluginStorage::disabledPath(id).c_str());
     send("OK");
+}
+
+void cmdDisable(const char* args)
+{
+    if (!args || !*args) { send("ERR missing_id"); return; }
+    if (!PluginManager::instance().setPluginDisabled(args, true)) {
+        send("ERR not_found");
+        return;
+    }
+    sendf("OK disabled %s", args);
+}
+
+void cmdEnable(const char* args)
+{
+    if (!args || !*args) { send("ERR missing_id"); return; }
+    if (!PluginManager::instance().setPluginDisabled(args, false)) {
+        send("ERR not_found");
+        return;
+    }
+    sendf("OK enabled %s", args);
 }
 
 void cmdStart(const char* args)
@@ -348,6 +371,8 @@ void cmdStart(const char* args)
     auto res = PluginManager::instance().startPlugin(args);
     if (res == StartResult::Ok) {
         sendf("OK started %s", args);
+    } else if (res == StartResult::PluginDisabled) {
+        sendf("ERR disabled %s", args);
     } else {
         sendf("ERR start %d %s", static_cast<int>(res), args);
     }
@@ -372,9 +397,18 @@ void cmdCmd(const char* args)
     while (*cmd == ' ') ++cmd;
     std::string id = id_buf;
 
+    if (PluginManager::instance().isPluginDisabled(id)) {
+        sendf("ERR disabled %s", id.c_str());
+        return;
+    }
+
     bool started_here = false;
     if (!PluginManager::instance().isLoaded(id)) {
         auto res = PluginManager::instance().startPlugin(id);
+        if (res == StartResult::PluginDisabled) {
+            sendf("ERR disabled %s", id.c_str());
+            return;
+        }
         if (res != StartResult::Ok && res != StartResult::PluginAlreadyRunning) {
             sendf("ERR start %d %s", static_cast<int>(res), id.c_str());
             return;
@@ -524,6 +558,8 @@ const cdc::serial::SubCommand kPluginSubs[] = {
     {"START",       "<id>",                          "Start a plugin",                                    cmdStart},
     {"STOP",        "",                              "Stop the currently active plugin",                  cmdStop},
     {"CMD",         "<id> <args>",                   "Forward a command string to a plugin",              cmdCmd},
+    {"DISABLE",     "<id>",                          "Disable a plugin and unload it from RAM",           cmdDisable},
+    {"ENABLE",      "<id>",                          "Enable a disabled plugin",                          cmdEnable},
     {"DELETE",      "<id>",                          "Delete wasm + meta + lang files for plugin",        cmdDelete},
     {"UPLOAD",      "<id> <size> <crc32_hex>",       "Upload .wasm payload (binary stream)",              cmdUpload},
     {"UPLOAD_AOT",  "<id> <size> <crc32_hex>",       "Upload .aot payload (binary stream)",               cmdUploadAot},
@@ -565,7 +601,7 @@ void registerPluginSerialCommands()
 {
     auto& reg = cdc::serial::getCommandRegistry();
     reg.registerCommand({"PLUGIN",
-                         "Plugin manager: LIST/INFO/START/STOP/DELETE/UPLOAD/UPLOAD_META/UPLOAD_LANG/ABORT/DEBUG",
+                         "Plugin manager: LIST/INFO/START/STOP/ENABLE/DISABLE/DELETE/UPLOAD/UPLOAD_META/UPLOAD_LANG/ABORT/DEBUG",
                          cmdPluginDispatch, CMD_MODULE, true, kPluginSubs});
     reg.registerCommand({"LANG",
                          "i18n overlay: INFO/RELOAD",

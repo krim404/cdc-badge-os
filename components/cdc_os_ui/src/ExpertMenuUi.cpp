@@ -236,7 +236,9 @@ static void onExpertMenuSelect(uint16_t index, void* userData);
  * \brief Shows expert menu and initial warning toast.
  */
 void showExpertMenu() {
-    showToastInfo(ui::tr("core.expert_warning"), TOAST_DURATION_MEDIUM_MS);
+    // Duration 0: stays until the user dismisses it with Y/N, so the dismiss
+    // key is consumed by the modal and never selects the first list entry.
+    showToastInfo(ui::tr("core.expert_warning"), 0);
     if (!s_expertMenu) {
         s_expertMenu = new ListView();
         s_expertMenu->setOnSelect(onExpertMenuSelect);

@@ -38,13 +38,22 @@ public:
     static constexpr uint16_t MAX_TEXT_LEN  = 256;
     static constexpr uint16_t T9_SETTLE_MS  = 800;
 
-    using KeyCallback    = void(*)(char key, uint32_t focused_widget);
-    using WidgetCallback = void(*)(uint32_t widget_id, WidgetEvent event);
+    /// Retained display list: draw primitives are recorded here and replayed in
+    /// render() after the framework clears the screen. Fixed-size, no heap.
+    static constexpr uint16_t MAX_CMDS   = 96;
+    static constexpr uint16_t TEXT_ARENA = 2048;
+
+    using KeyCallback       = void(*)(char key, uint32_t focused_widget);
+    using WidgetCallback    = void(*)(uint32_t widget_id, WidgetEvent event);
+    using LongPressCallback = void(*)(char key);
 
     void init(const char* title);
 
     void setKeyCallback(KeyCallback cb)        { keyCb_ = cb; }
     void setWidgetCallback(WidgetCallback cb)  { widgetCb_ = cb; }
+    /// Register a plugin long-press handler. Setting a non-null callback opts
+    /// this canvas into deferred short-press keypad mode while it is active.
+    void setLongPressCallback(LongPressCallback cb);
     void setFooter(const char* hint);
     void setKeyRepeat(uint16_t initial_ms, uint16_t repeat_ms);
     void getBodySize(uint16_t* w, uint16_t* h) const;
@@ -77,10 +86,30 @@ public:
 
     void render(bool partial) override;
     InputResult onKey(char key) override;
-    void onTick(uint32_t nowMs) override;
+    InputResult onLongPress(char key) override;
+    void onEnter(void* context) override;
+    void onResume() override;
+    void onExit() override;
     const char* getName() const override       { return "CanvasView"; }
 
 private:
+    enum class CmdType : uint8_t { Text, TextAligned, Rect, HLine, VLine };
+
+    struct DrawCmd {
+        CmdType  type     = CmdType::Text;
+        int16_t  x        = 0;
+        int16_t  y        = 0;
+        int16_t  w        = 0;
+        int16_t  h        = 0;
+        uint16_t strOff   = 0;   // byte offset into textArena_
+        uint16_t strLen   = 0;   // string length (excluding NUL)
+        uint8_t  align    = 0;
+        uint8_t  fontId   = 0;
+        uint8_t  textSize = 1;
+        bool     filled   = false;
+        bool     inverted = false;
+    };
+
     struct Widget {
         uint32_t   id        = 0;
         WidgetType type      = WidgetType::None;
@@ -104,7 +133,12 @@ private:
     void          t9_apply_key(Widget& w, char key, uint32_t now);
 
     Gdey029T94* gfx() const;
-    void        gfxApplyTextState();
+    void        applyKeypadConfig();
+    uint16_t    internText(const char* text, uint16_t* outLen);
+    void        replayDisplayList();
+    void        paintText(int16_t x, int16_t y, int16_t w, const char* text,
+                          uint8_t align, uint8_t fontId, uint8_t textSize,
+                          bool inverted);
     int         bodyTop() const                { return headerHeight_; }
     int         bodyBottom() const;
 
@@ -112,9 +146,16 @@ private:
     uint8_t   widgetCount_ = 0;
     uint32_t  focused_     = 0;
 
-    const char*    footer_ = nullptr;
-    KeyCallback    keyCb_ = nullptr;
-    WidgetCallback widgetCb_ = nullptr;
+    const char*       footer_ = nullptr;
+    KeyCallback       keyCb_ = nullptr;
+    WidgetCallback    widgetCb_ = nullptr;
+    LongPressCallback longPressCb_ = nullptr;
+
+    DrawCmd   cmds_[MAX_CMDS] {};
+    uint16_t  cmdCount_ = 0;
+    char      textArena_[TEXT_ARENA] {};
+    uint16_t  textArenaUsed_ = 0;
+    bool      overflowLogged_ = false;
 
     uint8_t   textSize_ = 1;
     uint8_t   fontId_ = 0;
@@ -124,9 +165,6 @@ private:
 
     uint16_t  keyRepeatInitialMs_ = 0;
     uint16_t  keyRepeatPeriodMs_  = 0;
-    uint32_t  lastKeyTimeMs_      = 0;
-    uint32_t  lastKeyRepeatMs_    = 0;
-    char      heldKey_            = 0;
     bool      headerDrawnOnce_    = false;
 };
 

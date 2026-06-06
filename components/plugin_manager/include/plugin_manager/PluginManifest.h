@@ -22,6 +22,7 @@ struct PluginCapabilities {
     bool wifi = false;
     bool ble = false;
     bool http = false;
+    bool socket = false;
     bool ui_exclusive = false;
     bool display_lowlevel = false;
     bool sao = false;

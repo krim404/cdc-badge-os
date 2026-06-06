@@ -14,10 +14,9 @@ constexpr size_t NVS_NAMESPACE_MAX_LEN = 15;
 // rmem slot name fits the on-chip 16-byte name field minus trailing NUL.
 constexpr size_t RMEM_NAME_MAX_LEN = HOST_RMEM_NAME_MAX;
 
-// PSRAM is plentiful, but Classic-Interpreter heap allocations grow with the
-// linear memory size and have to fit alongside the bytecode + 16 KB stack.
-// 256 KB is a generous per-plugin envelope without strangling co-resident
-// services.
+// Plugin linear memory and runtime structures live in PSRAM (Fast Interpreter).
+// This range-checks the manifest's linear_memory_kb; the operand+frame stack is
+// a fixed 64 KB allocated in Plugin.cpp.
 constexpr uint32_t LINEAR_MEMORY_MIN_KB = 16;
 constexpr uint32_t LINEAR_MEMORY_MAX_KB = 4096;
 

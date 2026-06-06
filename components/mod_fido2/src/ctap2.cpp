@@ -3017,8 +3017,12 @@ uint8_t ctap2_client_pin(const uint8_t *params, uint16_t params_len,
  * \return CTAP2 status code.
  */
 uint8_t ctap2_reset(uint8_t *response, uint16_t *response_len) {
-    // Reset requires user presence within 10 seconds of power up
-    // For now, just perform the reset
+    // CTAP2.1 6.4: reset requires explicit user presence.
+    if (!wait_for_user_presence(NULL, FIDO2_ACTION_AUTHENTICATE, NULL)) {
+        response[0] = CTAP2_ERR_OPERATION_DENIED;
+        *response_len = 1;
+        return CTAP2_ERR_OPERATION_DENIED;
+    }
     if (!fido2_factory_reset()) {
         response[0] = CTAP2_ERR_OTHER;
         *response_len = 1;
@@ -3303,6 +3307,14 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
     }
 
     LOG_I(TAG, "credMgmt subCmd=0x%02X", subcommand);
+
+    // CTAP2.1 6.8: credentialManagement requires a valid pinUvAuthToken. Block
+    // unauthenticated enumeration/deletion of resident credentials.
+    if (!g_client_pin.pin_token_valid) {
+        response[0] = CTAP2_ERR_PIN_AUTH_INVALID;
+        *response_len = 1;
+        return CTAP2_ERR_PIN_AUTH_INVALID;
+    }
 
     cbor_writer_t w;
     cbor_writer_init(&w, response + 1, *response_len - 1);

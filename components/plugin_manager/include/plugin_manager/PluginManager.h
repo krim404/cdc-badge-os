@@ -6,8 +6,9 @@
  * foreground plugin (the one the user is currently looking at) runs at any
  * given time. A plugin declaring `capabilities.background = true` keeps
  * running (and ticking in parallel with the foreground) after the user leaves
- * its view, instead of being unloaded. It is never auto-started at boot: the
- * user starts it manually and can force-stop it again via \ref unloadFromRam.
+ * its view, instead of being unloaded. A plugin declaring
+ * `capabilities.autoload = true` is loaded into the background at boot unless
+ * the user has disabled it.
  */
 
 #pragma once
@@ -37,6 +38,8 @@ enum class StartResult {
     PluginInitFailed,
     PrerequisiteFailed,
     PluginOnEnterFailed,
+    Busy,
+    PluginDisabled,
 };
 
 class PluginManager {
@@ -48,6 +51,9 @@ public:
 
     [[nodiscard]] std::vector<std::string>     listInstalledIds() const;
     [[nodiscard]] std::optional<PluginManifest> getManifest(const std::string& id) const;
+    [[nodiscard]] bool                         isPluginDisabled(const std::string& id) const;
+    bool                                       setPluginDisabled(const std::string& id,
+                                                                 bool disabled);
 
     [[nodiscard]] StartResult startPlugin(const std::string& id);
     bool                      stopActivePlugin();
@@ -56,6 +62,11 @@ public:
     /// resident background plugin. Returns true if the plugin was found and
     /// unloaded.
     bool                      unloadFromRam(const std::string& id);
+    /// Force-unload every loaded plugin (foreground + background) from RAM,
+    /// keeping files on disk. Runs plugin_on_exit, drops the active plugin's
+    /// views, and tears down all host resources per instance. Used by the
+    /// anti-block instant lock.
+    void                      unloadAllFromRam();
     /// Force a background plugin to be re-loaded from disk. Called after an
     /// upload overwrites the WASM so the running instance picks up the new
     /// binary without a reboot.
@@ -66,6 +77,10 @@ public:
     void                      requestStopActivePlugin();
     [[nodiscard]] bool        hasActivePlugin() const noexcept;
     [[nodiscard]] std::string activePluginId()  const;
+    /// View-stack depth recorded just before the active plugin's plugin_on_enter,
+    /// i.e. the depth of the views below the plugin. The plugin's first view sits
+    /// at pluginBaseDepth() + 1; host_ui_pop_to_plugin collapses down to it.
+    [[nodiscard]] uint8_t     pluginBaseDepth() const noexcept { return plugin_base_depth_; }
     /// True if a plugin with `id` is loaded in RAM (foreground or background).
     [[nodiscard]] bool        isLoaded(const std::string& id) const;
     /// True if a plugin with `id` is currently resident in the background slot.
@@ -140,6 +155,20 @@ private:
     static void tickTaskTrampoline(void* arg);
     void tickTaskLoop();
 
+    /// Release every host resource the plugin holds (sleep inhibitor, lockscreen
+    /// actions, BLE, GPIO/PWM, HTTP, prerequisites) and unload the WASM instance,
+    /// in canonical order. Does NOT touch active_/background_ membership and does
+    /// NOT call plugin_on_exit - the caller owns those. Caller must hold call_mutex_.
+    /// \param runWasmDeinit run the plugin's own plugin_deinit first; pass false
+    ///        for a trapped instance (no further WASM execution on a faulted module).
+    void teardownPlugin(Plugin& p, bool runWasmDeinit);
+
+    /// Verbose-log a trapped plugin and force-unload it from whichever slot holds
+    /// it (skips further WASM: no plugin_on_exit, no plugin_deinit). Caller must
+    /// hold call_mutex_ and must NOT be iterating active_/background_.
+    /// \param fn Name of the export that trapped, for the diagnostic banner.
+    void handleTrap(Plugin& p, const char* fn);
+
     /// Load, init and run prerequisites for a plugin straight into the
     /// background slot (headless: no foreground view, no plugin_on_enter).
     /// Caller must hold call_mutex_. Returns true on success.
@@ -158,6 +187,7 @@ private:
     volatile bool                        tick_stop_  = false;
     std::atomic<bool>                    pending_stop_{false};
     bool initialised_ = false;
+    uint8_t                              plugin_base_depth_ = 0;
 };
 
 }  // namespace cdc::plugin_manager
