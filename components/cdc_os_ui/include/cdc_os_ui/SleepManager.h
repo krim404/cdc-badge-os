@@ -69,7 +69,7 @@ private:
     SleepManager() = default;
 
     void enterLockScreenSleep();
-    void handleWakeup();
+    bool handleWakeup();
     void updateCaffeinatedIcon();
 
     hal::ISleepController* sleep_ = nullptr;

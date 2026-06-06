@@ -119,19 +119,20 @@ void SleepManager::enterLockScreenSleep() {
     // refresh is frozen mid-transfer and the panel is left half-rendered.
     ViewStack::instance().render(true);
 
-    // Enter light sleep (blocking call, returns after wakeup)
-    sleep_->enterLightSleep();
-
-    // Handle wakeup
-    handleWakeup();
+    // Light-sleep loop: timer wakeups refresh the clock and re-enter sleep at
+    // constant stack depth; a key/USB/unknown wakeup exits the loop.
+    do {
+        sleep_->enterLightSleep();
+    } while (handleWakeup());
 }
 
 /**
  * \brief Handles wakeup behavior after light sleep.
- * \return void
+ * \return `true` if light sleep should be re-entered (timer wakeup without
+ *         USB), `false` to exit the lock-screen sleep loop.
  */
-void SleepManager::handleWakeup() {
-    if (!sleep_ || !lockScreen_) return;
+bool SleepManager::handleWakeup() {
+    if (!sleep_ || !lockScreen_) return false;
 
     // Immediately ensure backlight is off after wakeup to prevent glitches
     // (LEDC may briefly show wrong state after light sleep)
@@ -153,6 +154,7 @@ void SleepManager::handleWakeup() {
 
         // Force display refresh
         lockScreen_->markDirty();
+        return false;
 
     } else if (source == hal::WakeupSource::TIMER) {
         // Timer wakeup - just update clock, keep icon, go back to sleep
@@ -170,7 +172,7 @@ void SleepManager::handleWakeup() {
         updatePowerStatusIcons();
 
         // Render clock update synchronously so the panel update completes
-        // before we re-enter light sleep below. The lock screen declares
+        // before the caller re-enters light sleep. The lock screen declares
         // prefersLightRefresh(), so this stays a pure partial (never promoted
         // to a flickering full refresh).
         ViewStack::instance().render(true);
@@ -181,16 +183,16 @@ void SleepManager::handleWakeup() {
             lockScreen_->removeStatusIcon(StatusIcon::LIGHT_SLEEP);
             lockScreenEnteredMs_ = esp_timer_get_time() / 1000;
             inLightSleep_ = false;
-        } else {
-            // Go back to sleep immediately
-            sleep_->enterLightSleep();
-            handleWakeup();  // Recursive call to handle next wakeup
+            return false;
         }
+        // Timer wakeup without USB: re-enter sleep via the caller's loop.
+        return true;
     } else {
         // Unknown wakeup - treat like GPIO
         lockScreen_->removeStatusIcon(StatusIcon::LIGHT_SLEEP);
         lockScreenEnteredMs_ = esp_timer_get_time() / 1000;
         inLightSleep_ = false;
+        return false;
     }
 }
 
