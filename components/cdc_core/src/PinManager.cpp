@@ -76,6 +76,11 @@ void PinManager::loadDefaults() {
     pw3Retries_ = MAX_RETRIES;
     badgePinIsSet_ = false;
 
+    // Duress PIN is opt-in: defaults leave it disarmed.
+    duressSet_ = false;
+    memset(duressSalt_, 0, sizeof(duressSalt_));
+    memset(duressHash_, 0, sizeof(duressHash_));
+
     LOG_I(TAG, "Loaded default PINs");
 }
 
@@ -227,6 +232,13 @@ bool PinManager::loadFromStorage() {
     pw1Retries_ = data[pos++];
     pw3Retries_ = data[pos++];
 
+    // Duress / self-destruct PIN
+    duressSet_ = (data[pos++] != 0);
+    memcpy(duressSalt_, &data[pos], SALT_SIZE);
+    pos += SALT_SIZE;
+    memcpy(duressHash_, &data[pos], KDF_HASH_SIZE);
+    pos += KDF_HASH_SIZE;
+
     // Mirror starts in sync with whatever is on the chip.
     persistedBadgeLocked_ = badgeLocked_;
     persistedPw1Retries_  = pw1Retries_;
@@ -291,6 +303,13 @@ bool PinManager::saveToStorage() {
     data[pos++] = pw1Retries_;
     data[pos++] = pw3Retries_;
 
+    // Duress / self-destruct PIN
+    data[pos++] = duressSet_ ? 0x01 : 0x00;
+    memcpy(&data[pos], duressSalt_, SALT_SIZE);
+    pos += SALT_SIZE;
+    memcpy(&data[pos], duressHash_, KDF_HASH_SIZE);
+    pos += KDF_HASH_SIZE;
+
     // pos must now equal PAYLOAD_SIZE — append a P-256 ECDSA signature over
     // bytes [0..PAYLOAD_SIZE) using the chip-bound attestation key in slot 0.
     // A subsequent load that finds the signature invalid (because the slot 0
@@ -354,7 +373,7 @@ bool PinManager::computeBadgeHash(const char* pin, uint8_t* hashOut) {
  * \param hashOut Output hash buffer.
  * \return `true` on success.
  */
-bool PinManager::computeKdfHash(const char* pin, const uint8_t* salt, uint8_t* hashOut) {
+bool PinManager::computeKdfHash(const char* pin, const uint8_t* salt, uint8_t* hashOut) const {
     if (!pin || !salt || !hashOut) return false;
 
     // OpenPGP Iterated+Salted S2K (RFC 4880)
@@ -549,6 +568,11 @@ bool PinManager::setBadgePin(const char* newPin) {
         }
     }
 
+    if (duressSet_ && isDuressPin(newPin)) {
+        LOG_E(TAG, "Badge PIN must differ from duress PIN");
+        return false;
+    }
+
     computeBadgeHash(newPin, badgeHash_);
     badgeRetries_ = MAX_RETRIES;
     badgeLocked_ = false;
@@ -594,6 +618,88 @@ bool PinManager::getBadgePinHash(uint8_t* hashOut) const {
 bool PinManager::verifyBadgePinHash(const uint8_t* hashIn) const {
     if (!hashIn) return false;
     return compareHash(badgeHash_, hashIn, BADGE_HASH_SIZE);
+}
+
+/**
+ * \brief Duress / self-destruct PIN workflow.
+ */
+
+/**
+ * \brief Sets the duress PIN, arming the self-destruct trigger.
+ *
+ * Reuses the PW1/PW3 KDF/salt machinery. The candidate must satisfy the badge
+ * PIN format and must differ from the current badge PIN so the unlock path can
+ * distinguish a duress entry from a normal unlock.
+ *
+ * \param pin Candidate duress PIN.
+ * \return `true` if set; `false` on invalid format or equality with the badge PIN.
+ */
+bool PinManager::setDuressPin(const char* pin) {
+    if (!pin) return false;
+    if (!pinLoaded_) init();
+
+    size_t len = strlen(pin);
+    if (len < BADGE_PIN_MIN || len > BADGE_PIN_MAX) {
+        LOG_E(TAG, "Duress PIN must be %d-%d digits", BADGE_PIN_MIN, BADGE_PIN_MAX);
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        if (pin[i] < '0' || pin[i] > '9') {
+            LOG_E(TAG, "Duress PIN must contain only digits");
+            return false;
+        }
+    }
+
+    // Must be distinct from the badge PIN: an ambiguous match would make the
+    // unlock outcome non-deterministic.
+    uint8_t candidateBadgeHash[BADGE_HASH_SIZE];
+    if (!computeBadgeHash(pin, candidateBadgeHash)) return false;
+    if (compareHash(badgeHash_, candidateBadgeHash, BADGE_HASH_SIZE)) {
+        LOG_E(TAG, "Duress PIN must differ from badge PIN");
+        return false;
+    }
+
+    generateSalt(duressSalt_);
+    if (!computeKdfHash(pin, duressSalt_, duressHash_)) return false;
+    duressSet_ = true;
+
+    saveToStorage();
+    LOG_I(TAG, "Duress PIN set");
+    return true;
+}
+
+/**
+ * \brief Clears the duress PIN, disarming the self-destruct trigger.
+ * \return `true` if the record was updated.
+ */
+bool PinManager::clearDuressPin() {
+    if (!pinLoaded_) init();
+    if (!duressSet_) return true;
+
+    duressSet_ = false;
+    memset(duressSalt_, 0, sizeof(duressSalt_));
+    memset(duressHash_, 0, sizeof(duressHash_));
+
+    saveToStorage();
+    LOG_I(TAG, "Duress PIN cleared");
+    return true;
+}
+
+/**
+ * \brief Constant-time check whether a candidate matches the duress PIN.
+ * \param pin Candidate PIN string.
+ * \return `true` if a duress PIN is armed and the candidate matches it.
+ */
+bool PinManager::isDuressPin(const char* pin) const {
+    if (!duressSet_ || !pin) return false;
+    size_t len = strlen(pin);
+    if (len < BADGE_PIN_MIN || len > BADGE_PIN_MAX) return false;
+
+    uint8_t inputHash[KDF_HASH_SIZE];
+    if (!computeKdfHash(pin, duressSalt_, inputHash)) {
+        return false;
+    }
+    return compareHash(duressHash_, inputHash, KDF_HASH_SIZE);
 }
 
 /**

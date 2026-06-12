@@ -2,6 +2,8 @@
 
 #include "cdc_core/IModule.h"
 
+struct cJSON;
+
 namespace cdc::mod_vcard {
 
 class VcardModule : public core::IModule {
@@ -19,6 +21,9 @@ public:
     uint8_t getMenuItems(core::ModuleMenuItem* items, uint8_t maxItems) override;
     uint8_t getLockScreenContextItems(core::LockScreenContextItem* items, uint8_t maxItems) override;
     void onTick(uint32_t nowMs) override;
+
+    bool exportBackup(cJSON* out) override;
+    core::IModule::BackupResult importBackup(const cJSON* in) override;
 
 private:
     core::ServiceState state_ = core::ServiceState::UNINITIALIZED;

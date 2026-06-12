@@ -6,6 +6,13 @@
 
 namespace cdc::core {
 
+/// NVS namespace and key of the build-profile marker. The boot path
+/// (main.cpp) seeds this key after a completed factory wipe and treats its
+/// absence on the next boot as a trigger to wipe NVS and TROPIC01. Shared so
+/// the self-destruct trigger erases exactly the key the boot path reads.
+inline constexpr const char* kBootProfileNs  = "boot_profile";
+inline constexpr const char* kBootProfileKey = "profile";
+
 struct TropicWipeResult {
     uint16_t eccDeleted   = 0;
     uint16_t rmemDeleted  = 0;
@@ -34,5 +41,15 @@ TropicWipeResult wipeTropic(hal::ISecureElement* se,
  * \return ESP_OK on success, propagated error otherwise.
  */
 esp_err_t wipeNvs();
+
+/**
+ * \brief Triggers a full factory wipe on the next boot and restarts.
+ *
+ * Erases the build-profile marker (\ref kBootProfileNs / \ref kBootProfileKey)
+ * from NVS, commits, then reboots. The boot path detects the absent marker and
+ * wipes all NVS plus every TROPIC01 ECC/R-Memory slot before reseeding it.
+ * The function does not return.
+ */
+[[noreturn]] void selfDestruct();
 
 } // namespace cdc::core

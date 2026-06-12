@@ -61,6 +61,15 @@ public:
      * \return Status string (e.g., "Connected to MacBook Pro")
      */
     virtual const char* getStatusText() const { return isConnected() ? "Connected" : "Disconnected"; }
+
+    /**
+     * Enter or leave a discoverable/pairable state so a host can bond.
+     * For BLE providers this enables the stack and starts advertising the
+     * input-device profile; for USB providers it is a no-op.
+     * \param on true to become discoverable, false to stop
+     * \return true if the requested state was applied
+     */
+    virtual bool setDiscoverable(bool on) { (void)on; return false; }
 };
 
 /**

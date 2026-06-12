@@ -11,9 +11,13 @@ idf_component_register(
         "src/WifiHandlers.cpp"
         "src/SettingsHandlers.cpp"
         "src/SleepManager.cpp"
+        "src/BackupManager.cpp"
+        "src/BackupMenuUi.cpp"
+        "src/SystemSettingsBackup.cpp"
         "src/views/PinChangeView.cpp"
         "src/views/LockScreenView.cpp"
         "src/views/BlePairingPromptView.cpp"
+        "src/views/BlePairingView.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES
@@ -27,7 +31,9 @@ idf_component_register(
         Adafruit-GFX
         nvs_flash
         esp_timer
+        esp_hw_support
         freertos
         mbedtls
+        json
         espressif__tinyusb
 )

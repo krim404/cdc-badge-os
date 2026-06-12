@@ -12,3 +12,4 @@
 [submodule "components/wamr_runtime/wasm-micro-runtime"]
 	path = components/wamr_runtime/wasm-micro-runtime
 	url = https://github.com/bytecodealliance/wasm-micro-runtime.git
+	ignore = dirty

@@ -2,6 +2,7 @@
 #include "cdc_core/TropicSlotMap.h"
 #include "cdc_core/TropicStorage.h"
 #include "cdc_core/EventBus.h"
+#include "cdc_core/UsbManager.h"
 #include "cdc_core/Raii.h"
 #include "cdc_log.h"
 #include <nvs_flash.h>
@@ -63,6 +64,22 @@ void ModuleRegistry::runAllInitializers() {
 
     // Load disabled modules list from NVS (name-based, robust against order changes)
     loadDisabledList();
+
+    // Initializers only init() their modules; exactly the enabled set is
+    // started here. The stop pass enforces that contract for any module
+    // started out-of-band, so a disabled module can never hold resources
+    // (e.g. USB interface slots) across boot.
+    for (uint8_t i = 0; i < count_; i++) {
+        if (!isModuleEnabled(i) && modules_[i]->getState() == ServiceState::STARTED) {
+            LOG_W(TAG, "Stopping disabled module '%s' (started during init)", modules_[i]->getName());
+            modules_[i]->stop();
+        }
+    }
+    for (uint8_t i = 0; i < count_; i++) {
+        if (isModuleEnabled(i) && !startModule(i)) {
+            LOG_W(TAG, "Enabled module '%s' failed to start", modules_[i]->getName());
+        }
+    }
 
     // After all modules are registered, clean up orphaned NVS data
     cleanupOrphanedModuleData();
@@ -208,6 +225,23 @@ bool ModuleRegistry::startModule(uint8_t index) {
     }
 
     return true;
+}
+
+/**
+ * \brief Resolves the cause of a failed startModule() call.
+ * \param index Module index that failed to start.
+ * \return Classified failure cause.
+ */
+ModuleStartFailure ModuleRegistry::classifyStartFailure(uint8_t index) const {
+    if (getModuleSlotError(index)) {
+        return ModuleStartFailure::SlotError;
+    }
+    // Best-effort attribution: reflects current global HID occupancy, not a
+    // precise per-call cause for this specific module start.
+    if (UsbManager::instance().hidSlotsFull()) {
+        return ModuleStartFailure::UsbBudgetFull;
+    }
+    return ModuleStartFailure::Generic;
 }
 
 /**
@@ -512,14 +546,6 @@ void ModuleRegistry::loadDisabledList() {
         LOG_I(TAG, "Applied factory-default disabled list: %s", disabledModules_);
         saveDisabledList();
     }
-
-    // Stop modules that were started by their initializer but should be disabled.
-    for (uint8_t i = 0; i < count_; i++) {
-        if (!isModuleEnabled(i) && modules_[i]->getState() == ServiceState::STARTED) {
-            LOG_I(TAG, "Stopping default-disabled module '%s'", modules_[i]->getName());
-            modules_[i]->stop();
-        }
-    }
 }
 
 /**
@@ -568,6 +594,18 @@ bool ModuleRegistry::isModuleEnabledByName(const char* name) const {
     }
 
     return true;  // Not in disabled list = enabled
+}
+
+/**
+ * \brief Returns a short status marker combining enabled flag and run state.
+ * \param index Module index.
+ * \return Static marker string ([FAIL]/[ON]/[--]/[OFF]).
+ */
+const char* ModuleRegistry::getModuleStatusLabel(uint8_t index) const {
+    if (index >= count_) return "[--]";
+    if (hasModuleSlotError(index)) return "[FAIL]";
+    if (!isModuleEnabled(index)) return "[OFF]";
+    return modules_[index]->getState() == ServiceState::STARTED ? "[ON]" : "[--]";
 }
 
 /**

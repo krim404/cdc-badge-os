@@ -8,11 +8,11 @@
 
 #include "cdc_core/Raii.h"
 #include "cdc_core/Cp437.h"
+#include "cdc_ui/PsramCjson.h"
 #include "cdc_log.h"
 
 #include "cJSON.h"
 #include "esp_err.h"
-#include "esp_heap_caps.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -33,21 +33,6 @@ namespace {
 
 constexpr const char* NVS_NAMESPACE = "i18n";
 constexpr const char* NVS_KEY_LANG_CODE = "langc";
-
-void* psramCjsonMalloc(std::size_t sz) {
-    return heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-}
-
-/// Routes cJSON allocations to PSRAM for the lifetime of the scope so a parse
-/// tree never touches (or fragments) the scarce internal heap. cJSON hooks are
-/// global; i18n parsing is single-threaded, so swap-and-restore is safe.
-struct PsramCjsonScope {
-    PsramCjsonScope() {
-        cJSON_Hooks hooks{psramCjsonMalloc, std::free};
-        cJSON_InitHooks(&hooks);
-    }
-    ~PsramCjsonScope() { cJSON_InitHooks(nullptr); }
-};
 
 /// Core firmware strings, indexed by StringId. Keys are stable
 /// "core.<snake_case>" identifiers and must match assets/i18n/lang_<code>.json.
@@ -99,6 +84,7 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.too_many_attempts",  "Too many attempts"},
 
     {"core.change_pin",         "Change PIN"},
+    {"core.set_duress_pin",     "Set Duress PIN"},
     {"core.current_pin",        "Current PIN"},
     {"core.new_pin",            "New PIN"},
     {"core.confirm_pin",        "Confirm PIN"},
@@ -169,6 +155,12 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.ble_mac_address",    "MAC"},
     {"core.ble_signal",         "Signal"},
     {"core.ble_paired_devices", "Paired devices"},
+    {"core.ble_pairing_menu",   "Pair device"},
+    {"core.ble_pairing_title",  "Pairing Mode"},
+    {"core.ble_pairing_instr",  "On your device, select:"},
+    {"core.ble_pairing_waiting", "Waiting for device..."},
+    {"core.ble_pairing_connected", "Connected"},
+    {"core.ble_pairing_exit",   "[N] Exit"},
     {"core.system_test",        "System Test"},
     {"core.tr01_cache_rebuild", "TR01 Cache Rebuild"},
     {"core.tr01_cache_cleanup", "TR01 Cache Cleanup"},
@@ -179,8 +171,28 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.task_working",       "Please wait"},
     {"core.sleep",              "Sleep"},
     {"core.usb_replug_required","USB replug may be needed"},
+    {"core.usb_no_free_slot",   "No free USB slot - disable a USB module (e.g. GPG) first"},
     {"core.module_error_generic","Module error"},
     {"core.module_retry_prompt","Reload module?"},
+
+    {"core.backup",             "Backup"},
+    {"core.backup_export",      "Export"},
+    {"core.backup_import",      "Import"},
+    {"core.backup_delete",      "Delete"},
+    {"core.backup_passphrase",          "Passphrase"},
+    {"core.backup_confirm_passphrase",  "Confirm passphrase"},
+    {"core.backup_pass_empty",          "Passphrase required"},
+    {"core.backup_export_ok",   "Backup saved"},
+    {"core.backup_none",        "No backup present"},
+    {"core.backup_import_fail", "Wrong passphrase or corrupt file"},
+    {"core.backup_delete_q",    "Delete backup?"},
+    {"core.backup_summary",     "Restore Summary"},
+    {"core.backup_imported",    "Imported"},
+    {"core.backup_failed",      "Failed"},
+    {"core.backup_modules",     "Modules"},
+    {"core.backup_skipped",     "Skipped"},
+    {"core.backup_system",      "System Settings"},
+    {"core.backup_scope_info",  "No keys are backed up (FIDO2/GPG); only data."},
 
     {"core.hw_section_memory",  "Memory"},
     {"core.hw_section_runtime", "Runtime"},

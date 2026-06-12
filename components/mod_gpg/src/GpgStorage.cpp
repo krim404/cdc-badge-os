@@ -8,8 +8,8 @@
 
 #include "mod_gpg/GpgStorage.h"
 #include "cdc_hal/ISecureElement.h"
+#include "cdc_core/Crypto.h"
 #include "cdc_log.h"
-#include <mbedtls/gcm.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/hkdf.h>
 #include <mbedtls/md.h>
@@ -75,20 +75,6 @@ static_assert(sizeof(DecKeyStorage) == DEC_TOTAL_SIZE, "DecKeyStorage size misma
 static_assert(sizeof(AesKeyStorage) == AES_TOTAL_SIZE, "AesKeyStorage size mismatch");
 
 namespace {
-
-/** \brief RAII wrapper around `mbedtls_gcm_context`. */
-class GcmContext {
-public:
-    GcmContext() { mbedtls_gcm_init(&ctx_); }
-    ~GcmContext() { mbedtls_gcm_free(&ctx_); }
-    GcmContext(const GcmContext&) = delete;
-    GcmContext& operator=(const GcmContext&) = delete;
-    GcmContext(GcmContext&&) = delete;
-    GcmContext& operator=(GcmContext&&) = delete;
-    mbedtls_gcm_context* get() { return &ctx_; }
-private:
-    mbedtls_gcm_context ctx_;
-};
 
 template <size_t N>
 inline void secureWipe(uint8_t (&buf)[N]) {
@@ -272,19 +258,14 @@ static bool save_slot_encrypted(uint16_t slot_id,
     uint8_t aad[6];
     build_aad(slot_id, magic, aad);
 
-    GcmContext gcm;
-    int ret = mbedtls_gcm_setkey(gcm.get(), MBEDTLS_CIPHER_ID_AES, enc_key, 256);
-    if (ret == 0) {
-        ret = mbedtls_gcm_crypt_and_tag(
-            gcm.get(), MBEDTLS_GCM_ENCRYPT, payload_len,
-            p_nonce, NONCE_SIZE,
-            aad, sizeof(aad),
-            payload, p_ct,
-            TAG_SIZE, p_tag);
-    }
+    bool enc_ok = cdc::core::aesGcm256Seal(
+        enc_key, p_nonce, NONCE_SIZE,
+        aad, sizeof(aad),
+        payload, payload_len,
+        p_ct, p_tag);
     secureWipe(enc_key);
-    if (ret != 0) {
-        LOG_E(TAG, "GCM encrypt failed: %d", ret);
+    if (!enc_ok) {
+        LOG_E(TAG, "GCM encrypt failed");
         return false;
     }
 
@@ -349,19 +330,14 @@ static bool load_slot_decrypted(uint16_t slot_id,
     uint8_t aad[6];
     build_aad(slot_id, magic, aad);
 
-    GcmContext gcm;
-    int ret = mbedtls_gcm_setkey(gcm.get(), MBEDTLS_CIPHER_ID_AES, dec_key, 256);
-    if (ret == 0) {
-        ret = mbedtls_gcm_auth_decrypt(
-            gcm.get(), payload_len,
-            p_nonce, NONCE_SIZE,
-            aad, sizeof(aad),
-            p_tag, TAG_SIZE,
-            p_ct, payload_out);
-    }
+    bool dec_ok = cdc::core::aesGcm256Open(
+        dec_key, p_nonce, NONCE_SIZE,
+        aad, sizeof(aad),
+        p_ct, payload_len,
+        p_tag, payload_out);
     secureWipe(dec_key);
     mbedtls_platform_zeroize(buf, sizeof(buf));
-    if (ret != 0) {
+    if (!dec_ok) {
         mbedtls_platform_zeroize(payload_out, payload_len);
         return false;
     }

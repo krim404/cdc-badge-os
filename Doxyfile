@@ -21,7 +21,7 @@ INPUT                  = components/cdc_core \
                          components/mod_nvsedit \
                          components/mod_password \
                          components/mod_sao \
-                         components/mod_totp \
+                         components/mod_2fa \
                          components/mod_vcard \
                          components/plugin_manager \
                          main

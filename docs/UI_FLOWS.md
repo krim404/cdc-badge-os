@@ -178,7 +178,7 @@ Shows all registered modules with status:
 Modules
 ─────────────────────────
   mod_fido2      [ON]
-  mod_totp       [ON]
+  mod_2fa        [ON]
   mod_password   [ON]
   mod_gpg        [ON]
 ─────────────────────────

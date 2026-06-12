@@ -343,7 +343,10 @@ void ViewStack::render(bool synchronous) {
             modals_[i]->clearDirty();
         }
         if (display) {
-            hal::RefreshMode mode = (baseDirty || needsFullRefresh_)
+            // A dirty base under a still-visible modal repaints the composite in
+            // the framebuffer; PARTIAL suffices. FULL is reserved for modal
+            // stack changes (needsFullRefresh_) to erase a dismissed modal.
+            hal::RefreshMode mode = needsFullRefresh_
                 ? hal::RefreshMode::FULL : hal::RefreshMode::PARTIAL;
             if (synchronous) display->flushSync(mode);
             else             display->flush(mode);

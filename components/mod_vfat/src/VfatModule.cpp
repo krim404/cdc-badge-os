@@ -267,6 +267,6 @@ extern "C" void mod_vfat_register(void)
 {
     cdc::core::ModuleRegistry::instance().registerInitializer([]() {
         auto& m = cdc::mod_vfat::VfatModule::instance();
-        if (m.init()) m.start();
+        m.init();
     });
 }

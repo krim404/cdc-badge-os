@@ -74,6 +74,8 @@ static void build_config_descriptor(void) {
     uint8_t itf_count = 2;
     uint16_t total_len = TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN;
     bool has_ccid = false;
+    uint16_t pref_vid = 0;
+    uint16_t pref_pid = 0;
 
     // Reset dynamic strings and HID mapping
     s_hid_count = 0;
@@ -81,6 +83,10 @@ static void build_config_descriptor(void) {
 
     for (size_t i = 0; i < s_def_count; i++) {
         const auto& def = s_defs[i];
+        if (def.preferredVid != 0 && def.preferredPid != 0) {
+            pref_vid = def.preferredVid;
+            pref_pid = def.preferredPid;
+        }
         if (def.cls == UsbInterfaceClass::Hid) {
             itf_count++;
             total_len += def.hasOut ? TUD_HID_INOUT_DESC_LEN : TUD_HID_DESC_LEN;
@@ -92,8 +98,15 @@ static void build_config_descriptor(void) {
         }
     }
 
-    device_descriptor.idVendor = has_ccid ? USB_VID_GEMALTO : USB_VID_ESPRESSIF;
-    device_descriptor.idProduct = has_ccid ? USB_PID_GEMALTO : USB_PID_BADGE;
+    // A per-interface VID/PID hint (e.g. mod_otphid's OnlyKey IDs) overrides the
+    // default product identity; otherwise CCID selects Gemalto, else Espressif.
+    if (pref_vid != 0 && pref_pid != 0) {
+        device_descriptor.idVendor = pref_vid;
+        device_descriptor.idProduct = pref_pid;
+    } else {
+        device_descriptor.idVendor = has_ccid ? USB_VID_GEMALTO : USB_VID_ESPRESSIF;
+        device_descriptor.idProduct = has_ccid ? USB_PID_GEMALTO : USB_PID_BADGE;
+    }
 
     uint8_t cfg_desc[] = {
         TUD_CONFIG_DESCRIPTOR(1, itf_count, 0, total_len, 0, 100),

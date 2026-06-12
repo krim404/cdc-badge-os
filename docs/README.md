@@ -15,7 +15,7 @@ Authoritative facts live in code, not in these docs:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Native modules (mod_fido2, mod_totp, mod_password, mod_gpg, …)  │
+│  Native modules (mod_fido2, mod_2fa, mod_password, mod_gpg, …)   │
 │  + WASM plugins (PluginManager + WAMR sandbox)                   │
 ├─────────────────────────────────────────────────────────────────┤
 │  OS UI (cdc_os_ui): Lock Screen │ Settings │ WiFi/BLE Menus      │

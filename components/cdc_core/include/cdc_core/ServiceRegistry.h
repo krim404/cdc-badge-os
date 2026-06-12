@@ -10,9 +10,10 @@ namespace cdc::core {
  * Use these with provide<T>() and request<T>() for type-safe inter-module communication.
  */
 enum class ServiceType {
-    KEYBOARD,      // IKeyboardProvider - keyboard input (BLE HID, USB HID, etc.)
-    CLIPBOARD,     // Future: clipboard access
-    NOTIFICATION,  // Future: push notifications
+    KEYBOARD,             // IKeyboardProvider - keyboard input (BLE HID, USB HID, etc.)
+    CHALLENGE_RESPONDER,  // IChallengeResponder - raw HMAC challenge-response (CR transports)
+    CLIPBOARD,            // Future: clipboard access
+    NOTIFICATION,         // Future: push notifications
 };
 
 /**

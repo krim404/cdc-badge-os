@@ -63,6 +63,13 @@ void showExpertMenu();
 void showModulesView();
 void onModuleErrorEvent(const core::Event& evt);
 
+// Backup (BackupMenuUi.cpp)
+void showBackupMenu();
+void registerBackupSerialCommand();
+
+// Duress / self-destruct PIN setup (AppUi.cpp, owns the PinChangeView instance)
+void showDuressPinSetup();
+
 /**
  * \brief Forces the badge into a quiet state ahead of the bootloader reset:
  *        pops every view back to the lock screen, replaces the lock-screen

@@ -515,6 +515,19 @@ static bool vcard_is_duplicate(nvs_handle_t nvs, const char* vcard, size_t len, 
     return false;
 }
 
+bool vcard_store_contains(const char* vcard, size_t len) {
+    if (!vcard || len == 0) return false;
+    vcard_store_init();
+
+    nvs_handle_t nvs;
+    if (nvs_open(VCARD_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return false;
+    }
+    bool found = vcard_is_duplicate(nvs, vcard, len, fnv1a_hash(vcard, len));
+    nvs_close(nvs);
+    return found;
+}
+
 /**
  * \brief Adds peer vCard to first free slot after validation and duplicate check.
  * \param vcard vCard text.

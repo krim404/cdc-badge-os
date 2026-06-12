@@ -72,6 +72,13 @@ static constexpr uint8_t MAX_CONNECTIONS = 2;
 static constexpr uint8_t MAX_SUBSCRIBE_ENTRIES = 16;
 static constexpr uint8_t MAX_BONDS = 5;
 
+/// \brief Delay after stopping advertising so an in-flight connect surfaces in the connection table.
+static constexpr uint32_t kConnectSettleMs = 50;
+/// \brief Poll interval while draining disconnects before NimBLE shutdown.
+static constexpr uint32_t kDisconnectDrainPollMs = 20;
+/// \brief Upper bound for the disconnect drain before shutdown proceeds anyway.
+static constexpr uint32_t kDisconnectDrainTimeoutMs = 1000;
+
 /**
  * \brief Persistent NimBLE-side storage for one registered service definition.
  */
@@ -252,6 +259,7 @@ public:
     bool setAdvertisingManufacturerData(uint16_t companyId,
                                          const uint8_t* data, uint16_t len) override;
     void clearAdvertisingManufacturerData() override;
+    void setAppearance(uint16_t appearance) override;
     /** \} */
 
     /**
@@ -410,6 +418,9 @@ private:
     /** \brief Advertised service UUID list for scan responses. */
     BleUuid advUuids_[MAX_ADV_UUIDS] = {};
     uint8_t advUuidCount_ = 0;
+
+    /** \brief GAP Appearance advertised in the primary PDU (0 = none). */
+    uint16_t appearance_ = 0;
 
     ListenerSlot<ConnectionCallback> connCallbacks_[MAX_CONN_CALLBACKS] = {};
     ListenerSlot<DisconnectionCallback> disconnCallbacks_[MAX_CONN_CALLBACKS] = {};
@@ -716,6 +727,11 @@ void BluetoothController::disable() {
     enabled_ = false;
     synced_ = false;
 
+    // Stop advertising before touching connections so a bonded peer cannot
+    // (re)connect into the teardown window.
+    ble_gap_adv_stop();
+    advertising_ = false;
+
     // A GAP procedure with a duration timer (scan, pending connection) must be
     // cancelled before nimble_port_deinit() releases the event queue its callout
     // is bound to.
@@ -726,17 +742,29 @@ void BluetoothController::disable() {
     }
     ble_gap_conn_cancel();
 
-    // Disconnect any active connection
-    for (uint8_t i = 0; i < MAX_CONNECTIONS; i++) {
-        if (connections_[i].active) {
-            ble_gap_terminate(connections_[i].handle, BLE_ERR_REM_USER_CONN_TERM);
+    // nimble_port_stop() must not run while a connection is live: in the
+    // STOPPING state the host deinits the ble_hs_timer callout while queued
+    // timer events (e.g. the 30 s SM timer of an encryption re-establishment)
+    // still dereference it - LoadProhibited in npl_freertos_callout_is_active.
+    // Let an in-flight connect surface in the connection table, then terminate
+    // everything and wait until the host task has processed every disconnect.
+    vTaskDelay(pdMS_TO_TICKS(kConnectSettleMs));
+    uint32_t waited = 0;
+    for (;; waited += kDisconnectDrainPollMs) {
+        bool anyActive = false;
+        for (uint8_t i = 0; i < MAX_CONNECTIONS; i++) {
+            if (connections_[i].active) {
+                ble_gap_terminate(connections_[i].handle, BLE_ERR_REM_USER_CONN_TERM);
+                anyActive = true;
+            }
         }
+        if (!anyActive) break;
+        if (waited >= kDisconnectDrainTimeoutMs) {
+            LOG_W(TAG, "Disconnect drain timed out, forcing BLE shutdown");
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(kDisconnectDrainPollMs));
     }
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    // Stop advertising if active
-    ble_gap_adv_stop();
-    advertising_ = false;
 
     // Shutdown NimBLE and wait for the host task to actually exit before deinit
     int rc = nimble_port_stop();
@@ -1009,46 +1037,68 @@ void BluetoothController::startAdvertising() {
     advParams.itvl_min = BLE_GAP_ADV_FAST_INTERVAL1_MIN;
     advParams.itvl_max = BLE_GAP_ADV_FAST_INTERVAL1_MAX;
 
-    // Primary advertising data: flags + name
+    // Separate 16-bit (e.g. HID 0x1812) and 128-bit service UUIDs. 16-bit UUIDs
+    // and the appearance go into the primary PDU so HOGP hosts recognize the
+    // device (e.g. as a keyboard); 128-bit UUIDs and manufacturer data stay in
+    // the scan response.
+    ble_uuid16_t uuid16s[MAX_ADV_UUIDS];
+    ble_uuid128_t uuid128s[MAX_ADV_UUIDS];
+    uint8_t num16 = 0, num128 = 0;
+    for (uint8_t i = 0; i < advUuidCount_; i++) {
+        if (advUuids_[i].type == BleUuid::UUID_16 && num16 < MAX_ADV_UUIDS) {
+            uuid16s[num16].u.type = BLE_UUID_TYPE_16;
+            uuid16s[num16].value = advUuids_[i].u16;
+            num16++;
+        } else if (advUuids_[i].type == BleUuid::UUID_128 && num128 < MAX_ADV_UUIDS) {
+            uuid128s[num128].u.type = BLE_UUID_TYPE_128;
+            memcpy(uuid128s[num128].value, advUuids_[i].u128, 16);
+            num128++;
+        }
+    }
+
+    // Primary advertising data: flags + appearance + 16-bit UUIDs + name.
     struct ble_hs_adv_fields fields = {};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     fields.tx_pwr_lvl_is_present = 1;
     fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
+    if (appearance_ != 0) {
+        fields.appearance = appearance_;
+        fields.appearance_is_present = 1;
+    }
+    if (num16 > 0) {
+        fields.uuids16 = uuid16s;
+        fields.num_uuids16 = num16;
+        fields.uuids16_is_complete = 1;
+    }
     fields.name = (uint8_t*)deviceName_;
     fields.name_len = strlen(deviceName_);
     fields.name_is_complete = 1;
 
+    // The 31-byte primary PDU can overflow once appearance + UUIDs are present;
+    // fall back to carrying the name in the scan response instead.
+    bool nameInScanRsp = false;
     int rc = ble_gap_adv_set_fields(&fields);
+    if (rc == BLE_HS_EMSGSIZE) {
+        fields.name = nullptr;
+        fields.name_len = 0;
+        fields.name_is_complete = 0;
+        nameInScanRsp = true;
+        rc = ble_gap_adv_set_fields(&fields);
+    }
     if (rc != 0) {
         LOG_E(TAG, "Failed to set adv fields: %d", rc);
         return;
     }
 
-    // Scan response: registered service UUIDs + manufacturer data
-    if (advUuidCount_ > 0 || mfgDataSet_) {
+    // Scan response: 128-bit UUIDs + manufacturer data (+ name if it did not fit
+    // into the primary PDU).
+    if (num128 > 0 || mfgDataSet_ || nameInScanRsp) {
         struct ble_hs_adv_fields rsp = {};
 
-        // Separate 16-bit and 128-bit UUIDs
-        ble_uuid16_t uuid16s[MAX_ADV_UUIDS];
-        ble_uuid128_t uuid128s[MAX_ADV_UUIDS];
-        uint8_t num16 = 0, num128 = 0;
-
-        for (uint8_t i = 0; i < advUuidCount_; i++) {
-            if (advUuids_[i].type == BleUuid::UUID_16 && num16 < MAX_ADV_UUIDS) {
-                uuid16s[num16].u.type = BLE_UUID_TYPE_16;
-                uuid16s[num16].value = advUuids_[i].u16;
-                num16++;
-            } else if (advUuids_[i].type == BleUuid::UUID_128 && num128 < MAX_ADV_UUIDS) {
-                uuid128s[num128].u.type = BLE_UUID_TYPE_128;
-                memcpy(uuid128s[num128].value, advUuids_[i].u128, 16);
-                num128++;
-            }
-        }
-
-        if (num16 > 0) {
-            rsp.uuids16 = uuid16s;
-            rsp.num_uuids16 = num16;
-            rsp.uuids16_is_complete = 1;
+        if (nameInScanRsp) {
+            rsp.name = (uint8_t*)deviceName_;
+            rsp.name_len = strlen(deviceName_);
+            rsp.name_is_complete = 1;
         }
         if (num128 > 0) {
             rsp.uuids128 = uuid128s;
@@ -1099,6 +1149,18 @@ void BluetoothController::stopAdvertising() {
  */
 void BluetoothController::onAdvComplete() {
     advertising_ = false;
+}
+
+/**
+ * \brief Sets the advertised GAP Appearance and refreshes advertising if active.
+ * \param appearance Appearance value, or 0 to advertise none.
+ */
+void BluetoothController::setAppearance(uint16_t appearance) {
+    if (appearance_ == appearance) return;
+    appearance_ = appearance;
+    if (enabled_ && synced_ && advertising_) {
+        startAdvertising();
+    }
 }
 
 /**

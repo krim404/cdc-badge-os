@@ -1,0 +1,16 @@
+diff --git a/models/goodisplay/gdey029T94.cpp b/models/goodisplay/gdey029T94.cpp
+index 72831cd..bbc8606 100644
+--- a/models/goodisplay/gdey029T94.cpp
++++ b/models/goodisplay/gdey029T94.cpp
+@@ -238,9 +238,9 @@ void Gdey029T94::_waitBusy(const char* message){
+   while (1){
+     if (gpio_get_level((gpio_num_t)CONFIG_EINK_BUSY) == 0) break;
+     vTaskDelay(1);
+-    if (esp_timer_get_time()-time_since_boot>1000000)
++    if (esp_timer_get_time()-time_since_boot>5000000)
+     {
+-      if (debug_enabled) ESP_LOGI(TAG, "Busy Timeout");
++      ESP_LOGW(TAG, "Busy Timeout");
+       break;
+     }
+   }

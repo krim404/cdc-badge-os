@@ -1118,6 +1118,21 @@ static bool is_browser_probe(const char *rp_id) {
 }
 
 /**
+ * \brief Deletes a just-created credential and reports `CTAP2_ERR_OTHER`.
+ * \param slot Credential slot to roll back.
+ * \param response Output response buffer.
+ * \param response_len In/out response length.
+ * \return `CTAP2_ERR_OTHER`.
+ */
+static uint8_t mc_rollback_credential(uint8_t slot, uint8_t *response,
+                                      uint16_t *response_len) {
+    fido2_storage_delete_credential(slot);
+    response[0] = CTAP2_ERR_OTHER;
+    *response_len = 1;
+    return CTAP2_ERR_OTHER;
+}
+
+/**
  * \brief Creates credential, signs attestation statement, and builds response.
  * \param p Parsed makeCredential parameters.
  * \param curve Selected key curve.
@@ -1155,17 +1170,13 @@ static uint8_t create_credential_and_respond(const MakeCredentialParams *p,
                                    &attested_len) ||
         !ctap2_build_auth_data_for_cred(p->rp_id_hash, attested_cred, attested_len,
                                         p->cred_protect, auth_data, &auth_data_len)) {
-        response[0] = CTAP2_ERR_OTHER;
-        *response_len = 1;
-        return CTAP2_ERR_OTHER;
+        return mc_rollback_credential(slot, response, response_len);
     }
 
     // Large buffer in PSRAM to save stack space
     EXT_RAM_BSS_ATTR static uint8_t mc_to_sign[512];
     if (auth_data_len + 32 > sizeof(mc_to_sign)) {
-        response[0] = CTAP2_ERR_OTHER;
-        *response_len = 1;
-        return CTAP2_ERR_OTHER;
+        return mc_rollback_credential(slot, response, response_len);
     }
     memcpy(mc_to_sign, auth_data, auth_data_len);
     memcpy(mc_to_sign + auth_data_len, p->client_data_hash, 32);
@@ -1183,9 +1194,7 @@ static uint8_t create_credential_and_respond(const MakeCredentialParams *p,
     // Use packed attestation with FIDO2-compliant certificate
     if (!u2f_get_attestation_cert(&att_cert, &att_cert_len)) {
         LOG_E(TAG, "Attestation certificate not initialized");
-        response[0] = CTAP2_ERR_OTHER;
-        *response_len = 1;
-        return CTAP2_ERR_OTHER;
+        return mc_rollback_credential(slot, response, response_len);
     }
 
     // Send KEEPALIVE before signing (TROPIC01 ECDSA takes ~100ms)
@@ -1193,9 +1202,7 @@ static uint8_t create_credential_and_respond(const MakeCredentialParams *p,
 
     if (!u2f_attestation_sign(mc_to_sign, to_sign_len, signature, &sig_len)) {
         LOG_E(TAG, "Attestation signing failed");
-        response[0] = CTAP2_ERR_OTHER;
-        *response_len = 1;
-        return CTAP2_ERR_OTHER;
+        return mc_rollback_credential(slot, response, response_len);
     }
     LOG_I(TAG, "Using basic attestation (cert=%u, sig=%u)", att_cert_len, sig_len);
 
@@ -1203,9 +1210,10 @@ static uint8_t create_credential_and_respond(const MakeCredentialParams *p,
         auth_data, auth_data_len, signature, sig_len,
         att_cert, att_cert_len, response, response_len);
 
-    if (status == CTAP2_OK) {
-        LOG_I(TAG, "Created credential for %s (slot %d)", p->rp_id, slot);
+    if (status != CTAP2_OK) {
+        return mc_rollback_credential(slot, response, response_len);
     }
+    LOG_I(TAG, "Created credential for %s (slot %d)", p->rp_id, slot);
 
 #if CTAP2_DEBUG
     LOG_I(TAG, "makeCredential status=0x%02X resp_len=%u", status, *response_len);
@@ -3037,6 +3045,20 @@ uint8_t ctap2_reset(uint8_t *response, uint16_t *response_len) {
 
 /** \brief Credential-management helper and command implementation. */
 /**
+ * \brief Checks whether the slot's secure-element key material is present.
+ * \param slot Logical slot index.
+ * \return `true` if the public key is readable from the secure element.
+ */
+static bool cred_mgmt_slot_has_key(uint8_t slot) {
+    uint8_t pubkey[64];
+    if (!fido2_storage_get_pubkey(slot, pubkey)) {
+        LOG_W(TAG, "credMgmt: skipping slot %d (no SE key)", slot);
+        return false;
+    }
+    return true;
+}
+
+/**
  * \brief Counts unique RP IDs among resident credentials.
  * \return Number of unique relying parties.
  */
@@ -3050,6 +3072,7 @@ static uint8_t cred_mgmt_count_unique_rps(void) {
 
         fido2_credential_info_t info;
         if (!fido2_storage_get_credential(slot, &info)) continue;
+        if (!cred_mgmt_slot_has_key(slot)) continue;
 
         // Check if this RP hash is already in our list
         bool found = false;
@@ -3084,9 +3107,10 @@ static uint8_t cred_mgmt_find_creds_for_rp(const uint8_t *rp_id_hash) {
         fido2_credential_info_t info;
         if (!fido2_storage_get_credential(slot, &info)) continue;
 
-        if (memcmp(info.rp_id_hash, rp_id_hash, 32) == 0) {
-            g_cred_mgmt.cred_slots[count++] = slot;
-        }
+        if (memcmp(info.rp_id_hash, rp_id_hash, 32) != 0) continue;
+        if (!cred_mgmt_slot_has_key(slot)) continue;
+
+        g_cred_mgmt.cred_slots[count++] = slot;
     }
 
     return count;
@@ -3097,11 +3121,11 @@ static uint8_t cred_mgmt_find_creds_for_rp(const uint8_t *rp_id_hash) {
  * \param w CBOR writer for output encoding.
  * \param slot Credential slot used as RP representative.
  * \param include_total Whether to include total RP count.
- * \return void
+ * \return `true` if the entry was encoded.
  */
-static void cred_mgmt_encode_rp(cbor_writer_t *w, uint8_t slot, bool include_total) {
+static bool cred_mgmt_encode_rp(cbor_writer_t *w, uint8_t slot, bool include_total) {
     fido2_credential_info_t info;
-    if (!fido2_storage_get_credential(slot, &info)) return;
+    if (!fido2_storage_get_credential(slot, &info)) return false;
 
     // Map with 2 or 3 entries
     cbor_encode_map(w, include_total ? 3 : 2);
@@ -3121,6 +3145,8 @@ static void cred_mgmt_encode_rp(cbor_writer_t *w, uint8_t slot, bool include_tot
         cbor_encode_uint(w, CTAP2_CM_RESP_TOTAL_RPS);
         cbor_encode_uint(w, g_cred_mgmt.rp_count);
     }
+
+    return true;
 }
 
 /**
@@ -3128,17 +3154,17 @@ static void cred_mgmt_encode_rp(cbor_writer_t *w, uint8_t slot, bool include_tot
  * \param w CBOR writer for output encoding.
  * \param slot Credential slot to encode.
  * \param include_total Whether to include total credential count.
- * \return void
+ * \return `true` if the entry was encoded.
  */
-static void cred_mgmt_encode_credential(cbor_writer_t *w, uint8_t slot, bool include_total) {
+static bool cred_mgmt_encode_credential(cbor_writer_t *w, uint8_t slot, bool include_total) {
     fido2_credential_info_t info;
-    if (!fido2_storage_get_credential(slot, &info)) return;
+    if (!fido2_storage_get_credential(slot, &info)) return false;
 
     uint8_t cred_id[FIDO2_CRED_ID_LEN];
-    if (!fido2_storage_get_cred_id(slot, cred_id)) return;
+    if (!fido2_storage_get_cred_id(slot, cred_id)) return false;
 
-    uint8_t pubkey[65];
-    if (!fido2_storage_get_pubkey(slot, pubkey)) return;
+    uint8_t pubkey[64];
+    if (!fido2_storage_get_pubkey(slot, pubkey)) return false;
 
     // Map with 4 or 5 entries
     cbor_encode_map(w, include_total ? 5 : 4);
@@ -3156,35 +3182,18 @@ static void cred_mgmt_encode_credential(cbor_writer_t *w, uint8_t slot, bool inc
     // credentialID (PublicKeyCredentialDescriptor)
     cbor_encode_uint(w, CTAP2_CM_RESP_CREDENTIAL_ID);
     cbor_encode_map(w, 2);
-    cbor_encode_text(w, "type");
-    cbor_encode_text(w, "public-key");
+    // Canonical order: "id" (len 2) before "type" (len 4)
     cbor_encode_text(w, "id");
     cbor_encode_bytes(w, cred_id, FIDO2_CRED_ID_LEN);
+    cbor_encode_text(w, "type");
+    cbor_encode_text(w, "public-key");
 
     // publicKey (COSE_Key, RFC 8152)
     cbor_encode_uint(w, CTAP2_CM_RESP_PUBLIC_KEY);
-    if (info.curve == 2) {  // Ed25519 (OKP)
-        cbor_encode_map(w, 4);
-        cbor_encode_int(w, COSE_KEY_LABEL_KTY);
-        cbor_encode_int(w, COSE_KEY_TYPE_OKP);
-        cbor_encode_int(w, COSE_KEY_LABEL_ALG);
-        cbor_encode_int(w, COSE_ALG_EDDSA);
-        cbor_encode_int(w, COSE_KEY_LABEL_CRV);
-        cbor_encode_int(w, COSE_CRV_ED25519);
-        cbor_encode_int(w, COSE_KEY_LABEL_X);
-        cbor_encode_bytes(w, pubkey + 1, 32);  // Skip 0x04 prefix
-    } else {  // P-256 (EC2)
-        cbor_encode_map(w, 5);
-        cbor_encode_int(w, COSE_KEY_LABEL_KTY);
-        cbor_encode_int(w, COSE_KEY_TYPE_EC2);
-        cbor_encode_int(w, COSE_KEY_LABEL_ALG);
-        cbor_encode_int(w, COSE_ALG_ES256);
-        cbor_encode_int(w, COSE_KEY_LABEL_CRV);
-        cbor_encode_int(w, COSE_CRV_P256);
-        cbor_encode_int(w, COSE_KEY_LABEL_X);
-        cbor_encode_bytes(w, pubkey + 1, 32);
-        cbor_encode_int(w, COSE_KEY_LABEL_Y);
-        cbor_encode_bytes(w, pubkey + 33, 32);
+    if (info.curve == CDC_CURVE_ED25519) {
+        cbor_encode_cose_key_ed25519(w, pubkey);
+    } else {
+        cbor_encode_cose_key_p256(w, pubkey, pubkey + 32);
     }
 
     // totalCredentials (only in first response)
@@ -3196,6 +3205,8 @@ static void cred_mgmt_encode_credential(cbor_writer_t *w, uint8_t slot, bool inc
     // credProtect
     cbor_encode_uint(w, CTAP2_CM_RESP_CRED_PROTECT);
     cbor_encode_uint(w, info.cred_protect ? info.cred_protect : 1);
+
+    return true;
 }
 
 /**
@@ -3354,7 +3365,11 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
                     return CTAP2_ERR_NO_CREDENTIALS;
                 }
 
-                cred_mgmt_encode_rp(&w, g_cred_mgmt.rp_slots[0], true);
+                if (!cred_mgmt_encode_rp(&w, g_cred_mgmt.rp_slots[0], true)) {
+                    response[0] = CTAP2_ERR_OTHER;
+                    *response_len = 1;
+                    return CTAP2_ERR_OTHER;
+                }
                 g_cred_mgmt.rp_index = 1;
 
                 LOG_I(TAG, "credMgmt enumerateRPs: %d unique RPs", g_cred_mgmt.rp_count);
@@ -3369,7 +3384,11 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
                     return CTAP2_ERR_NO_CREDENTIALS;
                 }
 
-                cred_mgmt_encode_rp(&w, g_cred_mgmt.rp_slots[g_cred_mgmt.rp_index], false);
+                if (!cred_mgmt_encode_rp(&w, g_cred_mgmt.rp_slots[g_cred_mgmt.rp_index], false)) {
+                    response[0] = CTAP2_ERR_OTHER;
+                    *response_len = 1;
+                    return CTAP2_ERR_OTHER;
+                }
                 g_cred_mgmt.rp_index++;
             }
             break;
@@ -3392,7 +3411,11 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
                     return CTAP2_ERR_NO_CREDENTIALS;
                 }
 
-                cred_mgmt_encode_credential(&w, g_cred_mgmt.cred_slots[0], true);
+                if (!cred_mgmt_encode_credential(&w, g_cred_mgmt.cred_slots[0], true)) {
+                    response[0] = CTAP2_ERR_OTHER;
+                    *response_len = 1;
+                    return CTAP2_ERR_OTHER;
+                }
                 g_cred_mgmt.cred_index = 1;
 
                 LOG_I(TAG, "credMgmt enumerateCreds: %d credentials for RP", g_cred_mgmt.cred_count);
@@ -3407,7 +3430,11 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
                     return CTAP2_ERR_NO_CREDENTIALS;
                 }
 
-                cred_mgmt_encode_credential(&w, g_cred_mgmt.cred_slots[g_cred_mgmt.cred_index], false);
+                if (!cred_mgmt_encode_credential(&w, g_cred_mgmt.cred_slots[g_cred_mgmt.cred_index], false)) {
+                    response[0] = CTAP2_ERR_OTHER;
+                    *response_len = 1;
+                    return CTAP2_ERR_OTHER;
+                }
                 g_cred_mgmt.cred_index++;
             }
             break;

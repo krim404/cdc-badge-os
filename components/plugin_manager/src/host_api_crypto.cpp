@@ -5,11 +5,11 @@
 
 #include "plugin_manager/host_api.h"
 #include "cdc_hal/ISecureElement.h"
+#include "cdc_core/Crypto.h"
 #include "HexUtil.h"
 
 #include "mbedtls/sha256.h"
 #include "mbedtls/md.h"
-#include "mbedtls/gcm.h"
 #include "mbedtls/base64.h"
 #include "esp_random.h"
 
@@ -64,14 +64,9 @@ int host_aes_gcm_encrypt(const uint8_t* key, const uint8_t* iv,
                          uint8_t* ct, uint8_t tag[16])
 {
     if (!key || !iv || !ct || !tag) return HOST_ERR_INVALID_ARG;
-    mbedtls_gcm_context ctx;
-    mbedtls_gcm_init(&ctx);
-    int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, 256);
-    if (rc == 0) rc = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT,
-                                                 pt_len, iv, 12, aad, aad_len,
-                                                 pt, ct, 16, tag);
-    mbedtls_gcm_free(&ctx);
-    return rc == 0 ? HOST_OK : HOST_ERR_GENERIC;
+    bool ok = cdc::core::aesGcm256Seal(key, iv, 12, aad, aad_len,
+                                       pt, pt_len, ct, tag);
+    return ok ? HOST_OK : HOST_ERR_GENERIC;
 }
 
 int host_aes_gcm_decrypt(const uint8_t* key, const uint8_t* iv,
@@ -80,13 +75,9 @@ int host_aes_gcm_decrypt(const uint8_t* key, const uint8_t* iv,
                          const uint8_t tag[16], uint8_t* pt)
 {
     if (!key || !iv || !ct || !tag || !pt) return HOST_ERR_INVALID_ARG;
-    mbedtls_gcm_context ctx;
-    mbedtls_gcm_init(&ctx);
-    int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, 256);
-    if (rc == 0) rc = mbedtls_gcm_auth_decrypt(&ctx, ct_len, iv, 12, aad, aad_len,
-                                                tag, 16, ct, pt);
-    mbedtls_gcm_free(&ctx);
-    return rc == 0 ? HOST_OK : HOST_ERR_GENERIC;
+    bool ok = cdc::core::aesGcm256Open(key, iv, 12, aad, aad_len,
+                                       ct, ct_len, tag, pt);
+    return ok ? HOST_OK : HOST_ERR_GENERIC;
 }
 
 int host_base32_encode(const uint8_t* in, size_t in_len, char* out, size_t out_size)

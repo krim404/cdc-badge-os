@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 
 // Forward declarations
 namespace cdc::hal {
@@ -45,6 +46,11 @@ void startBadgeTextEdit();
 
 // NVS persistence for display fields
 void saveDisplayField(const char* key, const char* value);
+
+// Reads one display text field from NVS into the caller buffer.
+// Returns true if a non-empty value was found; the buffer is left untouched
+// otherwise.
+bool loadDisplayField(const char* key, char* out, size_t outSize);
 
 } // namespace settings
 

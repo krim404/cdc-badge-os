@@ -123,6 +123,22 @@ public:
     bool isUserEnabled() const { return userEnabled_; }
 
     /**
+     * \brief Persists the user/system WiFi intent without bringing the radio
+     *        up or down.
+     *
+     * Unlike \ref setUserEnabled, this only stores the intent flag and updates
+     * the cached value; the persisted state takes effect at the next
+     * \ref restoreOnBoot. Used during settings restore to avoid a blocking
+     * connect.
+     *
+     * \param enabled Intent to persist.
+     */
+    void persistUserIntent(bool enabled) {
+        userEnabled_ = enabled;
+        persistUserEnabled(enabled);
+    }
+
+    /**
      * \brief Acquires a hold on the WiFi connection for a plugin/host caller.
      *
      * Increments the holder count and ensures WiFi is connected. While at

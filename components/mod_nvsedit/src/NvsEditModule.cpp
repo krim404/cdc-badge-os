@@ -565,8 +565,6 @@ static NvsEditModule s_module;
 extern "C" void mod_nvsedit_register() {
     cdc::core::ModuleRegistry::instance().registerInitializer([]() {
         auto& module = cdc::mod_nvsedit::s_module;
-        if (module.init()) {
-            module.start();
-        }
+        module.init();
     });
 }

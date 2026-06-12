@@ -80,8 +80,6 @@ void SaoModule::onUnlock() {
 extern "C" void mod_sao_register() {
     cdc::core::ModuleRegistry::instance().registerInitializer([]() {
         auto& module = cdc::mod_sao::SaoModule::instance();
-        if (module.init()) {
-            module.start();
-        }
+        module.init();
     });
 }

@@ -8,6 +8,8 @@
 #include "cdc_core/ModuleRegistry.h"
 #include "cdc_core/EventBus.h"
 #include "cdc_core/Raii.h"
+#include "cdc_ui/BackupImport.h"
+#include "cJSON.h"
 #include "cdc_ui/I18n.h"
 #include "cdc_ui/ViewStack.h"
 #include "cdc_views/ListView.h"
@@ -750,6 +752,112 @@ void VcardModule::onTick(uint32_t nowMs) {
     ble_vcard_tick(nowMs);
 }
 
+/// Schema version written to and expected from the vCard backup section.
+static constexpr int kSchemaVer = 1;
+
+/**
+ * \brief Exports the own vCard and all received vCards into the backup section.
+ *
+ * Writes `schema_ver`, an optional `own` string, and a `received` array of raw
+ * vCard texts. Returns `false` only when there is nothing to export.
+ *
+ * \param out cJSON object that forms the module's section in the backup file.
+ * \return `true` if any vCard data was exported.
+ */
+bool VcardModule::exportBackup(cJSON* out) {
+    if (!out) return false;
+
+    cJSON_AddNumberToObject(out, "schema_ver", kSchemaVer);
+
+    bool any = false;
+
+    char buf[VCARD_MAX_LEN + 1];
+    if (vcard_store_get_own(buf, sizeof(buf)) > 0) {
+        cJSON_AddStringToObject(out, "own", buf);
+        any = true;
+    }
+
+    cJSON* received = cJSON_AddArrayToObject(out, "received");
+    if (!received) return any;
+
+    uint16_t slots[VCARD_MAX_CARDS];
+    uint16_t count = vcard_store_get_sorted(slots, VCARD_MAX_CARDS);
+    for (uint16_t i = 0; i < count; i++) {
+        if (vcard_store_get(slots[i], buf, sizeof(buf)) == 0) continue;
+        cJSON* item = cJSON_CreateString(buf);
+        if (!item) continue;
+        cJSON_AddItemToArray(received, item);
+        any = true;
+    }
+
+    return any;
+}
+
+/**
+ * \brief Imports one received vCard string into storage.
+ *
+ * The vCard's identity is its full text; the store deduplicates on exact text,
+ * so an already-present card counts as imported (no-op upsert). Genuine
+ * validation/storage failures return `false` to be tallied as failed.
+ *
+ * \param je JSON array element (expected to be a string).
+ * \param user Unused.
+ * \return `true` if the card is present after the operation.
+ */
+static bool importReceivedVcard(const cJSON* je, void* user) {
+    (void)user;
+    if (!cJSON_IsString(je) || !je->valuestring || je->valuestring[0] == '\0') return false;
+
+    const char* text = je->valuestring;
+    size_t len = strlen(text);
+    char err[32] = {};
+    if (vcard_store_add(text, len, err, sizeof(err))) return true;
+
+    // An already-present card means the identity is satisfied (no-op upsert);
+    // only genuine validation/storage failures count as failed.
+    return vcard_store_contains(text, len);
+}
+
+/**
+ * \brief Restores the own vCard and received vCards from the backup section.
+ *
+ * The own vCard overwrites the current one; received vCards are upserted by
+ * exact text. Best-effort: failures are tallied, never aborting the restore.
+ *
+ * \param in cJSON object holding the previously exported section.
+ * \return Tally of imported and failed records.
+ */
+core::IModule::BackupResult VcardModule::importBackup(const cJSON* in) {
+    if (!in) return {};
+
+    const cJSON* schemaVer = cJSON_GetObjectItemCaseSensitive(in, "schema_ver");
+    if (cJSON_IsNumber(schemaVer) && static_cast<int>(schemaVer->valuedouble) != kSchemaVer) {
+        LOG_W(TAG, "vCard backup schema_ver %d != expected %d, skipping",
+              static_cast<int>(schemaVer->valuedouble), kSchemaVer);
+        return {};
+    }
+
+    core::IModule::BackupResult result = {};
+
+    const cJSON* own = cJSON_GetObjectItemCaseSensitive(in, "own");
+    if (cJSON_IsString(own) && own->valuestring && own->valuestring[0] != '\0') {
+        char err[32] = {};
+        if (vcard_store_set_own(own->valuestring, strlen(own->valuestring), err, sizeof(err))) {
+            result.imported++;
+        } else {
+            LOG_W(TAG, "vCard import: own vCard rejected (%s)", err);
+            result.failed++;
+        }
+    }
+
+    const cJSON* received = cJSON_GetObjectItemCaseSensitive(in, "received");
+    core::IModule::BackupResult rx = cdc::ui::importJsonArray(received, importReceivedVcard, nullptr);
+    result.imported = static_cast<uint16_t>(result.imported + rx.imported);
+    result.failed = static_cast<uint16_t>(result.failed + rx.failed);
+
+    return result;
+}
+
 } // namespace cdc::mod_vcard
 
 /**
@@ -758,8 +866,6 @@ void VcardModule::onTick(uint32_t nowMs) {
 extern "C" void mod_vcard_register() {
     cdc::core::ModuleRegistry::instance().registerInitializer([]() {
         auto& module = cdc::mod_vcard::VcardModule::instance();
-        if (module.init()) {
-            module.start();
-        }
+        module.init();
     });
 }

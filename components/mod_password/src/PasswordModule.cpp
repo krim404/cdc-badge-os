@@ -3,7 +3,9 @@
 #include "cdc_core/ModuleRegistry.h"
 #include "cdc_core/StringUtils.h"
 #include "cdc_core/TropicStorage.h"
+#include "cdc_ui/BackupImport.h"
 #include "cdc_core/IKeyboardProvider.h"
+#include "cJSON.h"
 #include "cdc_hal/ISecureElement.h"
 #include "esp_random.h"
 #include "cdc_ui/I18n.h"
@@ -920,6 +922,143 @@ uint8_t PasswordModule::getMenuItems(core::ModuleMenuItem* items, uint8_t maxIte
     return 1;
 }
 
+/// Schema version written to and expected from the password backup section.
+static constexpr int kSchemaVer = 1;
+
+/**
+ * \brief Exports all vault entries into the module's backup section.
+ *
+ * Writes `schema_ver` and an `entries` array; each element carries the full
+ * set of stored fields. Passwords are stored in plaintext because the backup
+ * container itself is encrypted. Returns `false` when there are no entries.
+ *
+ * \param out cJSON object that forms the module's section in the backup file.
+ * \return `true` if at least one entry was exported.
+ */
+bool PasswordModule::exportBackup(cJSON* out) {
+    if (!out) return false;
+
+    auto& store = PasswordStore::instance();
+    if (!store.hasSlotRange()) return false;
+
+    cJSON_AddNumberToObject(out, "schema_ver", kSchemaVer);
+    cJSON* entries = cJSON_AddArrayToObject(out, "entries");
+    if (!entries) return false;
+
+    struct ExportCtx {
+        cJSON* arr;
+        uint16_t count;
+    } ctx = { entries, 0 };
+
+    auto cb = [](uint16_t slot, const cdc::core::TropicStorage::CacheEntry&, void* user) {
+        auto* c = static_cast<ExportCtx*>(user);
+        auto& store = PasswordStore::instance();
+
+        uint16_t logical = 0;
+        if (!store.toLogicalSlot(slot, &logical)) return;
+
+        PasswordEntry entry = {};
+        if (!store.readEntry(logical, &entry)) return;
+
+        cJSON* obj = cJSON_CreateObject();
+        if (!obj) return;
+
+        cJSON_AddStringToObject(obj, "title",     entry.title);
+        cJSON_AddStringToObject(obj, "username",  entry.username);
+        cJSON_AddStringToObject(obj, "password",  entry.password);
+        cJSON_AddStringToObject(obj, "url",       entry.url);
+        cJSON_AddStringToObject(obj, "notes",     entry.notes);
+        cJSON_AddNumberToObject(obj, "totp_slot", entry.totpSlot);
+
+        cJSON_AddItemToArray(c->arr, obj);
+        c->count++;
+    };
+
+    cdc::core::TropicStorage::instance().forEachSlot(
+        store.moduleId(),
+        store.rmemStart(),
+        store.rmemEnd(),
+        cb, &ctx);
+
+    return ctx.count > 0;
+}
+
+/**
+ * \brief Maps and upserts one vault entry from its JSON representation.
+ *
+ * Title is the entry's identity: an existing entry with the same title is
+ * overwritten (backup wins), otherwise a new slot is allocated. Returns
+ * `false` for malformed entries or storage failures so the caller can tally
+ * them as failed.
+ *
+ * \param je JSON array element.
+ * \param user Unused.
+ * \return `true` if the entry was stored.
+ */
+static bool importPasswordEntry(const cJSON* je, void* user) {
+    (void)user;
+    if (!cJSON_IsObject(je)) return false;
+
+    const cJSON* jTitle    = cJSON_GetObjectItemCaseSensitive(je, "title");
+    const cJSON* jUsername = cJSON_GetObjectItemCaseSensitive(je, "username");
+    const cJSON* jPassword = cJSON_GetObjectItemCaseSensitive(je, "password");
+    const cJSON* jUrl      = cJSON_GetObjectItemCaseSensitive(je, "url");
+    const cJSON* jNotes    = cJSON_GetObjectItemCaseSensitive(je, "notes");
+    const cJSON* jTotpSlot = cJSON_GetObjectItemCaseSensitive(je, "totp_slot");
+
+    if (!cJSON_IsString(jTitle) || !jTitle->valuestring || jTitle->valuestring[0] == '\0') {
+        LOG_W(TAG, "Password import: skipping entry with no title");
+        return false;
+    }
+
+    PasswordEntry entry = {};
+    auto copyField = [](char* dst, size_t dstSize, const cJSON* j) {
+        if (cJSON_IsString(j) && j->valuestring) {
+            strncpy(dst, j->valuestring, dstSize - 1);
+            dst[dstSize - 1] = '\0';
+        }
+    };
+    copyField(entry.title,    sizeof(entry.title),    jTitle);
+    copyField(entry.username, sizeof(entry.username), jUsername);
+    copyField(entry.password, sizeof(entry.password), jPassword);
+    copyField(entry.url,      sizeof(entry.url),      jUrl);
+    copyField(entry.notes,    sizeof(entry.notes),    jNotes);
+    entry.totpSlot = cJSON_IsNumber(jTotpSlot)
+                         ? static_cast<uint8_t>(jTotpSlot->valuedouble)
+                         : PasswordStore::TOTP_SLOT_NONE;
+
+    auto& store = PasswordStore::instance();
+    uint16_t existingSlot = 0;
+    if (store.findByTitle(entry.title, &existingSlot)) {
+        return store.updateEntry(existingSlot, entry);
+    }
+    return store.addEntry(entry);
+}
+
+/**
+ * \brief Restores vault entries from the module's backup section.
+ *
+ * Best-effort upsert by title; malformed or unstorable entries are skipped
+ * and counted, never aborting the restore.
+ *
+ * \param in cJSON object holding the previously exported section.
+ * \return Tally of imported and failed records.
+ */
+core::IModule::BackupResult PasswordModule::importBackup(const cJSON* in) {
+    if (!in) return {};
+    if (!PasswordStore::instance().hasSlotRange()) return {};
+
+    const cJSON* schemaVer = cJSON_GetObjectItemCaseSensitive(in, "schema_ver");
+    if (cJSON_IsNumber(schemaVer) && static_cast<int>(schemaVer->valuedouble) != kSchemaVer) {
+        LOG_W(TAG, "Password backup schema_ver %d != expected %d, skipping",
+              static_cast<int>(schemaVer->valuedouble), kSchemaVer);
+        return {};
+    }
+
+    const cJSON* entries = cJSON_GetObjectItemCaseSensitive(in, "entries");
+    return cdc::ui::importJsonArray(entries, importPasswordEntry, nullptr);
+}
+
 } // namespace cdc::mod_password
 
 /**
@@ -928,8 +1067,6 @@ uint8_t PasswordModule::getMenuItems(core::ModuleMenuItem* items, uint8_t maxIte
 extern "C" void mod_password_register() {
     cdc::core::ModuleRegistry::instance().registerInitializer([]() {
         auto& module = cdc::mod_password::PasswordModule::instance();
-        if (module.init()) {
-            module.start();
-        }
+        module.init();
     });
 }

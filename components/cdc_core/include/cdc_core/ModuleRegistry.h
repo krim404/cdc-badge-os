@@ -17,6 +17,15 @@ namespace cdc::core {
 // Module initializer function type
 using ModuleInitFunc = void(*)();
 
+/**
+ * \brief Classified cause of a failed startModule() call.
+ */
+enum class ModuleStartFailure {
+    SlotError,      ///< Module reported a slot-map error.
+    UsbBudgetFull,  ///< HID interface budget is exhausted.
+    Generic,        ///< Start failed for an unspecified reason.
+};
+
 class ModuleRegistry {
 public:
     static constexpr uint8_t MAX_MODULES = 16;
@@ -84,6 +93,16 @@ public:
     bool startModule(uint8_t index);
 
     /**
+     * \brief Classifies why a preceding startModule() call failed.
+     *
+     * Applies the shared failure ladder: a module slot error takes precedence,
+     * otherwise an exhausted USB HID budget, otherwise a generic failure.
+     * \param index Module index that failed to start.
+     * \return Classified failure cause.
+     */
+    ModuleStartFailure classifyStartFailure(uint8_t index) const;
+
+    /**
      * Stop all registered modules
      */
     void stopAll();
@@ -123,6 +142,14 @@ public:
     void dispatchUsbConnect();
     void dispatchUsbDisconnect();
     void dispatchTick(uint32_t nowMs);
+
+    /**
+     * \brief Returns a short status marker combining enabled flag and run state.
+     * \param index Module index.
+     * \return "[FAIL]" on slot error, "[ON]" enabled and started, "[--]"
+     *         enabled but not started, "[OFF]" disabled.
+     */
+    const char* getModuleStatusLabel(uint8_t index) const;
 
     /**
      * Check if a module is enabled (will start on boot)

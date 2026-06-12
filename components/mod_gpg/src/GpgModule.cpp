@@ -1035,8 +1035,6 @@ uint8_t GpgModule::getMenuItems(core::ModuleMenuItem* items, uint8_t maxItems) {
 extern "C" void mod_gpg_register() {
     cdc::core::ModuleRegistry::instance().registerInitializer([]() {
         auto& module = cdc::mod_gpg::GpgModule::instance();
-        if (module.init()) {
-            module.start();
-        }
+        module.init();
     });
 }

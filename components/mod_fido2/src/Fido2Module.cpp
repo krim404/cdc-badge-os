@@ -303,8 +303,6 @@ bool fido2_usb_write(const uint8_t* buffer) {
 extern "C" void mod_fido2_register() {
     cdc::core::ModuleRegistry::instance().registerInitializer([]() {
         auto& module = cdc::mod_fido2::Fido2Module::instance();
-        if (module.init()) {
-            module.start();
-        }
+        module.init();
     });
 }

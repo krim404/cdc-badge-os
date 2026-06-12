@@ -93,7 +93,7 @@ extern "C" {
 
 #define CFG_TUD_CDC                 1   // CDC enabled for serial console
 #define CFG_TUD_MSC                 0   // MSC not used
-#define CFG_TUD_HID                 1   // HID enabled for FIDO2
+#define CFG_TUD_HID                 2   // HID instances; must cover MAX_ACTIVE_HID concurrent HID-class interfaces (e.g. FIDO2 + keyboard)
 #define CFG_TUD_MIDI                0   // MIDI not used
 #define CFG_TUD_VENDOR              0   // Vendor not used
 #define CFG_TUD_CUSTOM_CLASS        1   // Custom class used for CCID

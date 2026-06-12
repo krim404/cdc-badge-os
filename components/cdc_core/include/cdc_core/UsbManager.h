@@ -34,6 +34,13 @@ struct UsbInterfaceSpec {
     uint16_t epInSize = 64;
     uint16_t epOutSize = 64;
     UsbHidCallbacks callbacks = {};
+
+    // Optional device-descriptor VID/PID hint. When non-zero, an active
+    // interface carrying these values overrides the default device VID/PID so
+    // the host recognizes the composite as a specific product (e.g. mod_otphid
+    // presents OnlyKey's KeePassXC-whitelisted IDs). 0 means "no preference".
+    uint16_t preferredVid = 0;
+    uint16_t preferredPid = 0;
 };
 
 /**
@@ -61,6 +68,24 @@ public:
     bool applyConfiguration();
     bool needsReplug() const { return needsReplug_; }
 
+    /**
+     * \brief Reports whether the HID interface budget is exhausted.
+     * \return `true` when active HID interfaces reached MAX_ACTIVE_HID.
+     */
+    bool hidSlotsFull() const { return activeHidCount() >= MAX_ACTIVE_HID; }
+
+    /**
+     * \brief Tests whether a toggle newly introduced a replug requirement.
+     *
+     * Callers snapshot needsReplug() before performing a module toggle and pass
+     * it here afterwards; returns `true` only on a false-to-true transition.
+     * \param wasNeededBefore needsReplug() value captured before the toggle.
+     * \return `true` if a replug is now required but was not before.
+     */
+    bool newlyRequiresReplug(bool wasNeededBefore) const {
+        return !wasNeededBefore && needsReplug_;
+    }
+
 private:
     struct InterfaceEntry {
         bool active = false;
@@ -68,6 +93,7 @@ private:
         UsbInterfaceSpec def = {};
     };
 
+    uint8_t activeHidCount() const;
     bool canActivate(UsbHidInterface type) const;
     static constexpr uint8_t MAX_ACTIVE_HID = 2;
 

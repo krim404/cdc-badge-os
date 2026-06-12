@@ -9,6 +9,8 @@
 #include "serial_cmd/SubCommand.h"
 #include "cdc_core/feature_flags.h"
 #include "cdc_core/Cp437.h"
+#include "cdc_core/ModuleRegistry.h"
+#include "cdc_core/UsbManager.h"
 #include "cdc_core/PinManager.h"
 #include "cdc_core/TropicSlotMap.h"
 #include "cdc_core/TropicStorage.h"
@@ -874,32 +876,60 @@ static void cmdSetTime(const char* args) {
  */
 static void cmdSetDate(const char* args) {
     if (!args || !*args) {
-        Console::printf("Usage: SET_DATE DD.MM.YYYY\r\n");
-        return;
-    }
-    int d, m, y;
-    if (sscanf(args, "%d.%d.%d", &d, &m, &y) != 3) {
-        Console::printf("ERROR: Invalid format. Use DD.MM.YYYY\r\n");
-        return;
-    }
-    if (d < 1 || d > 31 || m < 1 || m > 12 || y < YEAR_MIN || y > YEAR_MAX) {
-        Console::printf("ERROR: Invalid date values\r\n");
+        Console::printf("Usage: SET_DATE DD.MM.YYYY | <unix_seconds>\r\n");
         return;
     }
 
-    struct timeval tv;
-    struct tm tm;
-    if (getCurrentTime(tv, tm)) {
-        tm.tm_mday = d;
-        tm.tm_mon = m - 1;
-        tm.tm_year = y - 1900;
-        if (setSystemTime(&tm)) {
-            Console::printf("OK: Date set to %02d.%02d.%04d\r\n", d, m, y);
-            if (s_timeCallback) {
-                s_timeCallback();
+    int d, m, y;
+    if (sscanf(args, "%d.%d.%d", &d, &m, &y) == 3) {
+        if (d < 1 || d > 31 || m < 1 || m > 12 || y < YEAR_MIN || y > YEAR_MAX) {
+            Console::printf("ERROR: Invalid date values\r\n");
+            return;
+        }
+        struct timeval tv;
+        struct tm tm;
+        if (getCurrentTime(tv, tm)) {
+            tm.tm_mday = d;
+            tm.tm_mon = m - 1;
+            tm.tm_year = y - 1900;
+            if (setSystemTime(&tm)) {
+                Console::printf("OK: Date set to %02d.%02d.%04d\r\n", d, m, y);
+                if (s_timeCallback) {
+                    s_timeCallback();
+                }
+                return;
             }
-        } else {
-            Console::printf("ERROR: Failed to set date\r\n");
+        }
+        Console::printf("ERROR: Failed to set date\r\n");
+        return;
+    }
+
+    // No dotted date: treat the argument as a Unix timestamp (UTC seconds)
+    // and set the full clock (date and time of day) at once.
+    long long ts;
+    if (sscanf(args, "%lld", &ts) != 1 || ts < 0) {
+        Console::printf("ERROR: Invalid format. Use DD.MM.YYYY or a Unix timestamp\r\n");
+        return;
+    }
+    time_t secs = static_cast<time_t>(ts);
+    struct tm tm;
+    if (!gmtime_r(&secs, &tm)) {
+        Console::printf("ERROR: Failed to set date\r\n");
+        return;
+    }
+    int year = tm.tm_year + 1900;
+    if (year < YEAR_MIN || year > YEAR_MAX) {
+        Console::printf("ERROR: Timestamp out of range (%d-%d)\r\n", YEAR_MIN, YEAR_MAX);
+        return;
+    }
+    struct timeval tv;
+    tv.tv_sec = secs;
+    tv.tv_usec = 0;
+    if (settimeofday(&tv, nullptr) == 0) {
+        Console::printf("OK: Time set to %lld (%04d-%02d-%02d %02d:%02d:%02d UTC)\r\n",
+                        ts, year, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        if (s_timeCallback) {
+            s_timeCallback();
         }
     } else {
         Console::printf("ERROR: Failed to set date\r\n");
@@ -1103,6 +1133,49 @@ static void cmdPinChange(const char* args) {
     }
 
     Console::printf("OK: PIN changed\r\n");
+}
+
+/**
+ * \brief Arms the duress / self-destruct PIN.
+ *
+ * Entering the duress PIN at the lock screen wipes all data and reboots.
+ * The duress PIN must be 4-8 digits and differ from the badge PIN.
+ *
+ * \param args "<duressPin>".
+ */
+static void cmdPinDuress(const char* args) {
+    if (!args || !args[0]) {
+        Console::printf("Usage: PIN DURESS <pin>\r\n");
+        return;
+    }
+
+    char duressPin[core::PinManager::BADGE_PIN_MAX + 1] = {};
+    size_t len = strlen(args);
+    if (len == 0 || len > core::PinManager::BADGE_PIN_MAX) {
+        Console::printf("ERROR: PIN length must be %u-%u digits\r\n",
+                        static_cast<unsigned>(core::PinManager::BADGE_PIN_MIN),
+                        static_cast<unsigned>(core::PinManager::BADGE_PIN_MAX));
+        return;
+    }
+    memcpy(duressPin, args, len);
+    duressPin[len] = '\0';
+
+    if (!core::PinManager::instance().setDuressPin(duressPin)) {
+        Console::printf("ERROR: Duress PIN rejected (invalid length, non-digit, or equal to badge PIN)\r\n");
+        return;
+    }
+
+    Console::printf("OK: Duress PIN armed\r\n");
+}
+
+/**
+ * \brief Disarms the duress / self-destruct PIN.
+ * \param args Unused command arguments.
+ */
+static void cmdPinDuressClear(const char* args) {
+    (void)args;
+    core::PinManager::instance().clearDuressPin();
+    Console::printf("OK: Duress PIN cleared\r\n");
 }
 
 /**
@@ -2140,6 +2213,140 @@ static void cmdWifiForget(const char* args) {
 }
 
 /**
+ * \brief Module management serial command handlers.
+ */
+
+/**
+ * \brief Finds a registered module index by name (case-insensitive).
+ * \param name Module name to look up.
+ * \return Module index, or -1 if not found.
+ */
+static int findModuleIndex(const char* name) {
+    auto& reg = core::ModuleRegistry::instance();
+    uint8_t count = reg.getModuleCount();
+    for (uint8_t i = 0; i < count; i++) {
+        core::IModule* module = reg.getModuleAt(i);
+        if (module && module->getName() &&
+            strcasecmp(module->getName(), name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/**
+ * \brief MODULE LIST - list registered modules with state and errors.
+ * \param args Unused command arguments.
+ */
+static void cmdModuleList(const char* args) {
+    (void)args;
+    auto& reg = core::ModuleRegistry::instance();
+    uint8_t count = reg.getModuleCount();
+
+    Console::printf("=== Modules (%u) ===\r\n", static_cast<unsigned>(count));
+    for (uint8_t i = 0; i < count; i++) {
+        core::IModule* module = reg.getModuleAt(i);
+        if (!module) continue;
+
+        const char* error = reg.getModuleSlotError(i);
+        Console::printf("  [%2u] %-16s %-8s %-6s %s\r\n",
+                        static_cast<unsigned>(i),
+                        module->getName() ? module->getName() : "?",
+                        reg.isModuleEnabled(i) ? "enabled" : "disabled",
+                        reg.getModuleStatusLabel(i),
+                        error ? error : "");
+    }
+}
+
+/**
+ * \brief MODULE ENABLE <name> - enable a module by name (persistent).
+ * \param args Module name.
+ */
+static void cmdModuleEnable(const char* args) {
+    if (!args || !*args) {
+        Console::printf("Usage: MODULE ENABLE <name>\r\n");
+        return;
+    }
+
+    int index = findModuleIndex(args);
+    if (index < 0) {
+        Console::printf("ERROR: Module '%s' not found\r\n", args);
+        return;
+    }
+
+    auto& reg = core::ModuleRegistry::instance();
+    uint8_t idx = static_cast<uint8_t>(index);
+
+    if (reg.isModuleEnabled(idx)) {
+        Console::printf("OK: Module '%s' already enabled\r\n", args);
+        return;
+    }
+
+    bool needsReplugBefore = core::UsbManager::instance().needsReplug();
+
+    reg.setModuleEnabled(idx, true);
+    if (!reg.startModule(idx)) {
+        switch (reg.classifyStartFailure(idx)) {
+            case core::ModuleStartFailure::SlotError:
+                Console::printf("ERROR: %s\r\n", reg.getModuleSlotError(idx));
+                break;
+            case core::ModuleStartFailure::UsbBudgetFull:
+                Console::printf("ERROR: No free USB slot - disable a USB module (e.g. GPG) first\r\n");
+                break;
+            case core::ModuleStartFailure::Generic:
+                Console::printf("ERROR: Failed to start module '%s'\r\n", args);
+                break;
+        }
+        return;
+    }
+
+    Console::printf("OK: Module '%s' enabled\r\n", args);
+
+    if (core::UsbManager::instance().newlyRequiresReplug(needsReplugBefore)) {
+        Console::printf("NOTE: USB replug required\r\n");
+    }
+}
+
+/**
+ * \brief MODULE DISABLE <name> - disable a module by name (persistent).
+ * \param args Module name.
+ */
+static void cmdModuleDisable(const char* args) {
+    if (!args || !*args) {
+        Console::printf("Usage: MODULE DISABLE <name>\r\n");
+        return;
+    }
+
+    int index = findModuleIndex(args);
+    if (index < 0) {
+        Console::printf("ERROR: Module '%s' not found\r\n", args);
+        return;
+    }
+
+    auto& reg = core::ModuleRegistry::instance();
+    uint8_t idx = static_cast<uint8_t>(index);
+
+    if (!reg.isModuleEnabled(idx)) {
+        Console::printf("OK: Module '%s' already disabled\r\n", args);
+        return;
+    }
+
+    bool needsReplugBefore = core::UsbManager::instance().needsReplug();
+
+    reg.setModuleEnabled(idx, false);
+    core::IModule* module = reg.getModuleAt(idx);
+    if (module && module->getState() == core::ServiceState::STARTED) {
+        module->stop();
+    }
+
+    Console::printf("OK: Module '%s' disabled\r\n", args);
+
+    if (core::UsbManager::instance().newlyRequiresReplug(needsReplugBefore)) {
+        Console::printf("NOTE: USB replug required\r\n");
+    }
+}
+
+/**
  * \brief Sub-command tables and dispatchers for grouped commands.
  */
 
@@ -2153,9 +2360,11 @@ static const SubCommand kNvsSubs[] = {
 static void cmdNvs(const char* args) { dispatchSubCommand("NVS", args, kNvsSubs); }
 
 static const SubCommand kPinSubs[] = {
-    {"STATUS", "",                          "Show PIN retries / lockout state", cmdPinStatus},
-    {"RESET",  "",                          "Reset PIN retries (debug)",        cmdPinReset},
-    {"CHANGE", "<currentPin> <newPin>",     "Change badge PIN (4-8 digits)",    cmdPinChange},
+    {"STATUS",       "",                      "Show PIN retries / lockout state",         cmdPinStatus},
+    {"RESET",        "",                      "Reset PIN retries (debug)",                cmdPinReset},
+    {"CHANGE",       "<currentPin> <newPin>", "Change badge PIN (4-8 digits)",            cmdPinChange},
+    {"DURESS",       "<pin>",                 "Arm self-destruct PIN (wipes on entry)",   cmdPinDuress},
+    {"DURESS_CLEAR", "",                      "Disarm the self-destruct PIN",             cmdPinDuressClear},
     {nullptr, nullptr, nullptr, nullptr},
 };
 static void cmdPin(const char* args) { dispatchSubCommand("PIN", args, kPinSubs); }
@@ -2188,6 +2397,14 @@ static const SubCommand kWifiSubs[] = {
 };
 static void cmdWifi(const char* args) { dispatchSubCommand("WIFI", args, kWifiSubs); }
 
+static const SubCommand kModuleSubs[] = {
+    {"LIST",    "",        "List modules with state and errors", cmdModuleList},
+    {"ENABLE",  "<name>",  "Enable a module (persistent)",       cmdModuleEnable},
+    {"DISABLE", "<name>",  "Disable a module (persistent)",      cmdModuleDisable},
+    {nullptr, nullptr, nullptr, nullptr},
+};
+static void cmdModule(const char* args) { dispatchSubCommand("MODULE", args, kModuleSubs); }
+
 /**
  * \brief Registers all built-in serial commands.
  */
@@ -2210,13 +2427,13 @@ void SerialCmd::registerBuiltinCommands() {
     reg.registerCommand({"GET_TIME", "Show current time", cmdGetTime, "time", false});
     reg.registerCommand({"GET_DATE", "Show current date", cmdGetDate, "time", false});
     reg.registerCommand({"SET_TIME", "Set time (HH:MM:SS)", cmdSetTime, "time", false});
-    reg.registerCommand({"SET_DATE", "Set date (DD.MM.YYYY)", cmdSetDate, "time", false});
+    reg.registerCommand({"SET_DATE", "Set date (DD.MM.YYYY or Unix timestamp)", cmdSetDate, "time", false});
 
     reg.registerCommand({"SET_NAME", "Set display name", cmdSetName, "display", false});
     reg.registerCommand({"SET_INFO", "Set info line 1", cmdSetInfo, "display", false});
     reg.registerCommand({"SET_INFO2", "Set info line 2", cmdSetInfo2, "display", false});
 
-    reg.registerCommand({"PIN", "PIN management: STATUS/RESET/CHANGE", cmdPin, "pin", true, kPinSubs});
+    reg.registerCommand({"PIN", "PIN management: STATUS/RESET/CHANGE/DURESS", cmdPin, "pin", true, kPinSubs});
 
     reg.registerCommand({"TR01", "TROPIC01 secure element: STATUS/INFO/SESSION/SLOTS/RMEM_*/ECC_DEL/...",
                          cmdTr01, "tr01", true, kTr01Subs});
@@ -2228,6 +2445,9 @@ void SerialCmd::registerBuiltinCommands() {
 
     reg.registerCommand({"WIFI", "WiFi control: SCAN/STATUS/ON/OFF/CONNECT/TIMEOUT/FORGET",
                          cmdWifi, "wifi", true, kWifiSubs});
+
+    reg.registerCommand({"MODULE", "Module control: LIST/ENABLE/DISABLE",
+                         cmdModule, "module", true, kModuleSubs});
 }
 
 } // namespace cdc::serial

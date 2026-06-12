@@ -18,6 +18,7 @@
 #include "cdc_os_ui/SleepManager.h"
 #include "cdc_os_ui/HardwareInfo.h"
 #include "cdc_core/PinManager.h"
+#include "cdc_core/FactoryReset.h"
 #include "cdc_core/TropicSlotMap.h"
 #include "cdc_core/TropicStorage.h"
 #include "cdc_core/UsbManager.h"
@@ -93,6 +94,7 @@ static ListView* s_languageMenu = nullptr;
 static DateInputView* s_dateInput = nullptr;
 static TimeInputView* s_timeInput = nullptr;
 static PinChangeView* s_pinChangeView = nullptr;
+static PinChangeView* s_duressPinView = nullptr;
 static BlePairingPromptView* s_pairingPrompt = nullptr;
 static cdc::plugin_manager::PluginListView* s_pluginListView = nullptr;
 
@@ -351,7 +353,43 @@ static void onUnlockRequested() {
  * \return `true` if PIN is valid, otherwise `false`.
  */
 static bool onPinVerify(const char* pin) {
-    return core::PinManager::instance().verifyBadgePin(pin);
+    auto& pm = core::PinManager::instance();
+    // Duress check runs before the badge-PIN verify. The duress PIN is forced
+    // distinct from the badge PIN at set time, so the order is unambiguous.
+    // selfDestruct() does not return; from the user's perspective entry is
+    // indistinguishable from any other PIN attempt (no UI/log/timing tell).
+    if (pm.hasDuressPin() && pm.isDuressPin(pin)) {
+        core::selfDestruct();
+    }
+    return pm.verifyBadgePin(pin);
+}
+
+/**
+ * \brief PinChangeView change-callback for the duress-PIN setup flow.
+ *
+ * Step 1 of the wizard already verified the current badge PIN, so the current
+ * PIN is ignored here. Arms the duress PIN via PinManager (rejects a duress
+ * PIN equal to the badge PIN).
+ *
+ * \param currentPin Verified badge PIN (unused).
+ * \param newPin New duress PIN.
+ * \return `true` if the duress PIN was set.
+ */
+static bool onDuressPinSet(const char* currentPin, const char* newPin) {
+    (void)currentPin;
+    return core::PinManager::instance().setDuressPin(newPin);
+}
+
+/**
+ * \brief Opens the duress / self-destruct PIN setup wizard.
+ *
+ * Reuses the PIN-change wizard: step 1 re-authenticates with the badge PIN,
+ * steps 2-3 enter and confirm the new duress PIN.
+ */
+void showDuressPinSetup() {
+    if (!s_duressPinView) return;
+    s_duressPinView->init(core::PinManager::BADGE_PIN_MIN, core::PinManager::BADGE_PIN_MAX);
+    ViewStack::instance().push(s_duressPinView);
 }
 
 /**
@@ -912,6 +950,14 @@ void ui_init(const UiDeps& deps) {
     s_pinChangeView->init(core::PinManager::BADGE_PIN_MIN, core::PinManager::BADGE_PIN_MAX);
     s_pinChangeView->setOnComplete(settings::onPinChangeComplete);
 
+    // Duress / self-destruct PIN setup: same wizard, step 1 verifies the badge
+    // PIN, steps 2-3 set the duress PIN (armed via onDuressPinSet).
+    s_duressPinView = new PinChangeView();
+    s_duressPinView->init(core::PinManager::BADGE_PIN_MIN, core::PinManager::BADGE_PIN_MAX);
+    s_duressPinView->setTitle(ui::tr("core.set_duress_pin"));
+    s_duressPinView->setChangeCallback(onDuressPinSet);
+    s_duressPinView->setOnComplete(settings::onPinChangeComplete);
+
     // Initialize PinManager
     core::PinManager::instance().init();
 
@@ -940,6 +986,7 @@ void ui_init(const UiDeps& deps) {
     }
 
     // Serial callbacks
+    registerBackupSerialCommand();
     serial::SerialCmd::setTextCallback([](const char* field, const char* value) {
         if (!s_lockScreen) return;
         // Serial text arrives already as CP437 (matches T9 and the display

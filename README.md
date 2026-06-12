@@ -28,7 +28,7 @@ Modular firmware for the CDC Badge v1.0/v1.1 hardware security key featuring TRO
 | **Password Vault** | Working | Secure password storage (369 entries) |
 | **GPG/CCID** | Working (UI WIP) | OpenPGP smartcard via USB CCID, sign / encrypt / decrypt / SSH end-to-end with GnuPG |
 | **BLE vCard** | ⚠️ **WIP, untested on hardware.** | Badge-to-badge contact exchange via BLE |
-| **BLE HID** | ⚠️ **WIP, untested on hardware.** | Bluetooth keyboard for auto-type |
+| **BLE HID** | Working | Bluetooth keyboard for auto-type |
 | **WiFi + NTP** | Working | Time synchronization over WiFi, serial control (scan, connect, status, ..) |
 | **BLE Serial** | ⚠️ **WIP, untested on hardware.** | Bluetooth serial console (Nordic UART Service) |
 | **SAO Detection** | Working | Shitty Add-On port detection and info |
@@ -42,7 +42,6 @@ Modular firmware for the CDC Badge v1.0/v1.1 hardware security key featuring TRO
 ### Planned
 
 - [ ] Certificate Authority (CA) module
-- [ ] TROPIC01 firmware updater
 
 ## Plugins
 
@@ -77,11 +76,13 @@ components/
   serial_cmd/     Serial command interface
 
   mod_fido2/      FIDO2/WebAuthn/U2F module
-  mod_totp/       TOTP authenticator module
+  mod_2fa/        2FA authenticator module (TOTP)
   mod_password/   Password vault module
   mod_gpg/        OpenPGP smartcard (CCID) module
   mod_vcard/      BLE vCard exchange (Badge2Badge)
-  mod_hid/        BLE HID keyboard for auto-type
+  mod_blehid/     BLE HID keyboard for auto-type
+  mod_usbhid/     USB HID keyboard for auto-type
+  mod_otphid/     Yubico OTP challenge-response over USB HID
   mod_ble_serial/ BLE Serial console (Nordic UART Service)
   mod_sao/        SAO port detection
   mod_nvsedit/    NVS editor (privileged)
@@ -261,11 +262,39 @@ ssh-keygen -K
 ssh user@server
 ```
 
-### Using TOTP
+### Using 2FA (TOTP/HOTP)
 
 1. Add accounts via serial command or on-device
-2. View codes in TOTP menu
-3. Copy code manually (auto-type not yet implemented)
+2. View codes in the 2FA menu
+3. The badge types the code via the active HID keyboard (BLE keyboard, or USB keyboard when enabled)
+
+### USB Interface Slots
+
+The badge enumerates as a USB composite device. The serial console (CDC) is
+always active. The ESP32-S3 USB controller provides 5 IN endpoints including
+EP0; CDC occupies two of them, so **at most two additional USB interfaces can
+be active at the same time**.
+
+Modules that require a USB interface slot:
+
+| Module | USB interface | Default |
+|--------|---------------|---------|
+| `mod_fido2` | FIDO2/U2F HID | enabled |
+| `mod_gpg` | OpenPGP smartcard (CCID) | enabled |
+| `mod_usbhid` | USB keyboard (auto-type for 2FA/passwords) | disabled |
+| `mod_otphid` | Yubico OTP challenge-response over HID (KeePassXC) | disabled |
+
+All other modules, including `mod_blehid` (Bluetooth keyboard), use no USB
+interface slot.
+
+With the default set (FIDO2 + GPG) the USB budget is already full. To enable
+`mod_usbhid` (USB auto-type) or `mod_otphid` (challenge-response), first
+disable one of the active USB modules in Tools -> Expert -> Modules or via
+serial (`MODULE DISABLE <name>`, `MODULE ENABLE <name>`); otherwise the
+toggle fails with "No free USB slot". `mod_usbhid` and `mod_otphid` also
+share the same interface slot and cannot run simultaneously. Toggling USB
+modules re-enumerates the device; replug the USB cable if the host does not
+pick up the new configuration.
 
 ## Serial Commands
 
@@ -284,7 +313,9 @@ See [Serial Commands Reference](docs/SERIAL_COMMANDS.md) for the full command li
 | Active | Normal use | - |
 | Light Sleep | Lock screen idle | Any key except [3] (Menu) |
 | Deep Sleep | Hold N 5s on lock | Any key (reset) |
-| Shipping | Hold BOOT 3s | USB power |
+| Shipping | Press FLASH / PW OFF (back) | Hold PW ON 2s |
+
+> **Shipping mode** disconnects the battery. Wake it by holding **PW ON** for 2s.
 
 ## License
 

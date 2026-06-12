@@ -279,4 +279,21 @@ void saveDisplayField(const char* key, const char* value) {
     nvs_close(nvs);
 }
 
+/**
+ * \brief Reads one display text field from NVS into the caller buffer.
+ * \param key NVS key for the field.
+ * \param out Destination buffer.
+ * \param outSize Capacity of \p out in bytes.
+ * \return true if a non-empty value was read.
+ */
+bool loadDisplayField(const char* key, char* out, size_t outSize) {
+    if (!key || !out || outSize == 0) return false;
+    nvs_handle_t nvs;
+    if (nvs_open("display", NVS_READONLY, &nvs) != ESP_OK) return false;
+    size_t len = outSize;
+    esp_err_t err = nvs_get_str(nvs, key, out, &len);
+    nvs_close(nvs);
+    return err == ESP_OK && len > 1;
+}
+
 } // namespace cdc::ui::settings

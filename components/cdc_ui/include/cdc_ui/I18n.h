@@ -42,7 +42,7 @@ namespace cdc::ui {
  * arrays of these and register them with `I18n::registerEnglishTable()`.
  */
 struct I18nEntry {
-    const char* key;   ///< Stable string key, e.g. "core.save" or "mod_totp.codes".
+    const char* key;   ///< Stable string key, e.g. "core.save" or "mod_2fa.codes".
     const char* en;    ///< English translation - rodata literal.
 };
 

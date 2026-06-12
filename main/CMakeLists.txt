@@ -6,7 +6,7 @@
 # Each module must provide a <modulename>_register() function.
 # =============================================================================
 set(MODULES
-    mod_totp
+    mod_2fa
     mod_fido2
     mod_password
     mod_gpg
@@ -14,7 +14,9 @@ set(MODULES
     mod_vcard
     mod_ble_serial
     mod_nvsedit
-    mod_hid
+    mod_blehid
+    mod_usbhid
+    mod_otphid
     mod_vfat
 )
 # =============================================================================

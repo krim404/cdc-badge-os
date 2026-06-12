@@ -15,6 +15,11 @@ extern "C" {
 #define USB_PID_GEMALTO      0x4433  // GemPC433 (libccid whitelisted)
 #define USB_VID_ESPRESSIF    0x303A  // Espressif Systems
 #define USB_PID_BADGE        0xBADE  // CDC Badge custom PID
+// OnlyKey OTP IDs, whitelisted by KeePassXC for HMAC-SHA1 challenge-response
+// (keepassxreboot/keepassxc commit e4326fb: yk_open_key_vid_pid(0x1d50, {0x60fc})).
+// mod_otphid presents these so KeePassXC/ykinfo recognize the OTP HID interface.
+#define USB_VID_ONLYKEY      0x1D50  // OpenMoko / Great Scott Gadgets (OnlyKey)
+#define USB_PID_ONLYKEY      0x60FC  // OnlyKey
 #define USB_BCD   0x0200
 
 // String Descriptor Indices (fixed strings only, module strings are dynamic)

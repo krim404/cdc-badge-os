@@ -42,17 +42,25 @@ void UsbManager::stop() {
 }
 
 /**
+ * \brief Counts currently active HID interfaces.
+ * \return Number of active interface entries.
+ */
+uint8_t UsbManager::activeHidCount() const {
+    uint8_t count = 0;
+    for (const auto& entry : entries_) {
+        if (entry.active) count++;
+    }
+    return count;
+}
+
+/**
  * \brief Checks whether another HID interface can be activated.
  * \param type Requested interface type (currently unused in check).
  * \return `true` when active-interface limit is not exceeded.
  */
 bool UsbManager::canActivate(UsbHidInterface type) const {
     (void)type;
-    uint8_t count = 0;
-    for (const auto& entry : entries_) {
-        if (entry.active) count++;
-    }
-    return count < MAX_ACTIVE_HID;
+    return activeHidCount() < MAX_ACTIVE_HID;
 }
 
 /**

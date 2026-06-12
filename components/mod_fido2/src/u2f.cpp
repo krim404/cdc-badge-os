@@ -329,13 +329,17 @@ bool u2f_init_attestation(void) {
 }
 
 /**
- * \brief Returns cached attestation certificate pointer and length.
+ * \brief Returns attestation certificate pointer and length, initializing
+ *        attestation on demand if the boot-time init did not complete.
  * \param cert Output pointer to DER certificate.
  * \param cert_len Output certificate length.
  * \return `true` on success, otherwise `false`.
  */
 bool u2f_get_attestation_cert(const uint8_t **cert, uint16_t *cert_len) {
-    if (!g_attest_initialized || !cert || !cert_len) {
+    if (!cert || !cert_len) {
+        return false;
+    }
+    if (!u2f_init_attestation()) {
         return false;
     }
     *cert = g_attest_cert;
@@ -344,7 +348,8 @@ bool u2f_get_attestation_cert(const uint8_t **cert, uint16_t *cert_len) {
 }
 
 /**
- * \brief Signs payload using initialized attestation key.
+ * \brief Signs payload using the attestation key, initializing attestation
+ *        on demand if the boot-time init did not complete.
  * \param data Data to sign.
  * \param data_len Length of `data`.
  * \param signature Destination signature buffer.
@@ -353,7 +358,7 @@ bool u2f_get_attestation_cert(const uint8_t **cert, uint16_t *cert_len) {
  */
 bool u2f_attestation_sign(const uint8_t *data, size_t data_len,
                           uint8_t *signature, uint8_t *sig_len) {
-    if (!g_attest_initialized) {
+    if (!u2f_init_attestation()) {
         return false;
     }
     return u2f_attest_sign(data, data_len, signature, sig_len);
@@ -527,10 +532,10 @@ static uint16_t u2f_register(const uint8_t *challenge, const uint8_t *applicatio
 
     uint8_t cred_id[U2F_KEY_HANDLE_SIZE];
     uint8_t pubkey[64];  // X || Y (no uncompressed prefix)
+    uint8_t slot = 0;
 
     {
         // Real registration - create and store credential
-        uint8_t slot;
         uint8_t user_id[1] = {0};
 
         if (!fido2_storage_create_credential(
@@ -562,13 +567,15 @@ static uint16_t u2f_register(const uint8_t *challenge, const uint8_t *applicatio
     offset += U2F_KEY_HANDLE_SIZE;
 
     // Attestation certificate
-    if (!g_attest_initialized) {
+    if (!u2f_init_attestation()) {
         LOG_E(TAG, "Attestation not initialized");
+        fido2_storage_delete_credential(slot);
         return u2f_response_error(response, U2F_SW_WRONG_DATA);
     }
 
     if (offset + g_attest_cert_len + U2F_MAX_EC_SIG_SIZE + 2 > response_max) {
         LOG_E(TAG, "Response buffer too small");
+        fido2_storage_delete_credential(slot);
         return u2f_response_error(response, U2F_SW_WRONG_LENGTH);
     }
 
@@ -597,6 +604,7 @@ static uint16_t u2f_register(const uint8_t *challenge, const uint8_t *applicatio
 
     if (!u2f_attest_sign(to_sign, to_sign_len, signature, &sig_len)) {
         LOG_E(TAG, "Attestation signing failed");
+        fido2_storage_delete_credential(slot);
         return u2f_response_error(response, U2F_SW_WRONG_DATA);
     }
 

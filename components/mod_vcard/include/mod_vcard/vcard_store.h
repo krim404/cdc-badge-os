@@ -40,6 +40,15 @@ bool vcard_store_get_display_own(char* out, size_t max_len);
 void vcard_store_init(void);
 uint16_t vcard_store_count(void);
 bool vcard_store_add(const char* vcard, size_t len, char* err, size_t err_len);
+
+/**
+ * \brief Reports whether an exact-text vCard is already stored.
+ * \param vcard Candidate vCard text.
+ * \param len Candidate length.
+ * \return `true` if a stored card matches \p vcard byte for byte.
+ */
+bool vcard_store_contains(const char* vcard, size_t len);
+
 bool vcard_store_delete(uint16_t slot);
 size_t vcard_store_get(uint16_t slot, char* out, size_t max_len);
 bool vcard_store_get_display(uint16_t slot, char* out, size_t max_len);

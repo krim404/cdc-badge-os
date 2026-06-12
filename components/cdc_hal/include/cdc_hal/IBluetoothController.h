@@ -33,8 +33,9 @@ struct BleUuid {
     static BleUuid from16(uint16_t v) {
         BleUuid u;
         u.type = UUID_16;
+        // u16 and u128 alias in the union: zero first, then set the value
+        std::memset(u.u128, 0, sizeof(u.u128));
         u.u16 = v;
-        std::memset(u.u128, 0, sizeof(u.u128)); // zero padding
         return u;
     }
 
@@ -144,7 +145,7 @@ public:
 
     // GATT server limits (single source of truth for the controller and any
     // caller validating a service before registerGattService()).
-    static constexpr uint8_t MAX_REGISTERED_SERVICES = 5;
+    static constexpr uint8_t MAX_REGISTERED_SERVICES = 7;
     static constexpr uint8_t MAX_CHARS_PER_SERVICE   = 6;
 
     // === Power Control ===
@@ -265,6 +266,13 @@ public:
      * Clear manufacturer data from advertising
      */
     virtual void clearAdvertisingManufacturerData() {}
+
+    /**
+     * Set the GAP Appearance value advertised in the primary PDU.
+     * Lets HOGP hosts categorize the device (e.g. 0x03C1 = HID Keyboard).
+     * @param appearance Appearance value, or 0 to advertise none
+     */
+    virtual void setAppearance(uint16_t appearance) { (void)appearance; }
 
     // === Scanning ===
 

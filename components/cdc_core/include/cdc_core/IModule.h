@@ -3,6 +3,8 @@
 #include "cdc_core/IService.h"
 #include <cstdint>
 
+struct cJSON;
+
 namespace cdc::ui {
     class IView;
 }
@@ -79,6 +81,41 @@ public:
      *        install (no NVS entry yet). User toggles persist independently.
      */
     virtual bool isDefaultEnabled() const { return true; }
+
+    /**
+     * \brief Per-module restore outcome reported by importBackup().
+     *
+     * Counts are best-effort tallies, not an all-or-nothing status: a module
+     * imports each record independently and keeps going past failures.
+     */
+    struct BackupResult {
+        uint16_t imported = 0;  ///< Records restored successfully.
+        uint16_t failed = 0;    ///< Records skipped due to errors.
+    };
+
+    /**
+     * \brief Exports this module's data as a JSON section for the backup file.
+     *
+     * Modules write semantic records (never raw slot/NVS blobs) into \p out so
+     * the backup survives slot-layout and format changes. Default no-op: a
+     * module that does not implement this is simply absent from the backup.
+     *
+     * \param out cJSON node (object or array) the module fills with its records.
+     * \return true if the module produced exportable data, false to be skipped.
+     */
+    virtual bool exportBackup(cJSON* out) { (void)out; return false; }
+
+    /**
+     * \brief Restores this module's data from its JSON backup section.
+     *
+     * Best-effort: each record is created through the module's normal storage
+     * path (fresh slot allocation); a record that cannot be restored is skipped
+     * and counted, never aborting the whole restore. Default no-op.
+     *
+     * \param in cJSON node holding the module's previously exported section.
+     * \return Tally of imported and failed records.
+     */
+    virtual BackupResult importBackup(const cJSON* in) { (void)in; return {}; }
 
     /**
      * \brief Returns module menu items.

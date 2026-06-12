@@ -4,6 +4,7 @@
  */
 
 #include "AppUiInternal.h"
+#include "cdc_os_ui/views/BlePairingView.h"
 #include "cdc_hal/IBluetoothController.h"
 #include "cdc_views/RenderHelpers.h"
 #include "cdc_log.h"
@@ -22,6 +23,7 @@ static const char* TAG = "BleMenu";
 
 enum BluetoothMenuIdx {
     BT_IDX_ENABLE = 0,
+    BT_IDX_PAIR,
     BT_IDX_STATUS,
     BT_IDX_SCAN,
     BT_IDX_FORGET_BONDS,
@@ -135,6 +137,7 @@ void rebuildBluetoothMenu() {
     } else {
         s_bluetoothItems[BT_IDX_ENABLE] = {ui::tr("core.bluetooth_off"), 0, false, nullptr};
     }
+    s_bluetoothItems[BT_IDX_PAIR] = {ui::tr("core.ble_pairing_menu"), 0, false, nullptr};
     s_bluetoothItems[BT_IDX_STATUS] = {ui::tr("core.ble_status"), 0, false, nullptr};
     s_bluetoothItems[BT_IDX_SCAN] = {ui::tr("core.ble_scan"), 0, !enabled, nullptr};
     s_bluetoothItems[BT_IDX_FORGET_BONDS] = {"Forget all bonds", 0, !enabled, nullptr};
@@ -180,6 +183,11 @@ static void onBluetoothMenuSelect(uint16_t index, void* userData) {
         case BT_IDX_ENABLE:
             toggleBluetoothEnable();
             return;
+        case BT_IDX_PAIR: {
+            static BlePairingView s_blePairingView;
+            ViewStack::instance().push(&s_blePairingView);
+            return;
+        }
         case BT_IDX_STATUS:
             showBluetoothStatus();
             return;

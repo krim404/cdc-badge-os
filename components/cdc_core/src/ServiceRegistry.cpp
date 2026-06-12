@@ -13,10 +13,11 @@ namespace cdc::core {
  */
 static const char* serviceTypeName(ServiceType type) {
     switch (type) {
-        case ServiceType::KEYBOARD:     return "keyboard";
-        case ServiceType::CLIPBOARD:    return "clipboard";
-        case ServiceType::NOTIFICATION: return "notification";
-        default:                        return "unknown";
+        case ServiceType::KEYBOARD:            return "keyboard";
+        case ServiceType::CHALLENGE_RESPONDER: return "challenge_responder";
+        case ServiceType::CLIPBOARD:           return "clipboard";
+        case ServiceType::NOTIFICATION:        return "notification";
+        default:                               return "unknown";
     }
 }
 

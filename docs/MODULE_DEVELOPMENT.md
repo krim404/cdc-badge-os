@@ -321,7 +321,7 @@ Add your module to `main/CMakeLists.txt`:
 
 ```cmake
 set(MODULES
-    mod_totp
+    mod_2fa
     mod_fido2
     mod_password
     mod_gpg
@@ -440,13 +440,13 @@ The build system generates `main/modules_init.gen.h`:
 
 ```cpp
 // Auto-generated - DO NOT EDIT
-extern "C" void mod_totp_register();
+extern "C" void mod_2fa_register();
 extern "C" void mod_fido2_register();
 extern "C" void mod_password_register();
 extern "C" void mod_gpg_register();
 
 inline void modules_register_all() {
-    mod_totp_register();
+    mod_2fa_register();
     mod_fido2_register();
     mod_password_register();
     mod_gpg_register();
@@ -477,7 +477,7 @@ The TROPIC01 secure element has two storage types:
 | 1-3 | mod_gpg (paired with ECC 1-3: SIG / DEC / AUT companion slots) |
 | 4 | mod_ca (paired with ECC 4) |
 | 5-31 | mod_fido2 (27 credentials; companion slots for ECC 5-30) |
-| 32-131 | mod_totp (100 accounts) |
+| 32-131 | mod_2fa (100 accounts) |
 | 132-500 | mod_password (369 entries) |
 | 501-511 | WASM plugin named slots (`capabilities.rmem` in manifest) |
 
@@ -626,7 +626,7 @@ uint8_t MyModule::getLockScreenContextItems(LockScreenContextItem* items, uint8_
 
 Modules can provide or consume optional services using the typed service pattern:
 
-**Providing a service (e.g., mod_hid provides keyboard):**
+**Providing a service (e.g., mod_blehid provides keyboard):**
 
 ```cpp
 #include "cdc_core/ServiceRegistry.h"
@@ -637,7 +637,7 @@ ServiceRegistry::instance().provide<IKeyboardProvider>(
     ServiceType::KEYBOARD, &myKeyboardImpl);
 ```
 
-**Consuming a service (e.g., mod_totp uses keyboard for auto-type):**
+**Consuming a service (e.g., mod_2fa uses keyboard for auto-type):**
 
 ```cpp
 #include "cdc_core/IKeyboardProvider.h"
@@ -668,11 +668,11 @@ if (keyboard && keyboard->isConnected()) {
 
 Reference existing modules for patterns:
 
-- `mod_totp` - Simple module with list view and wizard
+- `mod_2fa` - Simple module with list view and wizard
 - `mod_fido2` - Complex module with USB HID integration
 - `mod_password` - Module with TROPIC01 storage
 - `mod_vcard` - BLE service module with lock screen context items
-- `mod_hid` - Service provider module (IKeyboardProvider)
+- `mod_blehid` - Service provider module (IKeyboardProvider)
 - `mod_sao` - Minimal hardware detection module
 
 For the addressable WS2813 strip on the Grove port, see the `grove_led`

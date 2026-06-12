@@ -13,7 +13,7 @@ namespace cdc::core {
  * \brief Manages logical-to-physical RMEM slot mapping for module storage layers.
  *
  * Encapsulates slot range bookkeeping and free-slot discovery shared by
- * `TotpStore`, `PasswordStore`, and other storage layers backed by the
+ * `OathStore`, `PasswordStore`, and other storage layers backed by the
  * Tropic secure element.
  */
 class SlotManager {

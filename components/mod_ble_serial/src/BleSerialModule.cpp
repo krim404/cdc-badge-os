@@ -260,8 +260,6 @@ extern "C" void mod_ble_serial_register() {
 
         if (!module.init()) {
             moduleReg.reportModuleError(module.getName(), "Init failed");
-            return;
         }
-        module.start();
     });
 }

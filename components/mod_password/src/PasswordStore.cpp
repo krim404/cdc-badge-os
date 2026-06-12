@@ -286,6 +286,46 @@ bool PasswordStore::listEntriesSorted(EntryIndex* entries, uint16_t maxEntries, 
 }
 
 /**
+ * \brief Finds the logical slot of an entry with a matching title.
+ *
+ * Title is the entry's natural identity (it is the secure-element header name).
+ * Comparison is case-insensitive to match the list ordering.
+ *
+ * \param title Title to look up.
+ * \param logicalSlotOut Output logical slot index of the first match.
+ * \return `true` if a matching entry exists.
+ */
+bool PasswordStore::findByTitle(const char* title, uint16_t* logicalSlotOut) const {
+    if (!title || !logicalSlotOut) return false;
+    if (!slots_.hasSlotRange()) return false;
+
+    struct Ctx {
+        const char* target;
+        uint16_t slot;
+        bool found;
+    } ctx = { title, 0, false };
+
+    auto cb = [](uint16_t slot, const cdc::core::TropicStorage::CacheEntry& entry, void* user) {
+        auto* c = static_cast<Ctx*>(user);
+        if (c->found) return;
+        if (PasswordStore::compareTitles(entry.name, c->target) == 0) {
+            uint16_t logical = 0;
+            if (PasswordStore::instance().toLogicalSlot(slot, &logical)) {
+                c->slot = logical;
+                c->found = true;
+            }
+        }
+    };
+
+    cdc::core::TropicStorage::instance().forEachSlot(
+        slots_.moduleId(), slots_.rmemStart(), slots_.rmemEnd(), cb, &ctx);
+
+    if (!ctx.found) return false;
+    *logicalSlotOut = ctx.slot;
+    return true;
+}
+
+/**
  * \brief Finds first free logical slot in this module's range.
  * \param logicalSlotOut Output logical slot index.
  * \return `true` if a free slot was found.

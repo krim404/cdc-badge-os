@@ -31,7 +31,10 @@ bool AttestationKeyService::init() {
 }
 
 /**
- * \brief Starts service and ensures initialized state.
+ * \brief Starts service, ensures initialized state, and attempts to provision
+ *        the attestation key synchronously so dependent module inits (FIDO2
+ *        attestation certificate) find it present. Falls back to onTick
+ *        retries when the secure element is not ready yet.
  * \return `true` if service is started.
  */
 bool AttestationKeyService::start() {
@@ -39,6 +42,10 @@ bool AttestationKeyService::start() {
         if (!init()) return false;
     }
     state_ = ServiceState::STARTED;
+    if (ensureKey()) {
+        ready_ = true;
+        LOG_I(TAG, "Attestation key ready");
+    }
     return true;
 }
 

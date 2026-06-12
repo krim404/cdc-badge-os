@@ -1,6 +1,8 @@
 #include "cdc_core/FactoryReset.h"
 #include "cdc_log.h"
+#include "nvs.h"
 #include "nvs_flash.h"
+#include "esp_system.h"
 
 static const char* TAG = "FactoryReset";
 
@@ -53,6 +55,16 @@ esp_err_t wipeNvs() {
         return err;
     }
     return ESP_OK;
+}
+
+void selfDestruct() {
+    nvs_handle_t handle = 0;
+    if (nvs_open(kBootProfileNs, NVS_READWRITE, &handle) == ESP_OK) {
+        nvs_erase_key(handle, kBootProfileKey);
+        nvs_commit(handle);
+        nvs_close(handle);
+    }
+    esp_restart();
 }
 
 } // namespace cdc::core

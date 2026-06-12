@@ -37,8 +37,10 @@ void rebootIntoBootloader();
 /// removing a row needs no separate counter update.
 struct FixedExpertEntry { const char* key; void (*action)(); };
 static const FixedExpertEntry kExpertTop[] = {
-    {"core.hardware_info", runSystemTest},
-    {"core.modules",       showModulesView},
+    {"core.hardware_info",  runSystemTest},
+    {"core.modules",        showModulesView},
+    {"core.backup",         showBackupMenu},
+    {"core.set_duress_pin", showDuressPinSetup},
 };
 static const FixedExpertEntry kExpertBottom[] = {
     {"core.tr01_cache_rebuild", runTropicCacheRebuild},
@@ -120,11 +122,16 @@ static void onModuleSelect(uint16_t index, void* userData) {
 
     if (nowEnabled) {
         if (!moduleReg.startModule(idx)) {
-            const char* error = moduleReg.getModuleSlotError(idx);
-            if (error) {
-                showToastError(error, TOAST_DURATION_MEDIUM_MS);
-            } else {
-                showToastError(ui::tr("core.failed"), TOAST_DURATION_MEDIUM_MS);
+            switch (moduleReg.classifyStartFailure(idx)) {
+                case core::ModuleStartFailure::SlotError:
+                    showToastError(moduleReg.getModuleSlotError(idx), TOAST_DURATION_MEDIUM_MS);
+                    break;
+                case core::ModuleStartFailure::UsbBudgetFull:
+                    showToastError(ui::tr("core.usb_no_free_slot"), TOAST_DURATION_MEDIUM_MS);
+                    break;
+                case core::ModuleStartFailure::Generic:
+                    showToastError(ui::tr("core.failed"), TOAST_DURATION_MEDIUM_MS);
+                    break;
             }
         }
     } else {
@@ -134,8 +141,7 @@ static void onModuleSelect(uint16_t index, void* userData) {
     }
 
     // If USB config changed by THIS module toggle, show sticky alert
-    bool needsReplugAfter = core::UsbManager::instance().needsReplug();
-    if (!needsReplugBefore && needsReplugAfter) {
+    if (core::UsbManager::instance().newlyRequiresReplug(needsReplugBefore)) {
         showToastAlertSticky(ui::tr("core.usb_replug_required"));
     }
 
@@ -157,17 +163,9 @@ static void rebuildModulesView() {
         for (uint8_t i = 0; i < count && i < MODULES_VIEW_MAX; i++) {
             core::IModule* module = moduleReg.getModuleAt(i);
             if (module) {
-                const char* status;
-                if (moduleReg.hasModuleSlotError(i)) {
-                    status = "[FAIL]";
-                } else {
-                    bool enabled = moduleReg.isModuleEnabled(i);
-                    status = enabled
-                        ? (module->getState() == core::ServiceState::STARTED ? "[ON]" : "[--]")
-                        : "[OFF]";
-                }
                 snprintf(s_moduleLabels[i], sizeof(s_moduleLabels[i]),
-                         "%s %s", module->getName(), status);
+                         "%s %s", module->getName(),
+                         moduleReg.getModuleStatusLabel(i));
                 s_modulesItems[i] = {s_moduleLabels[i], 0, false, nullptr};
             }
         }

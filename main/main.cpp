@@ -148,11 +148,6 @@ static bool initNvs() {
     return ret == ESP_OK;
 }
 
-// Build-profile marker persisted in NVS; gates the one-time factory reset on a
-// firmware-profile change. Seeded only after the reset fully completes.
-static constexpr const char* kBootProfileNs  = "boot_profile";
-static constexpr const char* kBootProfileKey = "profile";
-
 /**
  * \brief Persists the current build-profile byte, marking the factory reset
  *        complete.

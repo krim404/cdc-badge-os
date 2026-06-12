@@ -8,8 +8,8 @@ namespace cdc::core {
 /**
  * PIN Manager - Manages all device PINs in TROPIC01 R-Memory Slot 0
  *
- * Storage Format (106 bytes):
- * [Magic 0xDF]           (1)  - Format identifier
+ * Storage Format (147 bytes):
+ * [Magic 0xE0]           (1)  - Format identifier
  * [Badge/FIDO2 Hash]     (16) - LEFT(SHA256(PIN), 16)
  * [Badge Locked]         (1)  - 0x00 unlocked, 0x01 locked (recovery on next boot)
  * [KDF Algorithm]        (1)  - 0x03 = KDF_ITERSALTED_S2K
@@ -21,6 +21,13 @@ namespace cdc::core {
  * [PW3 Hash]             (32) - KDF hash of Admin PIN
  * [PW1 Retries]          (1)  - Remaining attempts (smartcard-style, no recovery)
  * [PW3 Retries]          (1)  - Remaining attempts (smartcard-style, no recovery)
+ * [Duress Set]           (1)  - 0x00 not set, 0x01 set (self-destruct armed)
+ * [Duress Salt]          (8)  - Random salt for duress PIN
+ * [Duress Hash]          (32) - KDF hash of duress PIN
+ *
+ * The whole payload, including the duress fields, is covered by the slot-0
+ * attestation signature, so tampering with the duress state invalidates the
+ * record and forces a reset to defaults.
  *
  * Badge PIN: retry counter lives in RAM only. R-Memory persists just a binary
  * "locked" flag. Boot grants one attempt (or zero if locked) and starts the
@@ -115,6 +122,36 @@ public:
     bool isPW3Blocked() const { return pw3Retries_ == 0; }
     void resetPW3Retries();
 
+    // === Duress / Self-Destruct PIN (optional, default NOT set) ===
+    /**
+     * \brief Sets the duress PIN, arming the self-destruct trigger.
+     *
+     * The duress PIN must be distinct from the current badge PIN so the
+     * unlock path can tell them apart unambiguously. Setting it again
+     * overwrites the previous duress PIN.
+     *
+     * \param pin Candidate duress PIN (4-8 digits).
+     * \return `true` if set; `false` on invalid format or if equal to the
+     *         current badge PIN.
+     */
+    bool setDuressPin(const char* pin);
+
+    /**
+     * \brief Clears the duress PIN, disarming the self-destruct trigger.
+     * \return `true` if the record was updated.
+     */
+    bool clearDuressPin();
+
+    /** \brief Returns whether a duress PIN is currently armed. */
+    bool hasDuressPin() const { return duressSet_; }
+
+    /**
+     * \brief Constant-time check whether a candidate matches the duress PIN.
+     * \param pin Candidate PIN string.
+     * \return `true` if a duress PIN is set and the candidate matches it.
+     */
+    bool isDuressPin(const char* pin) const;
+
     // === KDF Parameters (for OpenPGP KDF-DO) ===
     uint8_t getKdfAlgorithm() const { return KDF_ITERSALTED_S2K; }
     uint8_t getHashAlgorithm() const { return HASH_SHA256; }
@@ -128,9 +165,9 @@ private:
     PinManager() = default;
 
     static constexpr uint8_t MAX_RETRIES = 3;
-    static constexpr uint8_t MAGIC = 0xDF;
+    static constexpr uint8_t MAGIC = 0xE0;
     static constexpr uint8_t SIGNATURE_SIZE = 64;        // P-256 ECDSA raw R||S
-    static constexpr uint8_t PAYLOAD_SIZE = 106;
+    static constexpr uint8_t PAYLOAD_SIZE = 147;
     // Stored buffer: [PAYLOAD_SIZE bytes payload][SIGNATURE_SIZE bytes ECDSA sig]
     static constexpr uint16_t STORAGE_SIZE = PAYLOAD_SIZE + SIGNATURE_SIZE;
 
@@ -147,6 +184,12 @@ private:
     uint8_t pw3Hash_[KDF_HASH_SIZE] = {};
     uint8_t pw1Retries_ = MAX_RETRIES;
     uint8_t pw3Retries_ = MAX_RETRIES;
+
+    // Duress / self-destruct PIN (optional, default not set). KDF-hashed with
+    // the same machinery as PW1/PW3 and covered by the same attestation.
+    bool    duressSet_ = false;
+    uint8_t duressSalt_[SALT_SIZE] = {};
+    uint8_t duressHash_[KDF_HASH_SIZE] = {};
 
     // Mirrors of what is currently persisted in R-Memory. Updated by
     // saveToStorage() after a successful write. Used to skip redundant
@@ -172,7 +215,7 @@ private:
     bool computeBadgeHash(const char* pin, uint8_t* hashOut);
 
     // OpenPGP KDF hash: SHA256 iterated with salt
-    bool computeKdfHash(const char* pin, const uint8_t* salt, uint8_t* hashOut);
+    bool computeKdfHash(const char* pin, const uint8_t* salt, uint8_t* hashOut) const;
 
     bool compareHash(const uint8_t* h1, const uint8_t* h2, size_t len) const;
     void generateSalt(uint8_t* salt);
