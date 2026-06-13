@@ -3494,8 +3494,8 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
  * \return CTAP2 status code.
  */
 uint8_t ctap2_selection(uint8_t *response, uint16_t *response_len) {
-    // Selection just requires user presence
-    if (!wait_for_user_presence(NULL, FIDO2_ACTION_AUTHENTICATE, NULL)) {
+    // authenticatorSelection carries no RP context and requires user presence only
+    if (!wait_for_user_presence(NULL, FIDO2_ACTION_SELECT, NULL)) {
         response[0] = CTAP2_ERR_OPERATION_DENIED;
         *response_len = 1;
         return CTAP2_ERR_OPERATION_DENIED;

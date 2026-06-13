@@ -37,7 +37,7 @@ typedef enum {
 typedef enum {
     FIDO2_ACTION_REGISTER = 0,  // makeCredential, new credential
     FIDO2_ACTION_AUTHENTICATE,  // getAssertion
-    FIDO2_ACTION_SELECT,        // Browser probe (make.me.blink/.dummy) - no PIN required
+    FIDO2_ACTION_SELECT,        // Device selection (authenticatorSelection 0x0B / make.me.blink probe) - user presence only, no PIN
     FIDO2_ACTION_OVERWRITE      // makeCredential replacing an existing resident credential
 } fido2_action_t;
 
