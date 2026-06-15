@@ -599,6 +599,54 @@ bool vcard_store_add(const char* vcard, size_t len, char* err, size_t err_len) {
 }
 
 /**
+ * \brief Overwrites the vCard stored at slot in place after validation.
+ * \param slot Slot index of an existing stored card.
+ * \param vcard New vCard text.
+ * \param len New vCard length.
+ * \param err Output error buffer.
+ * \param err_len Error buffer size.
+ * \return `true` on successful update.
+ */
+bool vcard_store_update(uint16_t slot, const char* vcard, size_t len, char* err, size_t err_len) {
+    if (!vcard_validate(vcard, len, err, err_len)) {
+        return false;
+    }
+    vcard_store_init();
+    if (slot >= VCARD_MAX_CARDS || !g_cards[slot].used) {
+        set_err(err, err_len, "No such vCard");
+        return false;
+    }
+
+    nvs_handle_t nvs;
+    if (nvs_open(VCARD_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) {
+        set_err(err, err_len, "NVS open failed");
+        return false;
+    }
+
+    char key[8];
+    vcard_key_for_slot(key, sizeof(key), slot);
+    char tmp[VCARD_MAX_LEN + 1];
+    memcpy(tmp, vcard, len);
+    tmp[len] = '\0';
+    len = vcard_filter_empty_fields(tmp, len);
+
+    esp_err_t ret = nvs_set_str(nvs, key, tmp);
+    if (ret == ESP_OK) {
+        ret = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    if (ret != ESP_OK) {
+        set_err(err, err_len, "NVS write failed");
+        return false;
+    }
+
+    vcard_parse_names(tmp, g_cards[slot].last_name, sizeof(g_cards[slot].last_name),
+                      g_cards[slot].display, sizeof(g_cards[slot].display));
+    g_cards[slot].hash = fnv1a_hash(tmp, strnlen(tmp, VCARD_MAX_LEN));
+    return true;
+}
+
+/**
  * \brief Deletes peer vCard at slot index.
  * \param slot Slot index.
  * \return `true` on successful deletion.

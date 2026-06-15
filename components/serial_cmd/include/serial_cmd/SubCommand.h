@@ -50,7 +50,7 @@ inline void printSubCommandHelp(const char* parent, const SubCommand* table)
     Console::printf("Usage: %s <subcommand> [args]\r\n", parent);
     Console::printf("Subcommands:\r\n");
     for (const SubCommand* e = table; e->name; ++e) {
-        char head[40];
+        char head[kSubCommandHeadBufSize];
         if (e->args && *e->args) {
             std::snprintf(head, sizeof(head), "%s %s", e->name, e->args);
         } else {

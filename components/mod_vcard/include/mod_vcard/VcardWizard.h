@@ -34,6 +34,12 @@ public:
                           uint16_t savedOffset, uint16_t failedOffset);
 
     /**
+     * \brief Callback fired after a successful save, before returning to the
+     *        anchor view. Lets the caller refresh a list it owns.
+     */
+    using DoneCallback = void (*)();
+
+    /**
      * \brief Starts the wizard with an empty struct.
      * \param returnAnchor View to pop back to once the wizard finishes.
      */
@@ -45,6 +51,21 @@ public:
      * \param returnAnchor View to pop back to once the wizard finishes.
      */
     static void edit(ui::IView* returnAnchor);
+
+    /**
+     * \brief Starts the wizard to create a new stored contact (received list).
+     * \param returnAnchor View to pop back to once the wizard finishes.
+     * \param onDone Optional callback fired after a successful save.
+     */
+    static void startReceived(ui::IView* returnAnchor, DoneCallback onDone);
+
+    /**
+     * \brief Starts the wizard prefilled with a stored contact for editing.
+     * \param returnAnchor View to pop back to once the wizard finishes.
+     * \param slot Slot index of the stored contact to edit.
+     * \param onDone Optional callback fired after a successful save.
+     */
+    static void editReceived(ui::IView* returnAnchor, uint16_t slot, DoneCallback onDone);
 };
 
 } // namespace cdc::mod_vcard

@@ -37,6 +37,12 @@ int host_ui_set_view_empty(const char* text)
     return cdc::plugin_manager::PluginUiState::instance().setViewEmpty(text);
 }
 
+int host_ui_set_view_lifecycle(uint32_t hide_action_id, uint32_t show_action_id)
+{
+    return cdc::plugin_manager::PluginUiState::instance()
+        .setViewLifecycle(hide_action_id, show_action_id);
+}
+
 int host_ui_update_list_item(uint16_t index, const ui_item_t* item)
 {
     return cdc::plugin_manager::PluginUiState::instance().updateListItem(index, item);

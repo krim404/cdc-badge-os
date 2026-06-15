@@ -6,6 +6,7 @@
 #include "AppUiInternal.h"
 #include "cdc_os_ui/views/BlePairingView.h"
 #include "cdc_hal/IBluetoothController.h"
+#include "cdc_msg/MessageTransfer.h"
 #include "cdc_views/RenderHelpers.h"
 #include "cdc_log.h"
 
@@ -24,8 +25,10 @@ static const char* TAG = "BleMenu";
 enum BluetoothMenuIdx {
     BT_IDX_ENABLE = 0,
     BT_IDX_PAIR,
+    BT_IDX_PAIRED,
     BT_IDX_STATUS,
     BT_IDX_SCAN,
+    BT_IDX_BEACON,
     BT_IDX_FORGET_BONDS,
     BT_IDX_FIXED_COUNT
 };
@@ -33,6 +36,7 @@ enum BluetoothMenuIdx {
 static constexpr uint8_t BT_MENU_MAX_ITEMS = 16;
 // Single source of truth: mirror the controller's scan-buffer capacity.
 static constexpr uint8_t BLE_MAX_SCAN_RESULTS = hal::IBluetoothController::MAX_SCAN_RESULTS;
+static constexpr uint8_t BLE_MAX_BONDS = hal::IBluetoothController::MAX_BONDED_DEVICES;
 static constexpr uint32_t BLE_SCAN_TIMEOUT_MS = 8000;
 
 /** \brief Bluetooth menu and scan state. */
@@ -48,6 +52,14 @@ static ListItem s_bleScanItems[BLE_MAX_SCAN_RESULTS];
 static EXT_RAM_BSS_ATTR hal::BleScanResult s_bleScanResults[BLE_MAX_SCAN_RESULTS];
 static uint8_t s_bleScanCount = 0;
 
+/** \brief Paired (bonded) device list state. */
+static ListView* s_pairedView = nullptr;
+static ListItem s_pairedItems[BLE_MAX_BONDS];
+static hal::BleBondInfo s_pairedBonds[BLE_MAX_BONDS];
+static char s_pairedLabels[BLE_MAX_BONDS][24];
+static uint8_t s_pairedCount = 0;
+static hal::BleBondInfo s_forgetTarget = {};
+
 /** \brief PSRAM-backed text buffer used for BLE status details. */
 static constexpr size_t BLE_STATUS_BUF_SIZE = 256;
 static EXT_RAM_BSS_ATTR char s_bleStatusBuf[BLE_STATUS_BUF_SIZE];
@@ -60,6 +72,8 @@ static void toggleBluetoothEnable();
 static void showBluetoothStatus();
 /** \brief Starts BLE scan and opens result list. */
 static void startBluetoothScan();
+/** \brief Shows the list of paired (bonded) devices. */
+static void showPairedDevices();
 
 /**
  * \brief Renders one BLE scan row with signal bars and RSSI text.
@@ -138,9 +152,16 @@ void rebuildBluetoothMenu() {
         s_bluetoothItems[BT_IDX_ENABLE] = {ui::tr("core.bluetooth_off"), 0, false, nullptr};
     }
     s_bluetoothItems[BT_IDX_PAIR] = {ui::tr("core.ble_pairing_menu"), 0, false, nullptr};
+    s_bluetoothItems[BT_IDX_PAIRED] = {ui::tr("core.ble_paired_devices"), 0, !enabled, nullptr};
     s_bluetoothItems[BT_IDX_STATUS] = {ui::tr("core.ble_status"), 0, false, nullptr};
     s_bluetoothItems[BT_IDX_SCAN] = {ui::tr("core.ble_scan"), 0, !enabled, nullptr};
-    s_bluetoothItems[BT_IDX_FORGET_BONDS] = {"Forget all bonds", 0, !enabled, nullptr};
+    {
+        auto& msg = cdc::msg::MessageTransfer::instance();
+        s_bluetoothItems[BT_IDX_BEACON] = {
+            msg.isBeaconEnabled() ? ui::tr("core.msg_beacon_on") : ui::tr("core.msg_beacon_off"),
+            static_cast<uint8_t>(msg.isBeaconActive() ? '*' : 0), false, nullptr};
+    }
+    s_bluetoothItems[BT_IDX_FORGET_BONDS] = {ui::tr("core.ble_forget_all"), 0, !enabled, nullptr};
 
     auto& moduleReg = core::ModuleRegistry::instance();
     s_bluetoothModuleCount = moduleReg.getMenuItems(
@@ -188,18 +209,27 @@ static void onBluetoothMenuSelect(uint16_t index, void* userData) {
             ViewStack::instance().push(&s_blePairingView);
             return;
         }
+        case BT_IDX_PAIRED:
+            showPairedDevices();
+            return;
         case BT_IDX_STATUS:
             showBluetoothStatus();
             return;
         case BT_IDX_SCAN:
             startBluetoothScan();
             return;
+        case BT_IDX_BEACON: {
+            auto& msg = cdc::msg::MessageTransfer::instance();
+            msg.setBeaconEnabled(!msg.isBeaconEnabled());
+            rebuildBluetoothMenu();
+            return;
+        }
         case BT_IDX_FORGET_BONDS:
-            askConfirm("Forget all paired devices?", [](void*) {
+            askConfirm(ui::tr("core.ble_forget_all_confirm"), [](void*) {
                 auto* ble = hal::getBluetoothControllerInstance();
                 if (ble) {
                     ble->clearAllBonds();
-                    showToastSuccess("Bonds cleared");
+                    showToastSuccess(ui::tr("core.ble_bonds_cleared"));
                 }
             });
             return;
@@ -620,6 +650,77 @@ static void startBluetoothScan() {
     snprintf(title, sizeof(title), "%s (%d)", ui::tr("core.ble_scan"), s_bleScanCount);
     s_bleScanView->init(title, s_bleScanItems, s_bleScanCount);
     ViewStack::instance().push(s_bleScanView);
+}
+
+// ===========================================================================
+// Paired (bonded) device list
+// ===========================================================================
+
+/**
+ * \brief Rebuilds the paired-device list from the current bond store.
+ */
+static void rebuildPairedList() {
+    auto* ble = hal::getBluetoothControllerInstance();
+    s_pairedCount = ble ? ble->getBondedDevices(s_pairedBonds, BLE_MAX_BONDS) : 0;
+
+    for (uint8_t i = 0; i < s_pairedCount; i++) {
+        const auto& b = s_pairedBonds[i];
+        snprintf(s_pairedLabels[i], sizeof(s_pairedLabels[i]),
+                 "%02X:%02X:%02X:%02X:%02X:%02X %s",
+                 b.addr[5], b.addr[4], b.addr[3], b.addr[2], b.addr[1], b.addr[0],
+                 b.addrType == 0 ? "pub" : "rnd");
+        s_pairedItems[i] = {s_pairedLabels[i],
+                            static_cast<uint8_t>(b.connected ? '*' : 0),
+                            false, &s_pairedBonds[i]};
+    }
+
+    if (s_pairedView) {
+        s_pairedView->init(ui::tr("core.ble_paired_devices"), s_pairedItems, s_pairedCount);
+        s_pairedView->setEmptyText(ui::tr("core.ble_no_paired"));
+    }
+}
+
+/**
+ * \brief Confirmed-forget handler: unpairs the selected device and refreshes.
+ */
+static void onForgetConfirm(void*) {
+    auto* ble = hal::getBluetoothControllerInstance();
+    if (ble) {
+        ble->forgetBond(s_forgetTarget.addr, s_forgetTarget.addrType);
+        showToastSuccess(ui::tr("core.deleted"));
+    }
+    rebuildPairedList();
+}
+
+/**
+ * \brief Asks for confirmation to forget the selected paired device.
+ * \param index Selected list index.
+ * \param userData Unused.
+ */
+static void onPairedSelect(uint16_t index, void* userData) {
+    (void)userData;
+    if (index >= s_pairedCount) return;
+    s_forgetTarget = s_pairedBonds[index];
+    askConfirm(ui::tr("core.ble_forget_one"), onForgetConfirm);
+}
+
+/**
+ * \brief Builds and shows the paired-device list view.
+ */
+static void showPairedDevices() {
+    auto* ble = hal::getBluetoothControllerInstance();
+    if (!ble || !ble->isEnabled()) {
+        showToastError(ui::tr("core.hw_not_available"));
+        return;
+    }
+
+    if (!s_pairedView) {
+        s_pairedView = new ListView();
+        s_pairedView->setOnSelect(onPairedSelect);
+    }
+
+    rebuildPairedList();
+    ViewStack::instance().push(s_pairedView);
 }
 
 } // namespace cdc::ui

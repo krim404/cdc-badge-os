@@ -28,6 +28,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
 
+      - name: Run host unit tests
+        run: pio test -e native
+
       - name: Build firmware
         run: pio run
 

@@ -44,6 +44,12 @@ public:
      */
     virtual void onResume() = 0;
 
+    /**
+     * Called when the view is covered by another view or modal (still on the
+     * stack but no longer active). Counterpart to onResume(). Default no-op.
+     */
+    virtual void onPause() {}
+
     // === Rendering ===
 
     /**
@@ -119,6 +125,19 @@ public:
      */
     virtual void setFooterHint(const char* hint) { (void)hint; }
 
+    /**
+     * Register opaque hooks fired when this view is hidden (onPause) and shown
+     * again (onResume). Default is a no-op; ViewBase persists and fires them.
+     * Lets callers (e.g. PluginUiState) react to a view being covered/revealed
+     * without enumerating concrete view types. Pass nullptr to clear a hook.
+     * \param onHide Called from onPause(), or nullptr.
+     * \param onShow Called from onResume(), or nullptr.
+     * \param userData Opaque pointer passed back to both hooks.
+     */
+    virtual void setLifecycleHooks(void (*onHide)(void*), void (*onShow)(void*), void* userData) {
+        (void)onHide; (void)onShow; (void)userData;
+    }
+
     // === Identity ===
 
     /**
@@ -149,6 +168,17 @@ public:
 
     void onResume() override {
         dirty_ = true;
+        if (onShow_) onShow_(lifecycleUserData_);
+    }
+
+    void onPause() override {
+        if (onHide_) onHide_(lifecycleUserData_);
+    }
+
+    void setLifecycleHooks(void (*onHide)(void*), void (*onShow)(void*), void* userData) override {
+        onHide_ = onHide;
+        onShow_ = onShow;
+        lifecycleUserData_ = userData;
     }
 
     // Dirty flag management
@@ -171,6 +201,10 @@ protected:
     bool dirty_ = true;
     const char* title_ = nullptr;
     const char* customFooter_ = nullptr;
+
+    void (*onHide_)(void*) = nullptr;
+    void (*onShow_)(void*) = nullptr;
+    void* lifecycleUserData_ = nullptr;
 };
 
 } // namespace cdc::ui

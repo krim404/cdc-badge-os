@@ -26,6 +26,9 @@ extern "C" {
 
 extern "C" void plg_ble_pump(void);
 extern "C" void plg_ble_on_unload(void* plugin);
+extern "C" void plg_msg_pump(void);
+extern "C" void plg_msg_on_unload(void* plugin);
+extern "C" void plg_msg_init(void);
 extern "C" void plg_gpio_on_unload(void* plugin);
 extern "C" void plg_http_on_unload(void* plugin);
 extern "C" void plg_socket_on_unload(void* plugin);
@@ -116,6 +119,10 @@ bool PluginManager::init()
     auto ids = PluginStorage::listPluginIds();
     LOG_I(TAG, "PluginManager ready: %u plugin(s) installed",
           static_cast<unsigned>(ids.size()));
+
+    if (!msg_index_mutex_) msg_index_mutex_ = xSemaphoreCreateMutex();
+    rebuildMessageIndex();
+    plg_msg_init();  // wire the deferred message-handler resolver into cdc_msg
 
     initialised_ = true;
     startTickTask();
@@ -420,6 +427,7 @@ void PluginManager::teardownPlugin(Plugin& p, bool runWasmDeinit)
     applySleepInhibitor(p, false);
     clearLockscreenRegistrationFor(&p);
     plg_ble_on_unload(&p);
+    plg_msg_on_unload(&p);
     plg_gpio_on_unload(&p);
     plg_http_on_unload(&p);
     plg_socket_on_unload(&p);
@@ -532,6 +540,80 @@ void PluginManager::loadAutoloadPlugins()
             LOG_W(TAG, "autoload of %s failed", id.c_str());
         }
     }
+}
+
+void PluginManager::rebuildMessageIndex()
+{
+    std::vector<std::string> mimes, mids;
+    for (const auto& id : PluginStorage::listPluginIds()) {
+        if (isPluginDisabled(id)) continue;  // a disabled plugin can't be activated
+        auto mf = getManifest(id);
+        if (!mf) continue;
+        for (const auto& mt : mf->capabilities.message_types) {
+            mimes.push_back(mt);
+            mids.push_back(id);
+        }
+    }
+    auto* m = static_cast<SemaphoreHandle_t>(msg_index_mutex_);
+    if (m) xSemaphoreTake(m, portMAX_DELAY);
+    msg_index_mime_.swap(mimes);
+    msg_index_id_.swap(mids);
+    if (m) xSemaphoreGive(m);
+}
+
+void PluginManager::maybeRefreshMessageIndex()
+{
+    uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    if (now - last_index_refresh_ms_ < 2000) return;
+    last_index_refresh_ms_ = now;
+    std::string sig;
+    for (const auto& id : PluginStorage::listPluginIds()) { sig += id; sig.push_back(','); }
+    if (sig == installed_sig_) return;
+    installed_sig_ = sig;
+    rebuildMessageIndex();
+}
+
+bool PluginManager::messageTypeInstalled(const char* mime) const
+{
+    if (!mime) return false;
+    auto* m = static_cast<SemaphoreHandle_t>(msg_index_mutex_);
+    // Called from the BLE host task: never wait indefinitely. On contention,
+    // fail closed (treat as not-installed -> the offer is auto-declined).
+    if (m && xSemaphoreTake(m, pdMS_TO_TICKS(20)) != pdTRUE) return false;
+    bool found = false;
+    for (const auto& mt : msg_index_mime_) {
+        if (mt == mime) { found = true; break; }
+    }
+    if (m) xSemaphoreGive(m);
+    return found;
+}
+
+bool PluginManager::activateForMessageType(const char* mime)
+{
+    if (!mime) return false;
+    std::string id;
+    {
+        auto* m = static_cast<SemaphoreHandle_t>(msg_index_mutex_);
+        if (m) xSemaphoreTake(m, portMAX_DELAY);
+        for (size_t i = 0; i < msg_index_mime_.size(); ++i) {
+            if (msg_index_mime_[i] == mime) { id = msg_index_id_[i]; break; }
+        }
+        if (m) xSemaphoreGive(m);
+    }
+    if (id.empty()) return false;
+
+    ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
+    if (!lock) return false;
+    if (isLoaded(id)) return true;  // already running: its handler is live
+    if (isPluginDisabled(id)) return false;
+    auto mf = getManifest(id);
+    if (!mf) return false;
+    auto check = CapabilityChecker::validate(*mf);
+    if (!check.ok()) {
+        LOG_W(TAG, "msg activate %s rejected: %s", id.c_str(), check.detail.c_str());
+        return false;
+    }
+    return loadIntoBackground(id, *mf);
 }
 
 uint8_t PluginManager::getLockscreenItems(LockscreenItem* out, uint8_t max) const
@@ -673,6 +755,7 @@ void PluginManager::dispatchTick(uint64_t uptime_ms)
     }
     for (size_t i = 0; i < n_trapped; ++i) handleTrap(*trapped[i], "plugin_on_tick");
     plg_ble_pump();
+    plg_msg_pump();
 }
 
 void PluginManager::dispatchEventAll(uint32_t event_type, uint32_t value)
@@ -758,6 +841,7 @@ void PluginManager::tickTaskLoop()
     while (!tick_stop_) {
         vTaskDelayUntil(&last, pdMS_TO_TICKS(TICK_INTERVAL_MS));
         if (tick_stop_) break;
+        maybeRefreshMessageIndex();
         if (pending_stop_.exchange(false, std::memory_order_acq_rel)) {
             cdc::ui::IView* top = cdc::ui::ViewStack::instance().current();
             PluginListView* listView = PluginListView::active();

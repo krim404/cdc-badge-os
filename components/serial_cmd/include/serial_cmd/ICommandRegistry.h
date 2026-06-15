@@ -25,6 +25,9 @@ struct SubCommand {
     CommandHandler handler;///< Invoked with the args following the sub-command keyword.
 };
 
+/// Buffer size for the "<name> <args>" column built during HELP rendering.
+constexpr size_t kSubCommandHeadBufSize = 80;
+
 /**
  * Command entry for registration
  */

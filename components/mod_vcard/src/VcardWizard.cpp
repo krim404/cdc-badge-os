@@ -89,6 +89,15 @@ static const FieldRef k_steps[STEP_COUNT] = {
 };
 
 /**
+ * \brief Save destination for the wizard's generated vCard.
+ */
+enum class WizardTarget : uint8_t {
+    OWN = 0,        ///< Persist via vcard_store_set_own().
+    RECEIVED_NEW,   ///< Add a new stored contact.
+    RECEIVED_EDIT,  ///< Overwrite the stored contact at editSlot.
+};
+
+/**
  * \brief Holds the wizard's running state between callback firings.
  */
 struct WizardState {
@@ -96,6 +105,9 @@ struct WizardState {
     ui::IView* returnAnchor;
     bool active;
     uint8_t currentStep;
+    WizardTarget target;
+    uint16_t editSlot;
+    VcardWizard::DoneCallback onDone;
 };
 
 EXT_RAM_BSS_ATTR static WizardState s_wizard = {};
@@ -167,8 +179,20 @@ static void wizardFinish() {
     }
 
     char err[64] = {};
-    if (!vcard_store_set_own(buf, len, err, sizeof(err))) {
-        LOG_W(TAG, "set_own failed: %s", err[0] ? err : "(no detail)");
+    bool ok = false;
+    switch (s_wizard.target) {
+        case WizardTarget::OWN:
+            ok = vcard_store_set_own(buf, len, err, sizeof(err));
+            break;
+        case WizardTarget::RECEIVED_NEW:
+            ok = vcard_store_add(buf, len, err, sizeof(err));
+            break;
+        case WizardTarget::RECEIVED_EDIT:
+            ok = vcard_store_update(s_wizard.editSlot, buf, len, err, sizeof(err));
+            break;
+    }
+    if (!ok) {
+        LOG_W(TAG, "save failed: %s", err[0] ? err : "(no detail)");
         ui::showToastError(err[0] ? err
                                   : (s_resolver ? s_resolver(s_failedOffset)
                                                 : ui::tr("core.failed")));
@@ -178,9 +202,13 @@ static void wizardFinish() {
 
     ui::showToastSuccess(s_resolver ? s_resolver(s_savedOffset)
                                     : "Saved");
+    VcardWizard::DoneCallback done = s_wizard.onDone;
+    ui::IView* anchor = s_wizard.returnAnchor;
     s_wizard.active = false;
-    if (s_wizard.returnAnchor) {
-        ui::ViewStack::instance().popToAnchor(s_wizard.returnAnchor);
+    // Refresh the caller's list before navigating back so it reflects the save.
+    if (done) done();
+    if (anchor) {
+        ui::ViewStack::instance().popToAnchor(anchor);
     }
 }
 
@@ -236,6 +264,32 @@ void VcardWizard::edit(ui::IView* returnAnchor) {
     char raw[VCARD_MAX_LEN + 1];
     size_t got = vcard_store_get_own(raw, sizeof(raw));
     if (got > 0) {
+        vcard_parse_to_struct(raw, &s_wizard.data);
+    }
+    pushCurrentStep();
+}
+
+void VcardWizard::startReceived(ui::IView* returnAnchor, DoneCallback onDone) {
+    memset(&s_wizard, 0, sizeof(s_wizard));
+    s_wizard.returnAnchor = returnAnchor;
+    s_wizard.active = true;
+    s_wizard.currentStep = 0;
+    s_wizard.target = WizardTarget::RECEIVED_NEW;
+    s_wizard.onDone = onDone;
+    pushCurrentStep();
+}
+
+void VcardWizard::editReceived(ui::IView* returnAnchor, uint16_t slot, DoneCallback onDone) {
+    memset(&s_wizard, 0, sizeof(s_wizard));
+    s_wizard.returnAnchor = returnAnchor;
+    s_wizard.active = true;
+    s_wizard.currentStep = 0;
+    s_wizard.target = WizardTarget::RECEIVED_EDIT;
+    s_wizard.editSlot = slot;
+    s_wizard.onDone = onDone;
+
+    char raw[VCARD_MAX_LEN + 1];
+    if (vcard_store_get(slot, raw, sizeof(raw)) > 0) {
         vcard_parse_to_struct(raw, &s_wizard.data);
     }
     pushCurrentStep();

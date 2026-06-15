@@ -61,6 +61,11 @@ static constexpr uint16_t BATTERY_USB_PASSTHRU_MIN_MV = 4000;  // No-battery USB
 static constexpr uint16_t BATTERY_USB_PASSTHRU_MAX_MV = BATTERY_MAX_MV;
 
 /**
+ * \brief Hold duration on the power/flash button that triggers ship mode.
+ */
+static constexpr uint32_t kPowerButtonLongPressMs = 3000;
+
+/**
  * \brief Charger IRQ flag set by ISR and consumed in `update()`.
  */
 static volatile bool charger_irq_pending = false;
@@ -134,6 +139,10 @@ private:
     uint16_t currentChargeMa_ = CHARGE_CURRENT_SLOW;
     bool fastChargeEnabled_ = false;
     uint32_t lastWdtKickMs_ = 0;
+
+    /** \brief Power-button long-press tracking for ship-mode entry. */
+    bool powerButtonHeld_ = false;
+    uint32_t powerButtonHoldStartMs_ = 0;
 
     /** \brief Cached charger state updated in `update()`. */
     mutable uint16_t cachedBatteryMv_ = 0;
@@ -288,6 +297,16 @@ bool BQ25895Power::init() {
         return false;
     }
     gpio_isr_handler_add(CHG_IRQ_PIN, charger_isr, nullptr);
+
+    // Configure power/flash button as input (active-low), polled in update()
+    // for the ship-mode long-press.
+    gpio_config_t btn_conf = {};
+    btn_conf.pin_bit_mask = (1ULL << FLASH_BTN_PIN);
+    btn_conf.mode = GPIO_MODE_INPUT;
+    btn_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    btn_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    btn_conf.intr_type = GPIO_INTR_DISABLE;
+    gpio_config(&btn_conf);
 
     // Read initial status (clears any stale IRQ flags)
     readChargerStatus();
@@ -575,6 +594,20 @@ void BQ25895Power::update() {
     if ((nowMs - lastWdtKickMs_) >= 30000) {
         lastWdtKickMs_ = nowMs;
         kickWatchdog();
+    }
+
+    // Power-button long-press enters ship mode (FLASH_BTN is active-low)
+    if (gpio_get_level(FLASH_BTN_PIN) == 0) {
+        if (!powerButtonHeld_) {
+            powerButtonHeld_ = true;
+            powerButtonHoldStartMs_ = nowMs;
+        } else if ((nowMs - powerButtonHoldStartMs_) >= kPowerButtonLongPressMs) {
+            powerButtonHeld_ = false;
+            LOG_W(TAG, "Power button long-press, entering ship mode");
+            enterShipMode();
+        }
+    } else {
+        powerButtonHeld_ = false;
     }
 
     // Handle charger IRQ

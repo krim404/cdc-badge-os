@@ -9,6 +9,7 @@
 #include "cdc_core/TropicStorage.h"
 #include "cdc_core/UsbManager.h"
 #include "cdc_core/EventBus.h"
+#include "cdc_hal/IPowerManager.h"
 
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -22,7 +23,7 @@ namespace cdc::ui {
 
 /** \brief Expert menu sizing constants. */
 
-static constexpr uint8_t EXPERT_MAX_ITEMS = 12;
+static constexpr uint8_t EXPERT_MAX_ITEMS = 16;
 static constexpr uint8_t MODULES_VIEW_MAX = 16;
 
 // Forward declarations so the fixed-entry tables can name their handlers
@@ -30,6 +31,7 @@ static constexpr uint8_t MODULES_VIEW_MAX = 16;
 static void runSystemTest();
 static void runTropicCacheRebuild();
 static void runTropicCacheCleanup();
+static void enterShipModeMenu();
 void rebootIntoBootloader();
 
 /// Fixed expert entries above (top) and below (bottom) the dynamic module
@@ -45,6 +47,7 @@ static const FixedExpertEntry kExpertTop[] = {
 static const FixedExpertEntry kExpertBottom[] = {
     {"core.tr01_cache_rebuild", runTropicCacheRebuild},
     {"core.tr01_cache_cleanup", runTropicCacheCleanup},
+    {"core.shipping_mode",      enterShipModeMenu},
     {"core.bootloader",         rebootIntoBootloader},
 };
 static constexpr uint8_t EXPERT_TOP_COUNT    = sizeof(kExpertTop) / sizeof(kExpertTop[0]);
@@ -223,6 +226,25 @@ static void runTropicCacheCleanup() {
     } else {
         showToastError(ui::tr("core.failed"));
     }
+}
+
+/**
+ * \brief Disconnects the battery (ship mode) after user confirmation.
+ * \param userData Unused callback user data.
+ */
+static void onShipModeConfirm(void* /*userData*/) {
+    auto* power = hal::getPowerManagerInstance();
+    if (power) {
+        power->enterShipMode();
+    } else {
+        showToastError(ui::tr("core.failed"), TOAST_DURATION_MEDIUM_MS);
+    }
+}
+
+/** \brief Prompts to confirm ship-mode entry from the expert menu. */
+static void enterShipModeMenu() {
+    showConfirm(ui::tr("core.shipping_mode_q"), onShipModeConfirm, nullptr,
+                ConfirmView::Icon::WARNING);
 }
 
 /** \brief Rebuilds expert menu item list including module-provided entries. */

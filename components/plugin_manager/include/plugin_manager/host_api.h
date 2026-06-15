@@ -884,6 +884,14 @@ int host_ui_set_view_footer (const char* hint);
 /// \brief Override the empty-state text shown by an empty list view.
 int host_ui_set_view_empty  (const char* text);
 
+/* Wire hide/show callbacks on the plugin's current top view. `hide_action_id`
+ * fires via plugin_on_action(hide_action_id, 0, 0) when the view is covered by
+ * another view or modal; `show_action_id` fires when it becomes visible again.
+ * Pass 0 for either id to leave that event unhooked. Returns HOST_ERR_NOT_FOUND
+ * if the top view is not owned by the plugin runtime. */
+/// \brief Register hide/show callbacks for the plugin's current top view.
+int host_ui_set_view_lifecycle(uint32_t hide_action_id, uint32_t show_action_id);
+
 /* Redraw a single row of the plugin's current top list view in place, without
  * re-pushing or fully re-rendering the list. The label, icon and item_id of
  * the given index are replaced from `item`; the new label is copied
@@ -1314,6 +1322,99 @@ uint8_t host_cpu_load           (void);
 /// \param out_size Size of `out`; the result is always null-terminated.
 /// \return Number of bytes copied, or a negative HOST_ERR_* code.
 int host_cmd_consume (char* out, size_t out_size);
+
+/** \} */
+
+/**
+ * \defgroup msg Message transfer (badge-to-badge)
+ * \brief Register typed-payload handlers and push payloads to nearby badges.
+ *
+ * A plugin registers one or more MIME types it can receive. The firmware's
+ * MessageTransfer service auto-declines an incoming BLE OFFER whose MIME type
+ * has no registered handler. After the local user consents and the encrypted
+ * transfer completes, the firmware fires the plugin's `action_id` on the plugin
+ * tick task (deferred, like the BLE consume idiom); the handler then pulls the
+ * payload with \ref host_msg_consume.
+ *
+ * To send, a plugin hands a typed payload to \ref host_msg_send_interactive,
+ * which opens the firmware-owned peer picker and consent/progress UI and
+ * returns immediately. Sending requires the manifest capability "ble" plus at
+ * least one declared `message_types` entry.
+ *
+ * Payload bytes are opaque: the firmware does NOT convert them. For text MIME
+ * types the bytes are UTF-8; the plugin renders them through the normal UI
+ * functions, which convert UTF-8 to the display codepage. MIME type strings
+ * are ASCII.
+ * \{
+ */
+
+/// Maximum payload a plugin may send or receive in one transfer.
+#define HOST_MSG_PAYLOAD_MAX 4096
+/// Maximum MIME type string length including the NUL.
+#define HOST_MSG_MIME_MAX 64
+
+/**
+ * \brief Register that this plugin handles an incoming MIME type.
+ *
+ * Adds `mime_type` to the firmware MessageTransfer registry so an OFFER of that
+ * type is no longer auto-declined. On a completed inbound transfer of this type
+ * the firmware fires `plugin_on_action(action_id, 0, len)`; the handler reads
+ * the bytes with \ref host_msg_consume. Re-registering the same MIME type
+ * replaces the action id.
+ * \param mime_type NUL-terminated ASCII MIME type, max HOST_MSG_MIME_MAX-1 bytes.
+ * \param action_id Plugin action fired on a completed inbound transfer.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG, HOST_ERR_NO_CAPABILITY, HOST_ERR_NO_MEMORY.
+ */
+int host_msg_register_handler(const char* mime_type, uint32_t action_id);
+
+/**
+ * \brief Drop a previously registered handler.
+ * \param mime_type The MIME type passed to \ref host_msg_register_handler.
+ * \return HOST_OK or HOST_ERR_NOT_FOUND.
+ */
+int host_msg_unregister_handler(const char* mime_type);
+
+/**
+ * \brief Pull the payload delivered by the most recent inbound message action.
+ *
+ * Call from the handler fired by \ref host_msg_register_handler. Copies the
+ * received bytes into `buf` and the delivering MIME type into `mime_out`.
+ * \param buf Destination for payload bytes.
+ * \param buf_size Capacity of `buf`.
+ * \param mime_out Destination for the NUL-terminated MIME type (may be NULL).
+ * \param mime_size Capacity of `mime_out`.
+ * \return Bytes copied into `buf` (>= 0), or a negative HOST_ERR_* code.
+ */
+int host_msg_consume(uint8_t* buf, size_t buf_size, char* mime_out, size_t mime_size);
+
+/**
+ * \brief Send a typed payload via the firmware-owned interactive peer picker.
+ *
+ * Opens the scan/peer-select UI, then the consent + progress flow, then
+ * delivers `data` to the chosen peer's handler for `mime_type`. Returns
+ * immediately after the picker is shown; the transfer happens asynchronously.
+ * \param mime_type NUL-terminated ASCII MIME type, max HOST_MSG_MIME_MAX-1 bytes.
+ * \param data Payload bytes, at most HOST_MSG_PAYLOAD_MAX.
+ * \param len Number of payload bytes.
+ * \return HOST_OK once the picker is shown, HOST_ERR_INVALID_ARG,
+ *         HOST_ERR_NO_CAPABILITY, HOST_ERR_BUSY.
+ */
+int host_msg_send_interactive(const char* mime_type, const uint8_t* data, size_t len);
+
+/**
+ * \brief Send a typed payload directly to a known peer address (no picker).
+ *
+ * The peer's user still consents. Use when the plugin already has an address;
+ * most plugins prefer \ref host_msg_send_interactive.
+ * \param addr 6-byte BLE address.
+ * \param addr_type 0 = public, 1 = random.
+ * \param mime_type NUL-terminated ASCII MIME type.
+ * \param data Payload bytes, at most HOST_MSG_PAYLOAD_MAX.
+ * \param len Number of payload bytes.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG, HOST_ERR_NO_CAPABILITY, HOST_ERR_BUSY.
+ */
+int host_msg_send(const uint8_t addr[6], uint8_t addr_type, const char* mime_type,
+                  const uint8_t* data, size_t len);
 
 /** \} */
 

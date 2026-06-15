@@ -26,7 +26,6 @@ public:
     void onTick(uint32_t nowMs) override;
 
     const char* getVersion() const override { return "1.0"; }
-    bool isDefaultEnabled() const override { return false; }
     uint8_t getMenuItems(core::ModuleMenuItem* items, uint8_t maxItems) override;
 
     static OtpHidModule& instance();

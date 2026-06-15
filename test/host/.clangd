@@ -1,0 +1,18 @@
+# Host unit tests build with the PlatformIO `native` toolchain + Unity, not the
+# Xtensa firmware build. The Xtensa-only flags are stripped by the root .clangd
+# (inherited Remove); this scope adds the C++ standard and the Unity include path
+# so the UNITY_* / TEST_ASSERT_* macros resolve in the editor.
+CompileFlags:
+  CompilationDatabase: ''
+  Add:
+    - -std=gnu++17
+    - -I.
+    - -Itest/host
+    - -I../../../components/mod_fido2/src
+    - -I../../../components/cdc_core/include
+    - -I../../libdeps/native/Unity/src
+    - -I../../../.pio/libdeps/native/Unity/src
+    - -I.pio/libdeps/native/Unity/src
+Diagnostics:
+  Suppress:
+    - pp_file_not_found

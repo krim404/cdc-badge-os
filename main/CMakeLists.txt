@@ -26,7 +26,7 @@ idf_component_register(
         "main.cpp"
     INCLUDE_DIRS "." "${CMAKE_CURRENT_BINARY_DIR}"
     REQUIRES nvs_flash freertos esp_timer cdc_core usb_badge serial_cmd cdc_hal cdc_log cdc_os_ui
-        wamr_runtime plugin_manager
+        cdc_msg wamr_runtime plugin_manager
         ${MODULES}
 )
 

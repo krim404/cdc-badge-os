@@ -46,6 +46,16 @@ public:
         callbackUserData_ = userData;
     }
 
+    /**
+     * Set optional context-menu callback (key 3).
+     * Pass nullptr to disable.
+     */
+    using MenuCallback = void(*)(void* userData);
+    void setOnMenu(MenuCallback onMenu, void* userData = nullptr) {
+        onMenu_ = onMenu;
+        menuUserData_ = userData;
+    }
+
     // IView implementation
     void render(bool partial) override;
     InputResult onKey(char key) override;
@@ -67,6 +77,8 @@ private:
     YesNoCallback onYes_ = nullptr;
     YesNoCallback onNo_ = nullptr;
     void* callbackUserData_ = nullptr;
+    MenuCallback onMenu_ = nullptr;
+    void* menuUserData_ = nullptr;
 
     void scroll(bool down);
     uint16_t countLines() const;

@@ -67,7 +67,7 @@ static constexpr uint8_t PLUGIN_SERVICE_SLOT = MAX_REGISTERED_SERVICES - 1;
 static constexpr uint8_t MAX_CHARS_PER_SERVICE = IBluetoothController::MAX_CHARS_PER_SERVICE;
 static constexpr uint8_t MAX_DESCRIPTORS_PER_CHAR = 2;
 static constexpr uint8_t MAX_ADV_UUIDS = 4;
-static constexpr uint8_t MAX_CONN_CALLBACKS = 4;
+static constexpr uint8_t MAX_CONN_CALLBACKS = 6;
 static constexpr uint8_t MAX_CONNECTIONS = 2;
 static constexpr uint8_t MAX_SUBSCRIBE_ENTRIES = 16;
 static constexpr uint8_t MAX_BONDS = 5;
@@ -266,7 +266,7 @@ public:
      * \name Scanning
      * \{
      */
-    bool startScan(uint32_t durationMs) override;
+    bool startScan(uint32_t durationMs, bool keepAdvertising) override;
     void stopScan() override;
     bool isScanComplete() const override { return !scanning_; }
     uint8_t getScanResults(BleScanResult* results, uint8_t maxResults) override;
@@ -333,6 +333,12 @@ public:
     void respondToNumericComparison(uint16_t connHandle, bool accept) override;
     void setPasskeyCallback(PasskeyCallback cb) override;
     void setAuthCompleteCallback(AuthCompleteCallback cb) override;
+    ListenerToken addEncryptionChangeCallback(EncChangeCallback cb) override;
+    void removeEncryptionChangeCallback(ListenerToken token) override;
+    bool initiateSecurity(uint16_t connHandle) override;
+    bool getPeerIdAddr(uint16_t connHandle, uint8_t addr[6], uint8_t* addrType) const override;
+    void forgetBond(const uint8_t addr[6], uint8_t addrType) override;
+    uint8_t getBondedDevices(BleBondInfo* out, uint8_t maxCount) const override;
     /** \} */
 
     /**
@@ -429,6 +435,7 @@ private:
     ListenerSlot<CharacteristicReadCallback> charReadCallbacks_[MAX_CONN_CALLBACKS] = {};
     ListenerSlot<NotificationCallback> notifyCallbacks_[MAX_CONN_CALLBACKS] = {};
     ListenerSlot<WriteCompleteCallback> writeCompleteCallbacks_[MAX_CONN_CALLBACKS] = {};
+    ListenerSlot<EncChangeCallback> encChangeCallbacks_[MAX_CONN_CALLBACKS] = {};
 
     /** \brief Pairing callback handlers. */
     PasskeyCallback passkeyCb_;
@@ -861,6 +868,11 @@ void BluetoothController::onEncChange(uint16_t connHandle, int status) {
     if (authCompleteCb_) {
         authCompleteCb_(status == 0);
     }
+    for (uint8_t i = 0; i < MAX_CONN_CALLBACKS; i++) {
+        if (encChangeCallbacks_[i].active && encChangeCallbacks_[i].callback) {
+            encChangeCallbacks_[i].callback(connHandle, status);
+        }
+    }
 }
 
 void BluetoothController::onMtuExchange(uint16_t connHandle, uint16_t mtu) {
@@ -941,6 +953,14 @@ void BluetoothController::onConnect(uint16_t connHandle, bool isPeripheral) {
         connections_[slot].mtu = 23;
     } else {
         LOG_W(TAG, "Connection table full, dropping handle %d", connHandle);
+    }
+
+    // As central, negotiate a larger ATT MTU up front. Service/characteristic
+    // discovery that follows gives it time to complete before the first write,
+    // so offers (which carry the sender name) and data chunks are not capped at
+    // the 23-byte default.
+    if (!isPeripheral) {
+        ble_gattc_exchange_mtu(connHandle, nullptr, nullptr);
     }
 
     // Dispatch to registered listeners
@@ -1037,10 +1057,10 @@ void BluetoothController::startAdvertising() {
     advParams.itvl_min = BLE_GAP_ADV_FAST_INTERVAL1_MIN;
     advParams.itvl_max = BLE_GAP_ADV_FAST_INTERVAL1_MAX;
 
-    // Separate 16-bit (e.g. HID 0x1812) and 128-bit service UUIDs. 16-bit UUIDs
-    // and the appearance go into the primary PDU so HOGP hosts recognize the
-    // device (e.g. as a keyboard); 128-bit UUIDs and manufacturer data stay in
-    // the scan response.
+    // Split advertised UUIDs by width. Both 16-bit (e.g. HID 0x1812) and 128-bit
+    // service UUIDs go into the primary PDU when they fit, so HOGP hosts recognize
+    // the device and UUID-filtering scanners (which read only the primary payload)
+    // match it. Overflowing fields spill into the scan response below.
     ble_uuid16_t uuid16s[MAX_ADV_UUIDS];
     ble_uuid128_t uuid128s[MAX_ADV_UUIDS];
     uint8_t num16 = 0, num128 = 0;
@@ -1056,7 +1076,7 @@ void BluetoothController::startAdvertising() {
         }
     }
 
-    // Primary advertising data: flags + appearance + 16-bit UUIDs + name.
+    // Primary advertising data: flags + appearance + 16-bit + 128-bit UUIDs + name.
     struct ble_hs_adv_fields fields = {};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     fields.tx_pwr_lvl_is_present = 1;
@@ -1070,13 +1090,20 @@ void BluetoothController::startAdvertising() {
         fields.num_uuids16 = num16;
         fields.uuids16_is_complete = 1;
     }
+    if (num128 > 0) {
+        fields.uuids128 = uuid128s;
+        fields.num_uuids128 = num128;
+        fields.uuids128_is_complete = 1;
+    }
     fields.name = (uint8_t*)deviceName_;
     fields.name_len = strlen(deviceName_);
     fields.name_is_complete = 1;
 
-    // The 31-byte primary PDU can overflow once appearance + UUIDs are present;
-    // fall back to carrying the name in the scan response instead.
+    // The 31-byte primary PDU can overflow. Spill into the scan response in order
+    // of decreasing importance: first the name (an active scanner fetches it from
+    // the scan response anyway), then the 128-bit service UUIDs.
     bool nameInScanRsp = false;
+    bool uuid128InScanRsp = false;
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc == BLE_HS_EMSGSIZE) {
         fields.name = nullptr;
@@ -1085,14 +1112,21 @@ void BluetoothController::startAdvertising() {
         nameInScanRsp = true;
         rc = ble_gap_adv_set_fields(&fields);
     }
+    if (rc == BLE_HS_EMSGSIZE && num128 > 0) {
+        fields.uuids128 = nullptr;
+        fields.num_uuids128 = 0;
+        fields.uuids128_is_complete = 0;
+        uuid128InScanRsp = true;
+        rc = ble_gap_adv_set_fields(&fields);
+    }
     if (rc != 0) {
         LOG_E(TAG, "Failed to set adv fields: %d", rc);
         return;
     }
 
-    // Scan response: 128-bit UUIDs + manufacturer data (+ name if it did not fit
-    // into the primary PDU).
-    if (num128 > 0 || mfgDataSet_ || nameInScanRsp) {
+    // Scan response carries whatever did not fit into the primary PDU plus
+    // manufacturer data.
+    if (nameInScanRsp || uuid128InScanRsp || mfgDataSet_) {
         struct ble_hs_adv_fields rsp = {};
 
         if (nameInScanRsp) {
@@ -1100,7 +1134,7 @@ void BluetoothController::startAdvertising() {
             rsp.name_len = strlen(deviceName_);
             rsp.name_is_complete = 1;
         }
-        if (num128 > 0) {
+        if (uuid128InScanRsp) {
             rsp.uuids128 = uuid128s;
             rsp.num_uuids128 = num128;
             rsp.uuids128_is_complete = 1;
@@ -1172,12 +1206,14 @@ void BluetoothController::setAppearance(uint16_t appearance) {
  * \param durationMs Scan duration in milliseconds.
  * \return `true` if scan start succeeded.
  */
-bool BluetoothController::startScan(uint32_t durationMs) {
+bool BluetoothController::startScan(uint32_t durationMs, bool keepAdvertising) {
     if (!enabled_ || !synced_ || scanning_) return false;
 
-    // Legacy advertising and scanning can't coexist - stop advertising first
+    // ESP32-S3 NimBLE supports Peripheral + Observer multi-role, so advertising
+    // and scanning can run concurrently. keepAdvertising leaves the beacon up so
+    // two scanning badges still see each other; otherwise stop advertising first.
     bool wasAdvertising = advertising_;
-    if (advertising_) {
+    if (advertising_ && !keepAdvertising) {
         ble_gap_adv_stop();
         advertising_ = false;
         LOG_D(TAG, "Stopped advertising for scan");
@@ -1196,20 +1232,25 @@ bool BluetoothController::startScan(uint32_t durationMs) {
     discParams.filter_policy = 0;
     discParams.limited = 0;
 
-    int rc = ble_gap_disc(ownAddrType_, durationMs, &discParams,
+    // durationMs 0 means scan continuously until stopScan().
+    int32_t duration = (durationMs == 0) ? BLE_HS_FOREVER
+                                         : static_cast<int32_t>(durationMs);
+    int rc = ble_gap_disc(ownAddrType_, duration, &discParams,
                           bleGapEventCallback, nullptr);
     if (rc != 0) {
         LOG_E(TAG, "Failed to start scan: %d", rc);
-        // Restore advertising if it was active
-        if (wasAdvertising) {
+        // Restore advertising if we stopped it
+        if (wasAdvertising && !keepAdvertising) {
             startAdvertising();
         }
         return false;
     }
 
-    scanWasAdvertising_ = wasAdvertising;
+    // Only restore advertising on scan-complete if we actually stopped it.
+    scanWasAdvertising_ = keepAdvertising ? false : wasAdvertising;
     scanning_ = true;
-    LOG_I(TAG, "Scan started (%lu ms)", (unsigned long)durationMs);
+    LOG_I(TAG, "Scan started (%lu ms%s)", (unsigned long)durationMs,
+          keepAdvertising ? ", adv kept" : "");
     return true;
 }
 
@@ -1740,6 +1781,100 @@ void BluetoothController::removeNumericComparisonCallback(ListenerToken token) {
 void BluetoothController::setNumericComparisonCallback(NumericComparisonCallback cb) {
     for (uint8_t i = 0; i < MAX_CONN_CALLBACKS; i++) numCmpCallbacks_[i].active = false;
     if (cb) addListener(numCmpCallbacks_, cb);
+}
+
+IBluetoothController::ListenerToken
+BluetoothController::addEncryptionChangeCallback(EncChangeCallback cb) {
+    return addListener(encChangeCallbacks_, cb);
+}
+
+void BluetoothController::removeEncryptionChangeCallback(ListenerToken token) {
+    removeListener(encChangeCallbacks_, token);
+}
+
+/**
+ * \brief Initiates link encryption / pairing as central on a connection.
+ * \param connHandle Connection handle.
+ * \return `true` if the security procedure was started or already in progress.
+ */
+bool BluetoothController::initiateSecurity(uint16_t connHandle) {
+    int rc = ble_gap_security_initiate(connHandle);
+    // BLE_HS_EALREADY: encryption already established or in progress.
+    if (rc != 0 && rc != BLE_HS_EALREADY) {
+        LOG_W(TAG, "ble_gap_security_initiate failed: %d", rc);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * \brief Resolves the identity address of a connected peer.
+ * \param connHandle Connection handle.
+ * \param addr Output 6-byte address.
+ * \param addrType Output address type.
+ * \return `true` if resolved.
+ */
+bool BluetoothController::getPeerIdAddr(uint16_t connHandle, uint8_t addr[6],
+                                        uint8_t* addrType) const {
+    if (!addr || !addrType) return false;
+    struct ble_gap_conn_desc desc = {};
+    if (ble_gap_conn_find(connHandle, &desc) != 0) return false;
+    std::memcpy(addr, desc.peer_id_addr.val, 6);
+    *addrType = desc.peer_id_addr.type;
+    return true;
+}
+
+/**
+ * \brief Forgets (unpairs) a single bonded peer by identity address.
+ * \param addr 6-byte identity address.
+ * \param addrType Address type.
+ */
+void BluetoothController::forgetBond(const uint8_t addr[6], uint8_t addrType) {
+    if (!addr) return;
+    ble_addr_t peer = {};
+    peer.type = addrType;
+    std::memcpy(peer.val, addr, 6);
+    int rc = ble_gap_unpair(&peer);
+    if (rc != 0) {
+        LOG_W(TAG, "ble_gap_unpair failed: %d", rc);
+    } else {
+        LOG_I(TAG, "Bond forgotten");
+    }
+}
+
+/**
+ * \brief Enumerates bonded peers, flagging those in an active connection.
+ * \param out Output array.
+ * \param maxCount Capacity of the output array.
+ * \return Number of bonds written.
+ */
+uint8_t BluetoothController::getBondedDevices(BleBondInfo* out, uint8_t maxCount) const {
+    if (!out || maxCount == 0) return 0;
+
+    ble_addr_t peers[MAX_BONDS] = {};
+    int numPeers = 0;
+    if (ble_store_util_bonded_peers(peers, &numPeers, MAX_BONDS) != 0) {
+        return 0;
+    }
+
+    uint8_t count = 0;
+    for (int i = 0; i < numPeers && count < maxCount; i++) {
+        std::memcpy(out[count].addr, peers[i].val, 6);
+        out[count].addrType = peers[i].type;
+        out[count].connected = false;
+        for (uint8_t c = 0; c < MAX_CONNECTIONS; c++) {
+            if (!connections_[c].active) continue;
+            struct ble_gap_conn_desc desc = {};
+            if (ble_gap_conn_find(connections_[c].handle, &desc) != 0) continue;
+            if (desc.peer_id_addr.type == peers[i].type &&
+                std::memcmp(desc.peer_id_addr.val, peers[i].val, 6) == 0) {
+                out[count].connected = true;
+                break;
+            }
+        }
+        count++;
+    }
+    return count;
 }
 
 /**

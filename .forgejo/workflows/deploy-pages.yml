@@ -60,6 +60,17 @@ jobs:
       - name: Build Doxygen documentation
         run: doxygen Doxyfile
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build documentation site
+        run: |
+          npm --prefix website ci
+          SITE_BASE=/cdc-badge-os/ SITE_URL=https://krim.codeberg.page npm --prefix website run build
+          SITE_BASE=/cdc-badge-os/ npm --prefix website run check:links
+
       - name: Resolve version tag
         id: version
         env:
@@ -73,17 +84,22 @@ jobs:
           TAG: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          mkdir -p _site/docs
-          cp web-flasher/index.html _site/
-          if [ -f web-flasher/badge.jpg ]; then cp web-flasher/badge.jpg _site/; fi
-          cp -r doxygen_output/html/* _site/docs/
+          # Documentation site (Astro Starlight) at the root
+          mkdir -p _site
+          cp -r website/dist/. _site/
+          # Doxygen code reference under /api/
+          mkdir -p _site/api
+          cp -r doxygen_output/html/* _site/api/
+          # Web flasher + firmware binaries + manifests under /flasher/
+          mkdir -p _site/flasher
+          cp web-flasher/index.html _site/flasher/
+          if [ -f web-flasher/badge.jpg ]; then cp web-flasher/badge.jpg _site/flasher/; fi
+          cp .pio/build/cdc_badge_usb/bootloader.bin _site/flasher/bootloader.bin
+          cp .pio/build/cdc_badge_usb/partitions.bin _site/flasher/partitions.bin
+          cp .pio/build/cdc_badge_usb/firmware.bin   _site/flasher/firmware.bin
+          cp build/plugins_initial.bin               _site/flasher/plugins_initial.bin
 
-          cp .pio/build/cdc_badge_usb/bootloader.bin _site/bootloader.bin
-          cp .pio/build/cdc_badge_usb/partitions.bin _site/partitions.bin
-          cp .pio/build/cdc_badge_usb/firmware.bin   _site/firmware.bin
-          cp build/plugins_initial.bin               _site/plugins_initial.bin
-
-          cat > _site/manifest.json <<MANIFEST
+          cat > _site/flasher/manifest.json <<MANIFEST
           {
             "name": "CDC Badge OS (Firmware Update)",
             "version": "${TAG}",
@@ -101,7 +117,7 @@ jobs:
           }
           MANIFEST
 
-          cat > _site/manifest_factory.json <<MANIFEST
+          cat > _site/flasher/manifest_factory.json <<MANIFEST
           {
             "name": "CDC Badge OS (Factory Setup)",
             "version": "${TAG}",

@@ -1,7 +1,7 @@
 #include "mod_vcard/VcardModule.h"
 #include "mod_vcard/VcardWizard.h"
-#include "mod_vcard/ble_vcard.h"
 #include "mod_vcard/vcard_store.h"
+#include "cdc_msg/MessageTransfer.h"
 #include "serial_cmd/ICommandRegistry.h"
 #include "serial_cmd/SubCommand.h"
 #include "serial_cmd/Console.h"
@@ -15,6 +15,7 @@
 #include "cdc_views/ListView.h"
 #include "cdc_views/InfoView.h"
 #include "cdc_views/ConfirmView.h"
+#include "cdc_views/ContextMenuView.h"
 #include "cdc_views/QRCodeView.h"
 #include "esp_timer.h"
 #include "cdc_views/ToastView.h"
@@ -24,6 +25,7 @@
 #include "freertos/semphr.h"
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 
 static const char* TAG = "VCARD";
 
@@ -65,6 +67,13 @@ constexpr ui::I18nEntry kStrings[] = {
     {"mod_vcard.threema",          "Threema"},         // 32 STR_THREEMA
     {"mod_vcard.social_profile",   "Social Profile"},  // 33 STR_SOCIAL_PROFILE
     {"mod_vcard.note",             "Note"},            // 34 STR_NOTE
+    {"mod_vcard.send",             "Send vCard"},      // 35 STR_SEND
+    {"mod_vcard.received",         "Contact (vCard)"}, // 36 STR_RECEIVED
+    {"mod_vcard.received_title",   "Received vCards"}, // 37 STR_RECEIVED_TITLE
+    {"mod_vcard.no_received",      "No received vCards"},// 38 STR_NO_RECEIVED
+    {"mod_vcard.show_qr",          "Show QR"},         // 39 STR_SHOW_QR
+    {"mod_vcard.forward",          "Forward"},         // 40 STR_FORWARD
+    {"mod_vcard.confirm_delete",   "Delete this contact?"},// 41 STR_CONFIRM_DELETE
 };
 
 // Numeric offsets retained because VcardWizard takes an offset-array + resolver.
@@ -103,6 +112,13 @@ static constexpr uint16_t STR_MATRIX = 31;
 static constexpr uint16_t STR_THREEMA = 32;
 static constexpr uint16_t STR_SOCIAL_PROFILE = 33;
 static constexpr uint16_t STR_NOTE = 34;
+static constexpr uint16_t STR_SEND = 35;
+static constexpr uint16_t STR_RECEIVED = 36;
+static constexpr uint16_t STR_RECEIVED_TITLE = 37;
+static constexpr uint16_t STR_NO_RECEIVED = 38;
+static constexpr uint16_t STR_SHOW_QR = 39;
+static constexpr uint16_t STR_FORWARD = 40;
+static constexpr uint16_t STR_CONFIRM_DELETE = 41;
 
 static const uint16_t s_wizardStepOffsets[16] = {
     STR_GIVEN_NAME, STR_FAMILY_NAME, STR_FORMATTED_NAME, STR_ORGANIZATION,
@@ -124,18 +140,7 @@ static void registerStrings() {
  * \brief View instances used by vCard module UI flow.
  */
 static ui::ListView s_mainMenu;
-static ui::ListView s_peerList;
-static ui::InfoView s_consentView;
 static bool s_viewsInitialized = false;
-
-/**
- * \brief Peer discovery storage used for UI list rendering.
- */
-static constexpr uint16_t MAX_UI_PEERS = 16;
-EXT_RAM_BSS_ATTR static vcard_peer_t s_uiPeers[MAX_UI_PEERS] = {};
-static uint16_t s_uiPeerCount = 0;
-static ui::ListItem s_peerItems[MAX_UI_PEERS + 1] = {};
-static char s_peerLabels[MAX_UI_PEERS][48] = {};
 
 /**
  * \brief Main-menu item identifiers.
@@ -143,168 +148,153 @@ static char s_peerLabels[MAX_UI_PEERS][48] = {};
 enum MainMenuItem {
     MENU_MY_VCARD = 0,
     MENU_EDIT_MY_VCARD,
-    MENU_NEARBY,
-    MENU_SCAN_TOGGLE,
-    MENU_ADV_TOGGLE,
+    MENU_SEND,
+    MENU_RECEIVED,
     MENU_COUNT
 };
 static ui::ListItem s_mainMenuItems[MENU_COUNT] = {};
 
+// Received-contacts list view and its backing buffers (PSRAM).
+static ui::ListView s_receivedMenu;
+static bool s_receivedInitialized = false;
+static EXT_RAM_BSS_ATTR ui::ListItem s_recvItems[VCARD_MAX_CARDS];
+static EXT_RAM_BSS_ATTR char s_recvLabels[VCARD_MAX_CARDS][64];
+static uint16_t s_recvSlots[VCARD_MAX_CARDS];
+static uint16_t s_recvCount = 0;
+// Slot the context menu / confirm dialog currently acts on.
+static uint16_t s_activeSlot = 0;
+
 static void rebuildMainMenu();
 static void onMainMenuSelect(uint16_t index, void* userData);
-static void rebuildPeerList();
-static void onPeerSelect(uint16_t index, void* userData);
+static void openReceivedList();
+static void rebuildReceivedList();
+static void showVcardDetails(const char* title, const char* raw, bool withActions);
+static void showVcardQr(const char* raw, const char* fallbackTitle);
+static void onReceivedViewMenu(void* userData);
 
 /**
- * \brief Handles user acceptance of incoming vCard transfer consent.
- * \param userData Optional callback context (unused).
- * \return void
+ * \brief Delivers a received vCard into the contact store.
+ *
+ * Invoked by the message-transfer framework after the user consented and the
+ * encrypted transfer completed. \p data is UNTRUSTED, attacker-controlled and
+ * not NUL-terminated; it is copied into a bounded buffer before parsing.
+ * \return true if the vCard was accepted/stored.
  */
-static void onConsentAccept(void* userData) {
-    (void)userData;
-    ble_vcard_respond_consent(true);
-    ui::ViewStack::instance().pop();
-    ui::showToastInfo("Waiting for vCard...");
-}
-
-/**
- * \brief Handles user decline of incoming vCard exchange request.
- * \param userData Optional callback context (unused).
- */
-static void onConsentDecline(void* userData) {
-    (void)userData;
-    ble_vcard_respond_consent(false);
-    ui::ViewStack::instance().pop();
-}
-
-// Consent and exchange-complete callbacks fire on the nimble_host task; the UI
-// work must run on the main task. Requests are parked here under a mutex and
-// deferred via BLE_CONSENT_REQUEST / BLE_EXCHANGE_COMPLETE.
-struct PendingConsent {
-    bool valid = false;
-    char peerName[32] = {0};
-};
-struct PendingExchange {
-    bool valid = false;
-    bool success = false;
-    char error[64] = {0};
-};
-static PendingConsent s_pendingConsent;
-static PendingExchange s_pendingExchange;
-static SemaphoreHandle_t s_vcardBleMutex = nullptr;
-
-/**
- * \brief Incoming consent request, invoked on the nimble_host task.
- * \param peerName Remote peer display name.
- */
-static void onConsentRequest(const char* peerName) {
-    {
-        core::MutexGuard guard(s_vcardBleMutex);
-        s_pendingConsent.valid = true;
-        if (peerName) {
-            strncpy(s_pendingConsent.peerName, peerName, sizeof(s_pendingConsent.peerName) - 1);
-            s_pendingConsent.peerName[sizeof(s_pendingConsent.peerName) - 1] = '\0';
-        } else {
-            s_pendingConsent.peerName[0] = '\0';
-        }
+static bool deliverVcard(const uint8_t* data, uint32_t len, const char* /*mime*/,
+                         const char* /*peerName*/) {
+    if (!data || len == 0 || len > VCARD_MAX_LEN) return false;
+    static EXT_RAM_BSS_ATTR char buf[VCARD_MAX_LEN + 1];
+    memcpy(buf, data, len);
+    buf[len] = '\0';
+    char err[64] = {0};
+    if (!vcard_store_add(buf, len, err, sizeof(err))) {
+        LOG_W(TAG, "Failed to store received vCard: %s", err);
+        return false;
     }
-    core::EventBus::instance().publish(core::EventType::BLE_CONSENT_REQUEST);
+    return true;
 }
 
 /**
- * \brief Main-task handler that displays the consent prompt.
- * \param evt Unused; the request is read from s_pendingConsent.
+ * \brief Renders a vCard's parsed fields into a scrollable InfoView.
+ *
+ * Shows the display/full name as the first line, then one "<label>: <value>"
+ * line per non-empty field, reusing the editor field labels. Falls back to the
+ * raw text when nothing parses.
+ * \param title View header title.
+ * \param raw NUL-terminated vCard 4.0 text.
+ * \param withActions When true, key 3 opens the received-contact action menu.
  */
-static void onConsentRequestEvent(const core::Event& evt) {
-    (void)evt;
-    PendingConsent req;
-    {
-        core::MutexGuard guard(s_vcardBleMutex);
-        req = s_pendingConsent;
-        s_pendingConsent.valid = false;
+static void showVcardDetails(const char* title, const char* raw, bool withActions) {
+    static EXT_RAM_BSS_ATTR vcard_data_t s_parsed;
+    static EXT_RAM_BSS_ATTR char s_text[ui::InfoView::MAX_TEXT_LEN];
+
+    memset(&s_parsed, 0, sizeof(s_parsed));
+    vcard_parse_to_struct(raw, &s_parsed);
+
+    int n = 0;
+    const int cap = static_cast<int>(sizeof(s_text));
+    auto append = [&](const char* fmt, const char* a, const char* b) {
+        if (n >= cap - 1) return;
+        int w = snprintf(s_text + n, static_cast<size_t>(cap - n), fmt, a, b);
+        if (w > 0) n += w;
+        if (n > cap - 1) n = cap - 1;
+    };
+
+    if (s_parsed.formatted_name[0]) {
+        append("%s%s\n\n", s_parsed.formatted_name, "");
+    } else if (s_parsed.given_name[0] || s_parsed.family_name[0]) {
+        append("%s %s\n\n", s_parsed.given_name, s_parsed.family_name);
     }
-    if (!req.valid) return;
 
-    static char promptText[256];
-    snprintf(promptText, sizeof(promptText),
-             "%s\n\n%s\nmoechte vCard tauschen\n\n[Y] %s\n[N] %s",
-             mstr(STR_EXCHANGE_REQ),
-             req.peerName,
-             mstr(STR_ACCEPT),
-             mstr(STR_DECLINE));
+    auto field = [&](uint16_t label, const char* value) {
+        if (value[0]) append("%s: %s\n", mstr(label), value);
+    };
+    field(STR_ORGANIZATION,   s_parsed.organization);
+    field(STR_POSITION,       s_parsed.title);
+    field(STR_EMAIL,          s_parsed.email);
+    field(STR_TEL_CELL,       s_parsed.tel_cell);
+    field(STR_TEL_HOME,       s_parsed.tel_home);
+    field(STR_TEL_WORK,       s_parsed.tel_work);
+    field(STR_URL,            s_parsed.url);
+    field(STR_TELEGRAM,       s_parsed.impp_telegram);
+    field(STR_SIGNAL,         s_parsed.impp_signal);
+    field(STR_MATRIX,         s_parsed.impp_matrix);
+    field(STR_THREEMA,        s_parsed.impp_threema);
+    field(STR_SOCIAL_PROFILE, s_parsed.social_profile);
+    field(STR_NOTE,           s_parsed.note);
 
-    s_consentView.init(mstr(STR_EXCHANGE_REQ), promptText);
-    s_consentView.setYesNoCallbacks(onConsentAccept, onConsentDecline, nullptr);
-    ui::ViewStack::instance().push(&s_consentView);
+    if (n == 0) snprintf(s_text, sizeof(s_text), "%s", raw);
+
+    static ui::InfoView s_detailView;
+    s_detailView.init(title, s_text);
+    s_detailView.setOnMenu(withActions ? onReceivedViewMenu : nullptr);
+    ui::ViewStack::instance().push(&s_detailView);
 }
 
 /**
- * \brief Exchange-completion callback, invoked on the nimble_host task.
- * \param success `true` when exchange succeeded.
- * \param error Optional error text on failure.
+ * \brief Shows a vCard as a QR code, titled with the contact name.
+ * \param raw NUL-terminated vCard text to encode.
+ * \param fallbackTitle Title used when the card carries no name.
  */
-static void onExchangeComplete(bool success, const char* error) {
-    {
-        core::MutexGuard guard(s_vcardBleMutex);
-        s_pendingExchange.valid = true;
-        s_pendingExchange.success = success;
-        if (!success && error && error[0]) {
-            strncpy(s_pendingExchange.error, error, sizeof(s_pendingExchange.error) - 1);
-            s_pendingExchange.error[sizeof(s_pendingExchange.error) - 1] = '\0';
-        } else {
-            s_pendingExchange.error[0] = '\0';
-        }
-    }
-    core::EventBus::instance().publish(core::EventType::BLE_EXCHANGE_COMPLETE);
-}
+static void showVcardQr(const char* raw, const char* fallbackTitle) {
+    static EXT_RAM_BSS_ATTR vcard_data_t s_parsed;
+    static char s_qrTitle[96];
+    static char s_qrSubtitle[96];
 
-/**
- * \brief Main-task handler that shows the exchange-completion toast.
- * \param evt Unused; the result is read from s_pendingExchange.
- */
-static void onExchangeCompleteEvent(const core::Event& evt) {
-    (void)evt;
-    PendingExchange req;
-    {
-        core::MutexGuard guard(s_vcardBleMutex);
-        req = s_pendingExchange;
-        s_pendingExchange.valid = false;
-    }
-    if (!req.valid) return;
+    memset(&s_parsed, 0, sizeof(s_parsed));
+    vcard_parse_to_struct(raw, &s_parsed);
 
-    if (req.success) {
-        ui::showToastSuccess(mstr(STR_EXCHANGE_OK));
-    } else if (req.error[0]) {
-        ui::showToastError(req.error);
+    if (s_parsed.formatted_name[0]) {
+        snprintf(s_qrTitle, sizeof(s_qrTitle), "%s", s_parsed.formatted_name);
+    } else if (s_parsed.given_name[0] || s_parsed.family_name[0]) {
+        snprintf(s_qrTitle, sizeof(s_qrTitle), "%s %s",
+                 s_parsed.given_name, s_parsed.family_name);
     } else {
-        ui::showToastError(mstr(STR_EXCHANGE_FAIL));
+        snprintf(s_qrTitle, sizeof(s_qrTitle), "%s", fallbackTitle);
     }
+
+    const char* sub = s_parsed.organization[0] ? s_parsed.organization
+                    : s_parsed.title[0]        ? s_parsed.title
+                    : s_parsed.email[0]        ? s_parsed.email
+                    : "";
+    snprintf(s_qrSubtitle, sizeof(s_qrSubtitle), "%s", sub);
+
+    ui::showQRCode(raw, s_qrTitle, s_qrSubtitle[0] ? s_qrSubtitle : nullptr);
 }
 
 /**
- * \brief Rebuilds vCard main menu items from current BLE state.
+ * \brief Rebuilds the vCard main menu.
  */
 static void rebuildMainMenu() {
-    bool scanning = ble_vcard_is_scan_active();
-    bool advertising = ble_vcard_is_adv_active();
-
-    s_mainMenuItems[MENU_MY_VCARD]      = {mstr(STR_MY_VCARD),         0, false, nullptr};
-    s_mainMenuItems[MENU_EDIT_MY_VCARD] = {mstr(STR_EDIT_MY_VCARD),    0, false, nullptr};
-    s_mainMenuItems[MENU_NEARBY]        = {mstr(STR_NEARBY),           0, false, nullptr};
-    s_mainMenuItems[MENU_SCAN_TOGGLE]   = {
-        scanning ? mstr(STR_STOP_SCAN) : mstr(STR_SCAN),
-        0, false, nullptr
-    };
-    s_mainMenuItems[MENU_ADV_TOGGLE]    = {
-        advertising ? mstr(STR_STOP_ADV) : mstr(STR_ADVERTISING),
-        0, false, nullptr
-    };
-
+    s_mainMenuItems[MENU_MY_VCARD]      = {mstr(STR_MY_VCARD),      0, false, nullptr};
+    s_mainMenuItems[MENU_EDIT_MY_VCARD] = {mstr(STR_EDIT_MY_VCARD), 0, false, nullptr};
+    s_mainMenuItems[MENU_SEND]          = {mstr(STR_SEND),          0, false, nullptr};
+    s_mainMenuItems[MENU_RECEIVED]      = {mstr(STR_RECEIVED_TITLE), 0, false, nullptr};
     s_mainMenu.init(mstr(STR_VCARD), s_mainMenuItems, MENU_COUNT);
 }
 
 /**
- * \brief Handles main-menu actions for local and nearby vCard operations.
+ * \brief Handles main-menu actions for local vCard operations and sharing.
  * \param index Selected menu index.
  * \param userData Optional callback context (unused).
  */
@@ -316,9 +306,7 @@ static void onMainMenuSelect(uint16_t index, void* userData) {
             static EXT_RAM_BSS_ATTR char vcardText[VCARD_MAX_LEN + 1];
             size_t len = vcard_store_get_own(vcardText, sizeof(vcardText));
             if (len > 0) {
-                static ui::InfoView infoView;
-                infoView.init(mstr(STR_MY_VCARD), vcardText);
-                ui::ViewStack::instance().push(&infoView);
+                showVcardDetails(mstr(STR_MY_VCARD), vcardText, false);
             } else {
                 ui::showToastInfo(mstr(STR_NO_VCARD));
             }
@@ -333,73 +321,156 @@ static void onMainMenuSelect(uint16_t index, void* userData) {
             }
             break;
 
-        case MENU_NEARBY:
-            rebuildPeerList();
-            ui::ViewStack::instance().push(&s_peerList);
-            break;
-
-        case MENU_SCAN_TOGGLE:
-            if (ble_vcard_is_scan_active()) {
-                ble_vcard_set_scan_enabled(false);
-                ui::showToastInfo("Scan stopped");
-            } else {
-                ble_vcard_set_scan_enabled(true);
-                ui::showToastInfo(mstr(STR_SCANNING));
+        case MENU_SEND: {
+            // Push our own card to a nearby badge; the framework owns the peer
+            // picker, consent, encryption and progress UI.
+            static EXT_RAM_BSS_ATTR char own[VCARD_MAX_LEN + 1];
+            size_t len = vcard_store_get_own(own, sizeof(own));
+            if (len == 0) {
+                ui::showToastInfo(mstr(STR_NO_VCARD));
+                break;
             }
-            rebuildMainMenu();
+            cdc::msg::MessageTransfer::instance().beginInteractiveSend(
+                "text/vcard", reinterpret_cast<const uint8_t*>(own),
+                static_cast<uint32_t>(len));
             break;
+        }
 
-        case MENU_ADV_TOGGLE:
-            if (ble_vcard_is_adv_active()) {
-                ble_vcard_set_adv_enabled(false);
-                ui::showToastInfo("Advertising stopped");
-            } else {
-                ble_vcard_set_adv_enabled(true);
-                ui::showToastInfo("Advertising started");
-            }
-            rebuildMainMenu();
+        case MENU_RECEIVED:
+            openReceivedList();
             break;
     }
 }
 
+// ============================================================================
+// Received contacts: list, detail, context menu (view / QR / forward / delete).
+// ============================================================================
+
 /**
- * \brief Rebuilds nearby-peer list from BLE discovery cache.
+ * \brief Rebuilds the received-contacts list from the store (sorted by name).
  */
-static void rebuildPeerList() {
-    s_uiPeerCount = ble_vcard_get_peers(s_uiPeers, MAX_UI_PEERS);
-
-    if (s_uiPeerCount == 0) {
-        s_peerItems[0] = {mstr(STR_NO_PEERS), 0, true, nullptr};
-        s_peerList.init(mstr(STR_NEARBY), s_peerItems, 1);
-        return;
+static void rebuildReceivedList() {
+    s_recvCount = vcard_store_get_sorted(s_recvSlots, VCARD_MAX_CARDS);
+    for (uint16_t i = 0; i < s_recvCount; i++) {
+        uint16_t slot = s_recvSlots[i];
+        if (!vcard_store_get_display(slot, s_recvLabels[i], sizeof(s_recvLabels[i]))) {
+            s_recvLabels[i][0] = '\0';
+        }
+        s_recvItems[i] = {s_recvLabels[i], 0, false,
+                          reinterpret_cast<void*>(static_cast<uintptr_t>(slot))};
     }
-
-    for (uint16_t i = 0; i < s_uiPeerCount; i++) {
-        snprintf(s_peerLabels[i], sizeof(s_peerLabels[i]),
-                 "%s (%ddBm)", s_uiPeers[i].name, s_uiPeers[i].rssi);
-        s_peerItems[i] = {s_peerLabels[i], 0, false, reinterpret_cast<void*>(static_cast<uintptr_t>(i))};
-    }
-
-    s_peerList.init(mstr(STR_NEARBY), s_peerItems, s_uiPeerCount);
+    s_receivedMenu.setEmptyText(mstr(STR_NO_RECEIVED));
+    s_receivedMenu.init(mstr(STR_RECEIVED_TITLE), s_recvItems, s_recvCount);
 }
 
 /**
- * \brief Starts exchange with selected nearby peer.
- * \param index Selected peer index.
- * \param userData Optional callback context (unused).
+ * \brief Opens the detail view (with action menu) for the selected contact.
+ * \param index Unused on-screen position.
+ * \param userData Encoded store slot of the selected contact.
  */
-static void onPeerSelect(uint16_t index, void* userData) {
-    (void)userData;
+static void onReceivedSelect(uint16_t index, void* userData) {
+    (void)index;
+    s_activeSlot = static_cast<uint16_t>(reinterpret_cast<uintptr_t>(userData));
+    static EXT_RAM_BSS_ATTR char raw[VCARD_MAX_LEN + 1];
+    if (vcard_store_get(s_activeSlot, raw, sizeof(raw)) == 0) return;
+    showVcardDetails(mstr(STR_RECEIVED_TITLE), raw, true);
+}
 
-    if (index >= s_uiPeerCount) return;
+/// Context-menu action: create a new stored contact via the wizard.
+static void ctxReceivedAdd() {
+    VcardWizard::startReceived(&s_receivedMenu, rebuildReceivedList);
+}
 
-    vcard_peer_t& peer = s_uiPeers[index];
+/// Context-menu action: edit the active stored contact via the wizard.
+static void ctxReceivedEdit() {
+    VcardWizard::editReceived(&s_receivedMenu, s_activeSlot, rebuildReceivedList);
+}
 
-    if (ble_vcard_exchange_with(peer.addr, peer.addr_type)) {
-        ui::showToastInfo(mstr(STR_CONNECTING));
+/// Context-menu action: show the active contact as a QR code.
+static void ctxReceivedQr() {
+    static EXT_RAM_BSS_ATTR char raw[VCARD_MAX_LEN + 1];
+    if (vcard_store_get(s_activeSlot, raw, sizeof(raw)) == 0) return;
+    showVcardQr(raw, mstr(STR_RECEIVED_TITLE));
+}
+
+/// Context-menu action: forward the active contact to a nearby badge.
+static void ctxReceivedForward() {
+    static EXT_RAM_BSS_ATTR char raw[VCARD_MAX_LEN + 1];
+    size_t len = vcard_store_get(s_activeSlot, raw, sizeof(raw));
+    if (len == 0) return;
+    cdc::msg::MessageTransfer::instance().beginInteractiveSend(
+        "text/vcard", reinterpret_cast<const uint8_t*>(raw),
+        static_cast<uint32_t>(len));
+}
+
+/**
+ * \brief Confirm-dialog handler: deletes the contact and refreshes the list.
+ * \param userData Pointer to the store slot to delete.
+ */
+static void onReceivedDeleteConfirm(void* userData) {
+    uint16_t slot = *static_cast<uint16_t*>(userData);
+    if (vcard_store_delete(slot)) {
+        ui::showToastSuccess(ui::tr("core.deleted"));
+        s_receivedMenu.preservePosition();
+        rebuildReceivedList();
+        ui::ViewStack::instance().popToAnchor(&s_receivedMenu);
     } else {
-        ui::showToastError("Exchange failed");
+        ui::showToastError(ui::tr("core.failed"));
     }
+}
+
+/// Context-menu action: confirm and delete the active contact.
+static void ctxReceivedDelete() {
+    ui::showConfirm(mstr(STR_CONFIRM_DELETE), onReceivedDeleteConfirm, nullptr,
+                    ui::ConfirmView::Icon::WARNING, &s_activeSlot);
+}
+
+/**
+ * \brief Detail-view context menu (key 3): edit / forward / QR / delete the
+ *        currently shown contact.
+ */
+static void onReceivedViewMenu(void* userData) {
+    (void)userData;
+    const ui::ContextMenuItem items[] = {
+        {ui::tr("core.edit"),   ctxReceivedEdit},
+        {mstr(STR_FORWARD),     ctxReceivedForward},
+        {mstr(STR_SHOW_QR),     ctxReceivedQr},
+        {ui::tr("core.delete"), ctxReceivedDelete},
+    };
+    ui::showContextMenu(ui::tr("core.actions"), items, 4);
+}
+
+/**
+ * \brief List context menu (key 3): add a contact; for a selected entry also
+ *        edit / forward / delete it.
+ * \param index Unused on-screen position.
+ * \param userData Encoded store slot of the selected contact.
+ */
+static void onReceivedMenu(uint16_t index, void* userData) {
+    (void)index;
+    ui::ContextMenuItem items[4] = {};
+    uint8_t n = 0;
+    items[n++] = {ui::tr("core.add"), ctxReceivedAdd};
+    if (s_recvCount > 0) {
+        s_activeSlot = static_cast<uint16_t>(reinterpret_cast<uintptr_t>(userData));
+        items[n++] = {ui::tr("core.edit"),   ctxReceivedEdit};
+        items[n++] = {mstr(STR_FORWARD),     ctxReceivedForward};
+        items[n++] = {ui::tr("core.delete"), ctxReceivedDelete};
+    }
+    ui::showContextMenu(ui::tr("core.actions"), items, n);
+}
+
+/**
+ * \brief Lazily wires callbacks, rebuilds and pushes the received-contacts list.
+ */
+static void openReceivedList() {
+    if (!s_receivedInitialized) {
+        s_receivedMenu.setOnSelect(onReceivedSelect);
+        s_receivedMenu.setOnMenu(onReceivedMenu);
+        s_receivedInitialized = true;
+    }
+    rebuildReceivedList();
+    ui::ViewStack::instance().push(&s_receivedMenu);
 }
 
 // ============================================================================
@@ -424,30 +495,7 @@ static void onMyVcardLockscreenSelect() {
         ui::showToastError(mstr(STR_NO_VCARD));
         return;
     }
-
-    static EXT_RAM_BSS_ATTR vcard_data_t s_parsed;
-    static char s_qrTitle[96];
-    static char s_qrSubtitle[96];
-
-    memset(&s_parsed, 0, sizeof(s_parsed));
-    vcard_parse_to_struct(s_qrBuf, &s_parsed);
-
-    if (s_parsed.formatted_name[0]) {
-        snprintf(s_qrTitle, sizeof(s_qrTitle), "%s", s_parsed.formatted_name);
-    } else if (s_parsed.given_name[0] || s_parsed.family_name[0]) {
-        snprintf(s_qrTitle, sizeof(s_qrTitle), "%s %s",
-                 s_parsed.given_name, s_parsed.family_name);
-    } else {
-        snprintf(s_qrTitle, sizeof(s_qrTitle), "%s", mstr(STR_MY_VCARD));
-    }
-
-    const char* sub = s_parsed.organization[0] ? s_parsed.organization
-                    : s_parsed.title[0]        ? s_parsed.title
-                    : s_parsed.email[0]        ? s_parsed.email
-                    : "";
-    snprintf(s_qrSubtitle, sizeof(s_qrSubtitle), "%s", sub);
-
-    ui::showQRCode(s_qrBuf, s_qrTitle, s_qrSubtitle[0] ? s_qrSubtitle : nullptr);
+    showVcardQr(s_qrBuf, mstr(STR_MY_VCARD));
 }
 
 // ============================================================================
@@ -457,6 +505,8 @@ static void onMyVcardLockscreenSelect() {
 EXT_RAM_BSS_ATTR static char s_vcardBuf[VCARD_MAX_LEN + 64];
 static int  s_vcardBufPos = 0;
 static bool s_vcardInputMode = false;
+// Paste target: -1 sets the own card, otherwise the received slot to overwrite.
+static int  s_vcardSetSlot = -1;
 static esp_timer_handle_t s_vcardIdleTimer = nullptr;
 // Cancel a stalled paste session after this many seconds of inactivity so a
 // crashed/interrupted client cannot lock the serial console forever.
@@ -465,6 +515,7 @@ static constexpr int64_t VCARD_IDLE_LIMIT_US = 30 * 1000000LL;
 static void vcard_session_clear() {
     s_vcardInputMode = false;
     s_vcardBufPos = 0;
+    s_vcardSetSlot = -1;
     memset(s_vcardBuf, 0, sizeof(s_vcardBuf));
     serial::getCommandRegistry().setLineInterceptor(nullptr);
     if (s_vcardIdleTimer) esp_timer_stop(s_vcardIdleTimer);
@@ -507,7 +558,11 @@ static bool vcardLineInterceptor(const char* line) {
         s_vcardBuf[s_vcardBufPos] = '\0';
 
         char err[64] = {};
-        if (vcard_store_set_own(s_vcardBuf, static_cast<size_t>(s_vcardBufPos), err, sizeof(err))) {
+        bool ok = (s_vcardSetSlot >= 0)
+            ? vcard_store_update(static_cast<uint16_t>(s_vcardSetSlot), s_vcardBuf,
+                                 static_cast<size_t>(s_vcardBufPos), err, sizeof(err))
+            : vcard_store_set_own(s_vcardBuf, static_cast<size_t>(s_vcardBufPos), err, sizeof(err));
+        if (ok) {
             Console::printf("OK: vCard updated\r\n");
         } else {
             Console::printf("ERROR: %s\r\n", err[0] ? err : "Invalid vCard");
@@ -540,12 +595,28 @@ static bool vcardLineInterceptor(const char* line) {
 
 /**
  * \brief Serial command entering multiline vCard paste mode.
- * \param args Unused command arguments.
+ *
+ * Without an argument it sets the own card. With a numeric \p args it overwrites
+ * the received card stored under that slot id (as listed by `VCARD LIST`).
+ * \param args Optional received-card slot id to overwrite.
  */
 static void cmdVcardSet(const char* args) {
-    (void)args;
-    serial::Console::printf("Paste vCard 4.0, end with '---' on a new line "
-                            "(or 'ABORT' to cancel):\r\n");
+    using Console = serial::Console;
+
+    s_vcardSetSlot = -1;
+    if (args && *args) {
+        int slot = atoi(args);
+        char probe[2];
+        if (slot < 0 || slot >= VCARD_MAX_CARDS ||
+            !vcard_store_get_display(static_cast<uint16_t>(slot), probe, sizeof(probe))) {
+            Console::printf("ERROR: no vCard at id %d\r\n", slot);
+            return;
+        }
+        s_vcardSetSlot = slot;
+    }
+
+    Console::printf("Paste vCard 4.0, end with '---' on a new line "
+                    "(or 'ABORT' to cancel):\r\n");
     s_vcardBufPos = 0;
     s_vcardInputMode = true;
     serial::getCommandRegistry().setLineInterceptor(vcardLineInterceptor);
@@ -553,16 +624,47 @@ static void cmdVcardSet(const char* args) {
 }
 
 /**
- * \brief Serial command printing stored vCard or template.
- * \param args Unused command arguments.
+ * \brief Prints a NUL-terminated vCard buffer line by line as CRLF output.
+ * \param out Buffer holding the vCard text; consumed in place.
+ */
+static void vcardPrintLines(char* out) {
+    using Console = serial::Console;
+    char* line = out;
+    char* next;
+    while ((next = strchr(line, '\n')) != nullptr) {
+        *next = '\0';
+        Console::printf("%s\r\n", line);
+        line = next + 1;
+    }
+    if (*line) {
+        Console::printf("%s\r\n", line);
+    }
+}
+
+/**
+ * \brief Serial command printing a stored vCard.
+ *
+ * Without an argument it prints the own card, or an empty 4.0 template if none
+ * is set. With a numeric \p args it prints the received card stored under that
+ * slot id (as listed by `VCARD LIST`).
+ * \param args Optional received-card slot id.
  */
 static void cmdVcardGet(const char* args) {
-    (void)args;
     using Console = serial::Console;
-
     char out[VCARD_MAX_LEN + 1];
-    size_t len = vcard_store_get_own(out, sizeof(out));
 
+    if (args && *args) {
+        int slot = atoi(args);
+        if (slot < 0 || slot >= VCARD_MAX_CARDS ||
+            vcard_store_get(static_cast<uint16_t>(slot), out, sizeof(out)) == 0) {
+            Console::printf("ERROR: no vCard at id %d\r\n", slot);
+            return;
+        }
+        vcardPrintLines(out);
+        return;
+    }
+
+    size_t len = vcard_store_get_own(out, sizeof(out));
     if (len == 0) {
         Console::printf("BEGIN:VCARD\r\n");
         Console::printf("VERSION:4.0\r\n");
@@ -585,35 +687,64 @@ static void cmdVcardGet(const char* args) {
         return;
     }
 
-    char* line = out;
-    char* next;
-    while ((next = strchr(line, '\n')) != nullptr) {
-        *next = '\0';
-        Console::printf("%s\r\n", line);
-        line = next + 1;
+    vcardPrintLines(out);
+}
+
+/**
+ * \brief Serial command listing received vCards as "<id>  <display name>".
+ * \param args Unused command arguments.
+ */
+static void cmdVcardList(const char* args) {
+    (void)args;
+    using Console = serial::Console;
+
+    uint16_t slots[VCARD_MAX_CARDS];
+    uint16_t count = vcard_store_get_sorted(slots, VCARD_MAX_CARDS);
+    if (count == 0) {
+        Console::printf("No received vCards\r\n");
+        return;
     }
-    if (*line) {
-        Console::printf("%s\r\n", line);
+
+    char name[64];
+    for (uint16_t i = 0; i < count; i++) {
+        if (!vcard_store_get_display(slots[i], name, sizeof(name))) name[0] = '\0';
+        Console::printf("%2u  %s\r\n", slots[i], name);
     }
 }
 
 /**
- * \brief Serial command deleting stored local vCard.
- * \param args Unused command arguments.
+ * \brief Serial command deleting a stored vCard.
+ *
+ * Without an argument it deletes the own card. With a numeric \p args it deletes
+ * the received card stored under that slot id (as listed by `VCARD LIST`).
+ * \param args Optional received-card slot id.
  */
 static void cmdVcardDelete(const char* args) {
-    (void)args;
+    using Console = serial::Console;
+
+    if (args && *args) {
+        int slot = atoi(args);
+        if (slot < 0 || slot >= VCARD_MAX_CARDS ||
+            !vcard_store_delete(static_cast<uint16_t>(slot))) {
+            Console::printf("ERROR: no vCard at id %d\r\n", slot);
+            return;
+        }
+        Console::printf("OK: vCard %d deleted\r\n", slot);
+        return;
+    }
+
     if (vcard_store_clear_own()) {
-        serial::Console::printf("OK: vCard deleted\r\n");
+        Console::printf("OK: vCard deleted\r\n");
     } else {
-        serial::Console::printf("ERROR: Failed to delete vCard\r\n");
+        Console::printf("ERROR: Failed to delete vCard\r\n");
     }
 }
 
 static const serial::SubCommand kVcardSubs[] = {
-    {"SET",    "", "Set own vCard (multiline paste, terminate with '---' or 'ABORT')", cmdVcardSet},
-    {"GET",    "", "Show own vCard",                                                   cmdVcardGet},
-    {"DELETE", "", "Delete own vCard",                                                 cmdVcardDelete},
+    {"SET",    "[id]", "Set own vCard, or overwrite received vCard <id> (multiline paste, end with '---' or 'ABORT')", cmdVcardSet},
+    {"GET",    "[id]", "Show own vCard, or received vCard <id>",                       cmdVcardGet},
+    {"LIST",   "", "List received vCards",                                             cmdVcardList},
+    {"DELETE", "[id]", "Delete own vCard, or received vCard <id>",                     cmdVcardDelete},
     {nullptr, nullptr, nullptr, nullptr},
 };
 
@@ -627,7 +758,7 @@ static void cmdVcard(const char* args) {
 static void registerSerialCommands() {
     auto& reg = serial::getCommandRegistry();
     reg.registerCommand({"VCARD",
-                         "vCard storage: SET/GET/DELETE",
+                         "vCard storage: SET/GET/LIST/DELETE",
                          cmdVcard, "vcard", false, kVcardSubs});
 }
 
@@ -655,22 +786,9 @@ bool VcardModule::init() {
 
     VcardWizard::configure(mstr, s_wizardStepOffsets, STR_SAVED, STR_EXCHANGE_FAIL);
 
-    if (!ble_vcard_init()) {
-        LOG_W(TAG, "BLE vCard init failed (BLE might not be available)");
-    }
-
-    if (!s_vcardBleMutex) {
-        s_vcardBleMutex = xSemaphoreCreateMutex();
-    }
-    core::EventBus::instance().subscribe(onConsentRequestEvent,
-                                         core::EventBus::eventMask(core::EventType::BLE_CONSENT_REQUEST));
-    core::EventBus::instance().subscribe(onExchangeCompleteEvent,
-                                         core::EventBus::eventMask(core::EventType::BLE_EXCHANGE_COMPLETE));
-
-    ble_vcard_set_consent_callback(onConsentRequest);
-    ble_vcard_set_exchange_complete_callback(onExchangeComplete);
-
-    ble_vcard_set_receive_enabled(true);
+    // Register as the handler for incoming "text/vcard" message transfers.
+    cdc::msg::MessageTransfer::instance().registerHandler(
+        "text/vcard", "mod_vcard.received", deliverVcard);
 
     core::ModuleRegistry::instance().registerModule(this);
     state_ = core::ServiceState::INITIALIZED;
@@ -693,7 +811,7 @@ bool VcardModule::start() {
  * \brief Stops vCard BLE service and module runtime.
  */
 void VcardModule::stop() {
-    ble_vcard_deinit();
+    cdc::msg::MessageTransfer::instance().unregisterHandler("text/vcard");
     state_ = core::ServiceState::STOPPED;
 }
 
@@ -712,7 +830,6 @@ uint8_t VcardModule::getMenuItems(core::ModuleMenuItem* items, uint8_t maxItems)
         []() -> ui::IView* {
             if (!s_viewsInitialized) {
                 s_mainMenu.setOnSelect(onMainMenuSelect);
-                s_peerList.setOnSelect(onPeerSelect);
                 s_viewsInitialized = true;
             }
             rebuildMainMenu();
@@ -749,7 +866,7 @@ uint8_t VcardModule::getLockScreenContextItems(core::LockScreenContextItem* item
  * \param nowMs Current uptime in milliseconds.
  */
 void VcardModule::onTick(uint32_t nowMs) {
-    ble_vcard_tick(nowMs);
+    (void)nowMs;
 }
 
 /// Schema version written to and expected from the vCard backup section.

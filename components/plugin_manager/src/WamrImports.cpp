@@ -133,6 +133,12 @@ static int32_t w_host_ui_set_view_empty(wasm_exec_env_t, const char* text)
     return host_ui_set_view_empty(text);
 }
 
+static int32_t w_host_ui_set_view_lifecycle(wasm_exec_env_t, uint32_t hide_action_id,
+                                            uint32_t show_action_id)
+{
+    return host_ui_set_view_lifecycle(hide_action_id, show_action_id);
+}
+
 static int32_t w_host_ui_update_list_item(wasm_exec_env_t exec_env, uint32_t index,
                                           const ui_item_t* item)
 {
@@ -598,6 +604,25 @@ static uint32_t w_host_cpu_load(wasm_exec_env_t) { return host_cpu_load(); }
 static int32_t w_host_cmd_consume(wasm_exec_env_t, char* out, uint32_t out_size)
 { return host_cmd_consume(out, out_size); }
 
+// -- Message transfer --
+static int32_t w_host_msg_register_handler(wasm_exec_env_t, const char* mime, uint32_t aid)
+{ return host_msg_register_handler(mime, aid); }
+static int32_t w_host_msg_unregister_handler(wasm_exec_env_t, const char* mime)
+{ return host_msg_unregister_handler(mime); }
+static int32_t w_host_msg_consume(wasm_exec_env_t, uint8_t* buf, uint32_t buf_size,
+                                  char* mime_out, uint32_t mime_size)
+{ return host_msg_consume(buf, buf_size, mime_out, mime_size); }
+static int32_t w_host_msg_send_interactive(wasm_exec_env_t, const char* mime,
+                                           const uint8_t* data, uint32_t len)
+{ return host_msg_send_interactive(mime, data, len); }
+static int32_t w_host_msg_send(wasm_exec_env_t exec_env, const uint8_t* addr, uint32_t addr_type,
+                               const char* mime, const uint8_t* data, uint32_t len)
+{
+    // addr is a bare '*' (WAMR validates only 1 byte) -> re-validate all 6 bytes.
+    if (!wbuf_ok(exec_env, addr, 6)) return HOST_ERR_INVALID_ARG;
+    return host_msg_send(addr, static_cast<uint8_t>(addr_type), mime, data, len);
+}
+
 static int32_t w_host_ui_acquire_exclusive(wasm_exec_env_t)  { return host_ui_acquire_exclusive(); }
 static int32_t w_host_ui_release_exclusive(wasm_exec_env_t)  { return host_ui_release_exclusive(); }
 static int32_t w_host_ui_set_inactivity(wasm_exec_env_t, uint32_t timeout_ms, uint32_t action_id)
@@ -891,6 +916,7 @@ static const NativeSymbol s_symbols[] = {
     W("host_ui_insert_list_item", w_host_ui_insert_list_item, "(i*)i"),
     W("host_ui_remove_list_item", w_host_ui_remove_list_item, "(i)i"),
     W("host_ui_set_view_empty",  w_host_ui_set_view_empty,  "($)i"),
+    W("host_ui_set_view_lifecycle", w_host_ui_set_view_lifecycle, "(ii)i"),
     W("host_ui_push_context_menu", w_host_ui_push_context_menu, "($*~i)i"),
     W("host_ui_push_t9_input",   w_host_ui_push_t9_input,   "($$ii)i"),
     W("host_ui_push_password",   w_host_ui_push_password,   "($$ii)i"),
@@ -1012,6 +1038,12 @@ static const NativeSymbol s_symbols[] = {
     W("host_feature_enabled",      w_host_feature_enabled,      "(i)i"),
     W("host_cpu_load",             w_host_cpu_load,             "()i"),
     W("host_cmd_consume",          w_host_cmd_consume,          "(*~)i"),
+
+    W("host_msg_register_handler",   w_host_msg_register_handler,   "($i)i"),
+    W("host_msg_unregister_handler", w_host_msg_unregister_handler, "($)i"),
+    W("host_msg_consume",            w_host_msg_consume,            "(*~*~)i"),
+    W("host_msg_send_interactive",   w_host_msg_send_interactive,   "($*~)i"),
+    W("host_msg_send",               w_host_msg_send,               "(*i$*~)i"),
 
     W("host_ui_acquire_exclusive", w_host_ui_acquire_exclusive, "()i"),
     W("host_ui_release_exclusive", w_host_ui_release_exclusive, "()i"),

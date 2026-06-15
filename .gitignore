@@ -49,15 +49,27 @@ web-flasher/manifest.json
 # Doxygen output
 doxygen_output/
 
-# Claude / AI config (not for public repo)
-CLAUDE.md
-agents.md
-.claude/
-find.md
-plan.md
-plan2.md
-
 # open-mem: Auto-generated folder context files.
 # Uncomment to exclude from version control (recommended for large projects):
 # **/AGENTS.md
 skill/
+
+# AI assistant local state
+CLAUDE.md
+agents.md
+.claude/
+.specify/
+/find.md
+/plan.md
+/plan2.md
+.claude.json
+CLAUDE.local.md
+.agent/
+.ai-scratch/
+*.transcript.md
+*.session.md
+
+# Local spec drafting artifacts
+specs/**/.scratch/
+specs/**/notes.md
+specs/**/research.local.md

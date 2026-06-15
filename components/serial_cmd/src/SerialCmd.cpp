@@ -18,6 +18,7 @@
 #include "cdc_core/CpuStats.h"
 #include "cdc_hal/ISecureElement.h"
 #include "cdc_hal/IWifiController.h"
+#include "cdc_hal/IPowerManager.h"
 #include "cdc_os_ui/AppUi.h"
 #include "cdc_os_ui/WifiHandlers.h"
 #include "cdc_log.h"
@@ -602,6 +603,23 @@ static void cmdBootloader(const char* args) {
     Console::printf("Rebooting into download mode...\r\n");
     Console::flush();
     cdc::ui::rebootIntoBootloader();
+}
+
+/**
+ * \brief Enters ship mode (disconnects the battery via BATFET).
+ * \param args Unused command arguments.
+ */
+static void cmdShipMode(const char* args) {
+    (void)args;
+    auto* power = hal::getPowerManagerInstance();
+    if (!power) {
+        Console::printf("ERROR: Power manager not available\r\n");
+        return;
+    }
+    Console::printf("Entering ship mode (battery disconnect)...\r\n");
+    Console::flush();
+    power->enterShipMode();
+    Console::printf("OK\r\n");
 }
 
 static void cmdPaste(const char* args) {
@@ -2420,6 +2438,7 @@ void SerialCmd::registerBuiltinCommands() {
     reg.registerCommand({"ERROR_LOG", "Show error log (CLEAR to reset)", cmdErrorLog, "system", false});
     reg.registerCommand({"REBOOT", "Restart the device", cmdReboot, "system", true});
     reg.registerCommand({"BOOTLOADER", "Reboot into USB download mode", cmdBootloader, "system", true});
+    reg.registerCommand({"SHIPMODE", "Enter ship mode (disconnect battery)", cmdShipMode, "system", true});
     reg.registerCommand({"PASTE", "Paste text into the active T9 input", cmdPaste, "system", true});
 
     reg.registerCommand({"NVS", "NVS storage: LIST/READ/DEL/CLEAR", cmdNvs, "nvs", true, kNvsSubs});

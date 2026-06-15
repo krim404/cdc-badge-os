@@ -77,6 +77,9 @@ public:
     [[nodiscard]] int consumeInputInt (int32_t* out);
     [[nodiscard]] int setViewFooter   (const char* hint);
     [[nodiscard]] int setViewEmpty    (const char* text);
+    /// Wire hide/show callbacks on the current plugin view. The action ids fire
+    /// via plugin_on_action when the view is covered (hide) or revealed (show).
+    [[nodiscard]] int setViewLifecycle(uint32_t hide_action_id, uint32_t show_action_id);
 
     /// Drop ownership of every plugin-pushed view and reset transient state.
     /// Called by PluginManager when the active plugin stops; views that may
@@ -163,6 +166,8 @@ private:
     static void onInputCancel();
     static void onPinCancel ();
     static void onInactivity();
+    static void onViewHide(void* userData);
+    static void onViewShow(void* userData);
     static void onCanvasKey      (char key, uint32_t focused_widget);
     static void onCanvasLongPress(char key);
     static void onCanvasWidget   (uint32_t widget_id, cdc::ui::CanvasView::WidgetEvent event);
@@ -187,6 +192,8 @@ private:
     std::vector<std::unique_ptr<ListState>>     list_graveyard_;
     const void*  exclusive_token_   = nullptr;
     uint32_t     inactivity_action_ = 0;
+    uint32_t     lifecycle_hide_action_ = 0;
+    uint32_t     lifecycle_show_action_ = 0;
 };
 
 }  // namespace cdc::plugin_manager

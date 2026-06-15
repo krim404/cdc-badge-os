@@ -1,0 +1,54 @@
+---
+title: CDC Badge OS
+description: >-
+  Documentation for the CDC Badge v1.0 hardware security key: FIDO2/WebAuthn, GPG/SSH, TOTP,
+  a password vault and a WASM plugin runtime on an ESP32-S3 with a TROPIC01 secure element.
+template: splash
+hero:
+  tagline: >-
+    A hardware security key you can hold, hack and extend — FIDO2/WebAuthn, GPG/SSH, TOTP, a password
+    vault and a sandboxed WASM plugin runtime, on an ESP32-S3 with a TROPIC01 secure element.
+---
+
+import { CardGrid, LinkCard, LinkButton } from '@astrojs/starlight/components';
+
+export const base = import.meta.env.BASE_URL;
+
+<div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-block:1.5rem 2.5rem;">
+  <LinkButton href={base + 'start/overview/'} icon="right-arrow">Get started</LinkButton>
+  <LinkButton href={base + 'flasher/'} variant="secondary" icon="laptop">Flash your badge</LinkButton>
+</div>
+
+## Three ways in
+
+<CardGrid>
+  <LinkCard
+    title="Getting Started"
+    href={base + 'start/overview/'}
+    description="What the badge is, how to flash it, first boot, and a feature-by-feature user guide — plus the security background." />
+  <LinkCard
+    title="Intermediate"
+    href={base + 'power/'}
+    description="Plugins (WASM), the serial console, the expert menu, languages and companion tools." />
+  <LinkCard
+    title="Developer"
+    href={base + 'dev/'}
+    description="Architecture, module and plugin development, the host API, protocols and the code reference." />
+</CardGrid>
+
+## Project links
+
+<CardGrid>
+  <LinkCard
+    title="Plugin SDK & web installer"
+    href="https://github.com/krim404/cdc-badge-plugins"
+    description="Rust plugin SDK, example plugins and the browser-based plugin installer." />
+  <LinkCard
+    title="Firmware source"
+    href="https://codeberg.org/Krim/cdc-badge-os"
+    description="Canonical CDC Badge OS firmware repository." />
+  <LinkCard
+    title="Code reference"
+    href={base + 'api/'}
+    description="Generated Doxygen reference for the firmware internals." />
+</CardGrid>

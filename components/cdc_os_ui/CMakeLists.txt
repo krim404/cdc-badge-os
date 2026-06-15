@@ -7,6 +7,7 @@ idf_component_register(
         "src/AppUi.cpp"
         "src/WifiMenuUi.cpp"
         "src/BluetoothMenuUi.cpp"
+        "src/MsgTransferUi.cpp"
         "src/ExpertMenuUi.cpp"
         "src/WifiHandlers.cpp"
         "src/SettingsHandlers.cpp"
@@ -26,6 +27,7 @@ idf_component_register(
         cdc_log
         cdc_ui
         cdc_views
+        cdc_msg
         serial_cmd
         plugin_manager
         Adafruit-GFX

@@ -197,7 +197,7 @@ public:
 
             if (!commands_[i].subCommands) continue;
             for (const SubCommand* e = commands_[i].subCommands; e->name; ++e) {
-                char head[40];
+                char head[kSubCommandHeadBufSize];
                 if (e->args && *e->args) {
                     std::snprintf(head, sizeof(head), "%s %s", e->name, e->args);
                 } else {

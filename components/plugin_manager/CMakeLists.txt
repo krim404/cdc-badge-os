@@ -33,6 +33,7 @@ idf_component_register(
         "src/host_api_sysinfo.cpp"
         "src/host_api_cmd.cpp"
         "src/host_api_ble.cpp"
+        "src/host_api_msg.cpp"
         "src/host_api_display.cpp"
         "src/host_api_keypad.cpp"
         "src/host_api_usb.cpp"
@@ -53,6 +54,7 @@ idf_component_register(
         cdc_ui
         cdc_views
         cdc_os_ui
+        cdc_msg
         serial_cmd
         wamr_runtime
         fatfs

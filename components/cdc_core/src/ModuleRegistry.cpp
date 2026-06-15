@@ -4,6 +4,7 @@
 #include "cdc_core/EventBus.h"
 #include "cdc_core/UsbManager.h"
 #include "cdc_core/Raii.h"
+#include "module_defaults.h"
 #include "cdc_log.h"
 #include <nvs_flash.h>
 #include <nvs.h>
@@ -13,6 +14,26 @@
 #include <memory>
 
 static const char* TAG = "ModuleReg";
+
+namespace {
+struct ModuleDefault {
+    const char* name;
+    bool enabled;
+};
+
+#define MODULE_DEFAULT_ENTRY(n, en) { n, en },
+constexpr ModuleDefault kModuleDefaults[] = {
+    MODULE_DEFAULT_MAP(MODULE_DEFAULT_ENTRY)
+};
+#undef MODULE_DEFAULT_ENTRY
+
+const ModuleDefault* findModuleDefault(const char* name) {
+    for (const auto& e : kModuleDefaults) {
+        if (strcmp(e.name, name) == 0) return &e;
+    }
+    return nullptr;
+}
+} // namespace
 
 namespace cdc::core {
 
@@ -59,6 +80,15 @@ void ModuleRegistry::runAllInitializers() {
     for (uint8_t i = 0; i < initCount_; i++) {
         if (initializers_[i]) {
             initializers_[i]();
+        }
+    }
+
+    // Every registered module must have an explicit entry in module_defaults.h.
+    // A missing entry is a build misconfiguration.
+    for (uint8_t i = 0; i < count_; i++) {
+        if (!findModuleDefault(modules_[i]->getName())) {
+            LOG_E(TAG, "Module '%s' missing from MODULE_DEFAULT_MAP (module_defaults.h)",
+                  modules_[i]->getName());
         }
     }
 
@@ -528,11 +558,13 @@ void ModuleRegistry::loadDisabledList() {
     }
     if (loaded) return;
 
-    // No NVS entry: apply factory defaults from each module's isDefaultEnabled().
+    // No NVS entry: apply factory defaults from module_defaults.h.
     disabledModules_[0] = '\0';
     size_t offset = 0;
     for (uint8_t i = 0; i < count_; i++) {
-        if (modules_[i]->isDefaultEnabled()) continue;
+        const ModuleDefault* def = findModuleDefault(modules_[i]->getName());
+        bool defaultEnabled = def ? def->enabled : true;  // unlisted -> enabled
+        if (defaultEnabled) continue;
         const char* name = modules_[i]->getName();
         size_t nameLen = strlen(name);
         size_t needed = (offset > 0 ? 1 : 0) + nameLen + 1;

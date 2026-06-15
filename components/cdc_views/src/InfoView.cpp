@@ -149,6 +149,10 @@ InputResult InfoView::onKey(char key) {
         onNo_(callbackUserData_);
         return InputResult::CONSUMED;
     }
+    if (key == KEY_MENU && onMenu_) {
+        onMenu_(menuUserData_);
+        return InputResult::CONSUMED;
+    }
 
     switch (key) {
         case KEY_UP:
@@ -211,6 +215,11 @@ void InfoView::render(bool partial) {
 
     if (!partial) {
         gfx->fillScreen(EPD_WHITE);
+    } else {
+        // Partial repaint (e.g. as a modal over a base view): clear the whole
+        // content band including the header, so a header/body underneath does
+        // not bleed through behind the freshly drawn title.
+        gfx->fillRect(0, 0, width, height - FOOTER_HEIGHT, EPD_WHITE);
     }
 
     gfx->setFont(nullptr);  // 6x8 built-in (CP437): never inherit a leaked GFX font

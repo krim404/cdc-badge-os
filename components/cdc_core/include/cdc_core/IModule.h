@@ -77,12 +77,6 @@ public:
     virtual const char* getVersion() const = 0;
 
     /**
-     * \brief Returns whether the module should be enabled by default on a fresh
-     *        install (no NVS entry yet). User toggles persist independently.
-     */
-    virtual bool isDefaultEnabled() const { return true; }
-
-    /**
      * \brief Per-module restore outcome reported by importBackup().
      *
      * Counts are best-effort tallies, not an all-or-nothing status: a module

@@ -16,6 +16,7 @@
 #include "cdc_core/ServiceRegistry.h"
 #include "plugin_manager/PluginManager.h"
 #include "plugin_manager/PluginSerialCommands.h"
+#include "plugin_manager/GpioSerialCommands.h"
 #include "cdc_ui/I18n.h"
 #include "cdc_core/EventBus.h"
 #include "cdc_core/ModuleRegistry.h"
@@ -40,6 +41,7 @@
 #include "cdc_hal/IRtc.h"
 #include "cdc_os_ui/AppUi.h"
 #include "cdc_os_ui/WifiHandlers.h"
+#include "cdc_msg/MessageTransfer.h"
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
 #include "esp_system.h"
@@ -447,11 +449,26 @@ static void initSerialCommandInterface() {
 }
 
 /**
+ * \brief Initializes the badge-to-badge message transfer service.
+ *
+ * Must run before modules so they can register handlers in their initializers.
+ * Honors the persisted beacon preference (auto-enables BLE when on).
+ */
+static void initMessageTransfer() {
+    auto& msg = cdc::msg::MessageTransfer::instance();
+    msg.init();
+    msg.start();
+    ServiceRegistry::instance().registerService("msg", &msg);
+    LOG_I(TAG, "Message transfer service ready");
+}
+
+/**
  * \brief Brings up high-level OS services that depend on hardware being ready.
  */
 static void initSystemServices() {
     initAttestationService();
     initTropicStorage();
+    initMessageTransfer();
     initSerialCommandInterface();
 }
 
@@ -520,6 +537,7 @@ static void initPluginSystem() {
         return;
     }
     cdc::plugin_manager::registerPluginSerialCommands();
+    cdc::plugin_manager::registerGpioSerialCommands();
 
     // Scan the plugins FAT for available language files (fills the picker) and
     // load the persisted language's overlay. Fires the language-changed
@@ -560,6 +578,7 @@ static void runMainLoopIteration() {
     uint32_t nowMs = esp_timer_get_time() / 1000;
     cdc::ui::ui_process(nowMs);
     s_attestationService.onTick(nowMs);
+    cdc::msg::MessageTransfer::instance().tick(nowMs);
 
     cdc::core::ModuleRegistry::instance().dispatchTick(nowMs);
 

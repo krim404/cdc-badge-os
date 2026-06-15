@@ -46,6 +46,9 @@ void drawSignalBars(Gdey029T94* gfx, int x, int y, int8_t rssi, bool inverted);
 void rebuildMainMenu();
 void rebuildToolsMenu();
 
+/// \brief True if the lock screen is the only view on the stack (badge locked).
+bool isBadgeLocked();
+
 // ============================================================================
 // Feature Sub-file Entry Points
 // ============================================================================
@@ -57,6 +60,12 @@ void rebuildWifiMainMenu();
 // Bluetooth (BluetoothMenuUi.cpp)
 void showBluetoothMenu();
 void rebuildBluetoothMenu();
+
+// Message transfer (MsgTransferUi.cpp)
+void msgTransferUiInit();
+void msgTransferUiProcess(uint32_t nowMs);
+void showBeaconMenu();      // complete beacon flow (toggle, name, scan) under Tools
+void showMsgBeaconScan();   // read-only beacon scan, also reachable from the BT menu
 
 // Expert & Modules (ExpertMenuUi.cpp)
 void showExpertMenu();

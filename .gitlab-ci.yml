@@ -25,6 +25,7 @@ build:
   stage: build
   extends: .pio_setup
   script:
+    - pio test -e native
     - pio run
     - pip install construct
     - export IDF_PATH="$(find "$PLATFORMIO_CORE_DIR/packages" -maxdepth 1 -name 'framework-espidf*' | head -1)"
@@ -95,6 +96,7 @@ release:
 
 pages:
   stage: deploy
+  image: node:22
   needs:
     - job: build
       artifacts: true
@@ -118,16 +120,22 @@ pages:
       ln -sf "/opt/doxygen-${DOXYGEN_VERSION}/bin/doxygen" /usr/local/bin/doxygen
       doxygen --version
     - doxygen Doxyfile
-    - mkdir -p public/docs
-    - cp web-flasher/index.html public/
-    - if [ -f web-flasher/badge.jpg ]; then cp web-flasher/badge.jpg public/; fi
-    - cp -r doxygen_output/html/* public/docs/
-    - cp "artifacts/cdc-badge-bootloader-${CI_COMMIT_TAG}.bin"      public/bootloader.bin
-    - cp "artifacts/cdc-badge-partitions-${CI_COMMIT_TAG}.bin"      public/partitions.bin
-    - cp "artifacts/cdc-badge-firmware-${CI_COMMIT_TAG}.bin"        public/firmware.bin
-    - cp "artifacts/cdc-badge-plugins-initial-${CI_COMMIT_TAG}.bin" public/plugins_initial.bin
+    - npm --prefix website ci
+    - SITE_BASE=/cdc-badge-os/ npm --prefix website run build
+    - SITE_BASE=/cdc-badge-os/ npm --prefix website run check:links
+    - mkdir -p public
+    - cp -r website/dist/. public/
+    - mkdir -p public/api
+    - cp -r doxygen_output/html/* public/api/
+    - mkdir -p public/flasher
+    - cp web-flasher/index.html public/flasher/
+    - if [ -f web-flasher/badge.jpg ]; then cp web-flasher/badge.jpg public/flasher/; fi
+    - cp "artifacts/cdc-badge-bootloader-${CI_COMMIT_TAG}.bin"      public/flasher/bootloader.bin
+    - cp "artifacts/cdc-badge-partitions-${CI_COMMIT_TAG}.bin"      public/flasher/partitions.bin
+    - cp "artifacts/cdc-badge-firmware-${CI_COMMIT_TAG}.bin"        public/flasher/firmware.bin
+    - cp "artifacts/cdc-badge-plugins-initial-${CI_COMMIT_TAG}.bin" public/flasher/plugins_initial.bin
     - |
-      cat > public/manifest.json <<MANIFEST
+      cat > public/flasher/manifest.json <<MANIFEST
       {
         "name": "CDC Badge OS (Firmware Update)",
         "version": "${CI_COMMIT_TAG}",
@@ -145,7 +153,7 @@ pages:
       }
       MANIFEST
     - |
-      cat > public/manifest_factory.json <<MANIFEST
+      cat > public/flasher/manifest_factory.json <<MANIFEST
       {
         "name": "CDC Badge OS (Factory Setup)",
         "version": "${CI_COMMIT_TAG}",

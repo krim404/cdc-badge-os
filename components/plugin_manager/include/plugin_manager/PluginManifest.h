@@ -53,6 +53,9 @@ struct PluginCapabilities {
     std::vector<std::string> rmem;
     std::vector<std::string> ecc;
     std::vector<std::string> ble_service_uuids;
+    /// MIME types this plugin handles for badge-to-badge message transfer.
+    /// A non-empty list implies messaging; sending also requires `ble`.
+    std::vector<std::string> message_types;
     std::vector<uint8_t> gpio_pins;
     std::vector<uint8_t> pwm_pins;
     std::vector<uint8_t> adc_pins;

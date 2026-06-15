@@ -2,6 +2,7 @@ CompileFlags:
   CompilationDatabase: .pio/build/cdc_badge_usb
   Remove:
     - -mlongcalls
+    - -mdisable-hardware-atomics
     - -mtext-section-literals
     - -fstrict-volatile-bitfields
     - -fno-tree-switch-conversion

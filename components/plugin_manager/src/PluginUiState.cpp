@@ -103,6 +103,20 @@ int PluginUiState::setViewFooter(const char* hint)
     return HOST_OK;
 }
 
+int PluginUiState::setViewLifecycle(uint32_t hide_action_id, uint32_t show_action_id)
+{
+    // setLifecycleHooks is a virtual IView no-op overridden by ViewBase, so the
+    // top view stores the hooks itself - no need to enumerate plugin view types.
+    auto* top = cdc::ui::ViewStack::instance().current();
+    if (!top) return HOST_ERR_NOT_FOUND;
+
+    lifecycle_hide_action_ = hide_action_id;
+    lifecycle_show_action_ = show_action_id;
+    top->setLifecycleHooks(hide_action_id ? &onViewHide : nullptr,
+                           show_action_id ? &onViewShow : nullptr, nullptr);
+    return HOST_OK;
+}
+
 void PluginUiState::resetForPluginStop()
 {
     // Retract this plugin's own modal overlays (context menu / confirm) before
@@ -242,6 +256,18 @@ void PluginUiState::onPinCancel()
 void PluginUiState::onInactivity()
 {
     uint32_t action = instance().inactivity_action_;
+    if (action) PluginManager::instance().dispatchAction(action, 0, 0);
+}
+
+void PluginUiState::onViewHide(void* /*userData*/)
+{
+    uint32_t action = instance().lifecycle_hide_action_;
+    if (action) PluginManager::instance().dispatchAction(action, 0, 0);
+}
+
+void PluginUiState::onViewShow(void* /*userData*/)
+{
+    uint32_t action = instance().lifecycle_show_action_;
     if (action) PluginManager::instance().dispatchAction(action, 0, 0);
 }
 

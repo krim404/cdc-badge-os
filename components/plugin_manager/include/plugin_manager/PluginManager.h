@@ -51,6 +51,15 @@ public:
 
     [[nodiscard]] std::vector<std::string>     listInstalledIds() const;
     [[nodiscard]] std::optional<PluginManifest> getManifest(const std::string& id) const;
+
+    /// \brief True if any installed plugin's manifest declares this MIME type
+    ///        for message transfer. Reads a cached index; safe to call from the
+    ///        BLE host task.
+    [[nodiscard]] bool messageTypeInstalled(const char* mime) const;
+    /// \brief Load + start (headless) the installed plugin that declares this
+    ///        MIME type, so its message handler becomes live. Must run on the
+    ///        plugin tick task. \return true if a handling plugin is now loaded.
+    bool activateForMessageType(const char* mime);
     [[nodiscard]] bool                         isPluginDisabled(const std::string& id) const;
     bool                                       setPluginDisabled(const std::string& id,
                                                                  bool disabled);
@@ -179,6 +188,11 @@ private:
     /// without the flag stay unloaded until the user starts them manually.
     void loadAutoloadPlugins();
 
+    /// Rebuild the MIME-type -> plugin-id index from installed manifests.
+    void rebuildMessageIndex();
+    /// Throttled refresh of the message index when the installed set changed.
+    void maybeRefreshMessageIndex();
+
     std::unique_ptr<Plugin>              active_;       // foreground (user-visible)
     std::vector<std::unique_ptr<Plugin>> background_;   // manually-started resident plugins
     std::string                          pending_cmd_;  // buffered for plugin_on_cmd pull
@@ -188,6 +202,14 @@ private:
     std::atomic<bool>                    pending_stop_{false};
     bool initialised_ = false;
     uint8_t                              plugin_base_depth_ = 0;
+
+    // MIME-type -> plugin-id index for auto-starting handler plugins on demand.
+    // Guarded by msg_index_mutex_ (read from the BLE host task). Parallel arrays.
+    void*                    msg_index_mutex_ = nullptr;  // FreeRTOS SemaphoreHandle_t
+    std::vector<std::string> msg_index_mime_;
+    std::vector<std::string> msg_index_id_;
+    std::string              installed_sig_;
+    uint32_t                 last_index_refresh_ms_ = 0;
 };
 
 }  // namespace cdc::plugin_manager

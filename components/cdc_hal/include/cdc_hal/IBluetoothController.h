@@ -20,6 +20,15 @@ struct BleScanResult {
 };
 
 /**
+ * Bonded (paired) peer identity, stack-independent.
+ */
+struct BleBondInfo {
+    uint8_t addr[6];           // Identity address
+    uint8_t addrType;          // 0=public, 1=random
+    bool connected;            // Currently in an active connection
+};
+
+/**
  * Stack-independent BLE UUID (no NimBLE/Bluedroid dependency)
  */
 struct BleUuid {
@@ -213,9 +222,26 @@ public:
     virtual bool getConnectedDeviceName(char* buf, size_t bufLen) const { (void)buf; (void)bufLen; return false; }
 
     /**
+     * Maximum number of bonded peers retained/returned. Single source of truth
+     * for both the controller's bond store and any caller-side buffers.
+     */
+    static constexpr uint8_t MAX_BONDED_DEVICES = 5;
+
+    /**
      * Get number of bonded (paired) devices
      */
     virtual uint8_t getBondedDeviceCount() const { return 0; }
+
+    /**
+     * Enumerate bonded (paired) peers into a caller-provided buffer.
+     * @param out Output array of BleBondInfo
+     * @param maxCount Capacity of the output array
+     * @return Number of bonds written
+     */
+    virtual uint8_t getBondedDevices(BleBondInfo* out, uint8_t maxCount) const {
+        (void)out; (void)maxCount;
+        return 0;
+    }
 
     // === Advertising ===
 
@@ -284,10 +310,14 @@ public:
 
     /**
      * Start BLE scan
-     * @param durationMs Scan duration in milliseconds
+     * @param durationMs Scan duration in milliseconds; 0 scans continuously until stopScan().
+     * @param keepAdvertising If true, advertising keeps running during the scan
+     *        (Peripheral + Observer multi-role) instead of being stopped.
      * @return true if scan started
      */
-    virtual bool startScan(uint32_t durationMs = 5000) { (void)durationMs; return false; }
+    virtual bool startScan(uint32_t durationMs = 5000, bool keepAdvertising = false) {
+        (void)durationMs; (void)keepAdvertising; return false;
+    }
 
     /**
      * Stop ongoing scan
@@ -360,6 +390,45 @@ public:
         (void)connHandle; (void)accept;
     }
 
+    /**
+     * Called when link encryption is established or fails on a connection.
+     * status == 0 means the link is now encrypted.
+     */
+    using EncChangeCallback = std::function<void(uint16_t connHandle, int status)>;
+
+    /**
+     * Register a callback for encryption-change events (multi-listener).
+     * \return Token usable with removeEncryptionChangeCallback(), or INVALID_LISTENER on overflow.
+     */
+    virtual ListenerToken addEncryptionChangeCallback(EncChangeCallback cb) {
+        (void)cb; return INVALID_LISTENER;
+    }
+
+    /**
+     * Unregister a previously added encryption-change callback.
+     */
+    virtual void removeEncryptionChangeCallback(ListenerToken token) { (void)token; }
+
+    /**
+     * Initiate link encryption / pairing as central on an existing connection.
+     * Triggers the configured pairing flow (e.g. numeric comparison). Used to
+     * upgrade a connection to an encrypted link on demand.
+     * @param connHandle Connection handle
+     * @return true if the security procedure was started
+     */
+    virtual bool initiateSecurity(uint16_t connHandle) { (void)connHandle; return false; }
+
+    /**
+     * Resolve the identity address of a connected peer.
+     * @param connHandle Connection handle
+     * @param addr Output 6-byte address
+     * @param addrType Output address type (0=public, 1=random)
+     * @return true if the peer address was resolved
+     */
+    virtual bool getPeerIdAddr(uint16_t connHandle, uint8_t addr[6], uint8_t* addrType) const {
+        (void)connHandle; (void)addr; (void)addrType; return false;
+    }
+
     // === Connection Callbacks (multi-listener) ===
 
     using ConnectionCallback = std::function<void(uint16_t connHandle)>;
@@ -395,6 +464,16 @@ public:
      * Erase all bonded peer information from the bond store.
      */
     virtual void clearAllBonds() {}
+
+    /**
+     * Forget (unpair) a single bonded peer by identity address.
+     * Used for ephemeral pairings that should not persist.
+     * @param addr 6-byte identity address
+     * @param addrType Address type (0=public, 1=random)
+     */
+    virtual void forgetBond(const uint8_t addr[6], uint8_t addrType) {
+        (void)addr; (void)addrType;
+    }
 
     // === GATT Server ===
 

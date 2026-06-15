@@ -482,9 +482,10 @@ static uint8_t toolsBluetoothIcon() {
 }
 
 static const FixedMenuEntry kToolsFixed[] = {
-    {"core.wifi_menu", nullptr,            showWifiMainMenu},
-    {"core.bluetooth", toolsBluetoothIcon, showBluetoothMenu},
-    {"core.expert",    nullptr,            showExpertMenu},
+    {"core.wifi_menu",  nullptr,            showWifiMainMenu},
+    {"core.bluetooth",  toolsBluetoothIcon, showBluetoothMenu},
+    {"core.msg_beacon", nullptr,            showBeaconMenu},
+    {"core.expert",     nullptr,            showExpertMenu},
 };
 static constexpr uint8_t TOOLS_FIXED_COUNT =
     static_cast<uint8_t>(sizeof(kToolsFixed) / sizeof(kToolsFixed[0]));
@@ -576,7 +577,8 @@ static void onToolsSelect(uint16_t index, void* userData) {
     switch (index) {
         case 0: showWifiMainMenu(); return;
         case 1: showBluetoothMenu(); return;
-        case 2: showExpertMenu(); return;
+        case 2: showBeaconMenu(); return;
+        case 3: showExpertMenu(); return;
     }
 
     uint8_t moduleIdx = index - TOOLS_FIXED_COUNT;
@@ -684,7 +686,7 @@ static void onLanguageSelect(uint16_t index, void* userData) {
  * \brief Returns whether the badge is currently locked (showing lock screen with no menu above).
  * \return `true` if the lock screen is the only view on the stack.
  */
-static bool isBadgeLocked() {
+bool isBadgeLocked() {
     return ViewStack::instance().depth() <= 1 &&
            ViewStack::instance().current() == s_lockScreen;
 }
@@ -985,6 +987,9 @@ void ui_init(const UiDeps& deps) {
         ble->addNumericComparisonCallback(onBleNumericComparison);
     }
 
+    // Badge-to-badge message transfer: consent prompt, peer picker, progress.
+    msgTransferUiInit();
+
     // Serial callbacks
     registerBackupSerialCommand();
     serial::SerialCmd::setTextCallback([](const char* field, const char* value) {
@@ -1111,6 +1116,7 @@ void ui_process(uint32_t nowMs) {
     }
 
     settings::processPendingBadgeText();
+    msgTransferUiProcess(nowMs);
 
     nowMs = static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
     ViewStack::instance().dispatchTick(nowMs);

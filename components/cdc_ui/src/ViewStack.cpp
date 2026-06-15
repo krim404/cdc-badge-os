@@ -84,6 +84,9 @@ void ViewStack::push_unlocked(IView* view, void* context) {
         return;
     }
 
+    if (depth_ > 0 && stack_[depth_ - 1]) {
+        stack_[depth_ - 1]->onPause();  // counterpart to onResume() on pop
+    }
     stack_[depth_++] = view;
     view->onEnter(context);
     needsFullRefresh_ = !(isListView(view) && isListView(depth_ > 1 ? stack_[depth_ - 2] : nullptr));
@@ -411,6 +414,12 @@ void ViewStack::showModal(IView* modal) {
     // first modal over the base view stays a partial (no toast-refresh regress).
     if (modalDepth_ > 0) needsFullRefresh_ = true;
 
+    if (modalDepth_ > 0) {
+        modals_[modalDepth_ - 1]->onPause();
+    } else {
+        IView* base = (depth_ == 0) ? nullptr : stack_[depth_ - 1];
+        if (base) base->onPause();  // counterpart to onResume() in hideModal
+    }
     modals_[modalDepth_++] = modal;
     modal->onEnter(nullptr);
     LOG_D(TAG, "Showing modal '%s' (depth=%d)", modal->getName(), modalDepth_);

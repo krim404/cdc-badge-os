@@ -50,6 +50,18 @@ bool vcard_store_add(const char* vcard, size_t len, char* err, size_t err_len);
 bool vcard_store_contains(const char* vcard, size_t len);
 
 bool vcard_store_delete(uint16_t slot);
+
+/**
+ * \brief Overwrites the vCard stored at \p slot in place after validation.
+ * \param slot Slot index of an existing stored card.
+ * \param vcard New vCard text.
+ * \param len New vCard length.
+ * \param err Output error buffer.
+ * \param err_len Error buffer size.
+ * \return `true` on successful update.
+ */
+bool vcard_store_update(uint16_t slot, const char* vcard, size_t len, char* err, size_t err_len);
+
 size_t vcard_store_get(uint16_t slot, char* out, size_t max_len);
 bool vcard_store_get_display(uint16_t slot, char* out, size_t max_len);
 uint16_t vcard_store_get_sorted(uint16_t* out_slots, uint16_t max_slots);
