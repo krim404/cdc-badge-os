@@ -13,6 +13,9 @@
 #include "plugin_manager/Plugin.h"
 #include "plugin_manager/PluginStorage.h"
 #include "cdc_core/Raii.h"
+#include "cdc_views/ImageView.h"
+#include "cdc_views/MarkdownView.h"
+#include "host_str_conv.h"
 
 #include <cstdio>
 #include <cstring>
@@ -161,6 +164,48 @@ int host_fs_view(const char* name)
     content.resize(n);
     // Files and filenames are UTF-8; host_ui_push_info converts to display.
     return host_ui_push_info(name, content.c_str());
+}
+
+int host_fs_view_image(const char* name)
+{
+    std::string path;
+    int rc = resolvePath(name, path);
+    if (rc != HOST_OK) return rc;
+
+    auto f = cdc::core::openFile(path.c_str(), "rb");
+    if (!f) return HOST_ERR_NOT_FOUND;
+
+    constexpr size_t IMG_MAX = 512 * 1024;
+    std::string buf;
+    buf.resize(IMG_MAX);
+    size_t n = std::fread(&buf[0], 1, IMG_MAX, f.get());
+    buf.resize(n);
+
+    std::string title = cdc::plugin_manager::toDisplay(name);
+    cdc::ui::showImage(title.c_str(),
+                       reinterpret_cast<const uint8_t*>(buf.data()), buf.size());
+    return HOST_OK;
+}
+
+int host_fs_view_markdown(const char* name)
+{
+    std::string path;
+    int rc = resolvePath(name, path);
+    if (rc != HOST_OK) return rc;
+
+    auto f = cdc::core::openFile(path.c_str(), "rb");
+    if (!f) return HOST_ERR_NOT_FOUND;
+
+    constexpr size_t MD_MAX = 64 * 1024;
+    std::string content;
+    content.resize(MD_MAX);
+    size_t n = std::fread(&content[0], 1, MD_MAX - 1, f.get());
+    content.resize(n);
+
+    std::string title = cdc::plugin_manager::toDisplay(name);
+    std::string body = cdc::plugin_manager::toDisplay(content.c_str());
+    cdc::ui::showMarkdown(title.c_str(), body.c_str(), body.size());
+    return HOST_OK;
 }
 
 }  // extern "C"

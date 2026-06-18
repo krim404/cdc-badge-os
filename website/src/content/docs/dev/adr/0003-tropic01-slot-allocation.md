@@ -26,9 +26,10 @@ ranges elsewhere.
 | SYSTEM (attestation) | 0 | 0 |
 | GPG | 1–3 | 1–3 |
 | CA | 4 | 4 |
-| FIDO2 | 5–30 | 5–31 |
-| 2FA (TOTP/HOTP/CR) | — | 32–131 |
-| Password vault | — | 132–500 |
+| FIDO2 | 5–30 | 5–30 |
+| 2FA (TOTP/HOTP/CR) | — | 31–130 |
+| GPG RSA keys | — | 131–136 |
+| Password vault | — | 137–500 |
 | Plugin pool | 31 | 501–511 |
 
 The plugin ECC slot 31 is the last physical ECC slot; FIDO2 ECC ends at 30, so the plugin slot

@@ -51,18 +51,11 @@ anti-rollback) is on the 1.0 roadmap, not in the current build.
 
 ## Work-in-progress features
 
-Some features are present in the firmware but flagged as unfinished or untested
-on hardware. As of this writing the project marks:
-
-| Feature | Status |
-| --- | --- |
-| GPG / CCID | Working, but the on-device UI is WIP |
-| BLE vCard | WIP, untested on hardware |
-| BLE Serial | WIP, untested on hardware |
-
-Treat anything marked WIP as experimental: it may change, break, or behave
-differently than documented. The feature matrix in the project README is the
-current source of truth for status.
+No features are currently flagged as work-in-progress. Badge-to-badge transfer
+(vCard and GPG public-key exchange over the
+[message-transfer framework](/dev/proto/message-transfer/)) and the BLE serial
+console are implemented and usable. The badge is still pre-1.0 beta, so
+behaviour can change between releases.
 
 ## The `DEBUG_MODE` build flag
 
@@ -108,5 +101,5 @@ specifically there is no debug shortcut around the rate limit.
 | Data durability | Can be wiped by flash, breaking change, or duress |
 | Migrations | None; breaking changes wipe + reinit |
 | Layout guard | Build-profile byte (software, not anti-rollback) |
-| WIP features | GPG UI, BLE vCard, BLE Serial |
+| WIP features | None currently flagged |
 | `DEBUG_MODE` default | On (`1`); must be off for production |

@@ -13,8 +13,10 @@
 #include "serial_cmd/SubCommand.h"
 #include "serial_cmd/Console.h"
 #include "cdc_ui/I18n.h"
+#include "cdc_views/HtmlViewerHook.h"
 #include "cdc_core/Cp437.h"
 #include "plugin_manager/PluginSerialCommands.h"
+#include "plugin_manager/PluginStorage.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -33,6 +35,17 @@ std::string s_cwd;
 std::string relOf(const std::string& name)
 {
     return s_cwd.empty() ? name : s_cwd + "/" + name;
+}
+
+/// True (and prints an error) when a USB host holds the volume over MSC, so
+/// badge-side writes must be refused.
+bool mscBusy()
+{
+    if (cdc::plugin_manager::PluginStorage::hostActive()) {
+        Console::printf("ERR: usb storage active\r\n");
+        return true;
+    }
+    return false;
 }
 
 std::string trimmed(const char* s)
@@ -70,7 +83,8 @@ void cmdList(const char* /*args*/)
 {
     std::vector<FsEntry> es;
     bool truncated = false;
-    if (!fs::list(s_cwd, es, truncated)) { Console::printf("ERR: cannot list\r\n"); return; }
+    // Admin serial shell shows the hidden system folder too.
+    if (!fs::list(s_cwd, es, truncated, true)) { Console::printf("ERR: cannot list\r\n"); return; }
     for (const auto& e : es) {
         if (e.is_dir) Console::printf("  [DIR]  %s\r\n", e.name.c_str());
         else          Console::printf("  %6lu  %s\r\n",
@@ -113,6 +127,7 @@ void cmdGet(const char* args)
 
 void cmdPut(const char* args)
 {
+    if (mscBusy()) return;
     std::string a = trimmed(args);
     size_t sp = a.find(' ');
     std::string f    = (sp == std::string::npos) ? a : a.substr(0, sp);
@@ -127,6 +142,7 @@ void cmdPut(const char* args)
 
 void cmdDelete(const char* args)
 {
+    if (mscBusy()) return;
     std::string f = trimmed(args);
     if (f.empty()) { Console::printf("ERR: usage DELETE <file>\r\n"); return; }
     Console::printf(fs::removeFile(relOf(f)) ? "OK\r\n" : "ERR: not found\r\n");
@@ -134,6 +150,7 @@ void cmdDelete(const char* args)
 
 void cmdMkdir(const char* args)
 {
+    if (mscBusy()) return;
     std::string d = trimmed(args);
     if (d.empty()) { Console::printf("ERR: usage MKDIR <name>\r\n"); return; }
     if (fs::exists(relOf(d))) { Console::printf("ERR: already exists\r\n"); return; }
@@ -142,6 +159,7 @@ void cmdMkdir(const char* args)
 
 void cmdRmdir(const char* args)
 {
+    if (mscBusy()) return;
     std::string d = trimmed(args);
     if (d.empty()) { Console::printf("ERR: usage RMDIR <name>\r\n"); return; }
     if (!fs::isDir(relOf(d))) { Console::printf("ERR: no such directory\r\n"); return; }
@@ -204,9 +222,15 @@ void onLockEvent(const cdc::core::Event& /*evt*/)
     s_cwd.clear();
 }
 
-cdc::ui::IView* explorerView()
+cdc::ui::IView* filesView()
 {
-    VfatExplorerView::instance().openRoot();
+    VfatExplorerView::instance().openRoot(false);  // user view: .system hidden
+    return &VfatExplorerView::instance();
+}
+
+cdc::ui::IView* systemFilesView()
+{
+    VfatExplorerView::instance().openRoot(true);  // system view: .system shown
     return &VfatExplorerView::instance();
 }
 
@@ -231,6 +255,11 @@ bool VfatModule::init()
         onLockEvent,
         cdc::core::EventBus::eventMask(cdc::core::EventType::SYSTEM_LOCK));
 
+    // Markdown image links open local files in the image viewer.
+    cdc::ui::setImageOpener([](const char* path) {
+        VfatExplorerView::instance().openLocalImage(path);
+    });
+
     state_ = cdc::core::ServiceState::INITIALIZED;
     return true;
 }
@@ -249,16 +278,28 @@ void VfatModule::stop()
 uint8_t VfatModule::getMenuItems(cdc::core::ModuleMenuItem* items, uint8_t maxItems)
 {
     if (!items || maxItems == 0) return 0;
-    items[0] = {
-        cdc::ui::tr("core.vfat"),
-        90,
-        &explorerView,
+    uint8_t n = 0;
+    items[n++] = {
+        cdc::ui::tr("core.files"),
+        200,
+        &filesView,
         nullptr,
         getName(),
-        cdc::core::MenuLocation::EXPERT_MENU,
+        cdc::core::MenuLocation::MAIN_MENU,
         nullptr,
     };
-    return 1;
+    if (n < maxItems) {
+        items[n++] = {
+            cdc::ui::tr("core.system_files"),
+            90,
+            &systemFilesView,
+            nullptr,
+            getName(),
+            cdc::core::MenuLocation::EXPERT_MENU,
+            nullptr,
+        };
+    }
+    return n;
 }
 
 }  // namespace cdc::mod_vfat

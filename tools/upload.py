@@ -225,10 +225,12 @@ def cmd_lang(args):
     authenticate(p, args.pin)
     send_line(p, "VFAT CD /")
     drain(p)
-    send_line(p, "VFAT MKDIR i18n")
+    send_line(p, "VFAT MKDIR system")
     drain(p)
-    print(f"Uploading overlay -> /plugins/i18n/{name} ({path})")
-    vfat_receive(p, f"i18n/{name}", path.read_bytes(),
+    send_line(p, "VFAT MKDIR system/i18n")
+    drain(p)
+    print(f"Uploading overlay -> /plugins/system/i18n/{name} ({path})")
+    vfat_receive(p, f"system/i18n/{name}", path.read_bytes(),
                  lambda f: print(f"  {f * 100:5.1f} %", end="\r"))
     print()
     send_line(p, "LANG RELOAD")

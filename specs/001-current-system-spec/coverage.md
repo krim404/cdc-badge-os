@@ -37,8 +37,9 @@ Notes:
 
 ## SC → verifying test (gate C3 pointer)
 
-Success Criteria map to the Test Catalog in `data-model.md` (Tier-1 host `T-Hxx`, Tier-2 HIL
-`T-HILxx`). Populated as the US3/US4 tasks land.
+Success Criteria map to the Test Catalog in `data-model.md` (Tier-1 host `T-Hxx`, on-device automatic
+`A-*` and semi-automatic `S-*`). Automatic on-device tests run via `tools/ondevice/`; semi-automatic
+ones are the `hil/` plans. Both on-device categories are optional and verify the installed release.
 
 ## Firmware build baseline (gate C6)
 
@@ -73,12 +74,12 @@ build differs; the meaningful invariant — no firmware source or firmware build
 |------|--------|
 | C1 Spec coverage | ✅ 15 capability specs (002–016); FR→spec map above has no orphan/gap |
 | C2 FR⇄code traceability | ✅ specs cite code anchors; open items kept as `[NEEDS CLARIFICATION]` |
-| C3 Test contract | ◑ Tier-1: 5 host test folders, **34/34 green** under `pio test -e native` in CI; 4 host tests (PIN-KDF, vCard, backup, capability) deferred — need firmware refactoring (RF-02/RF-03). Tier-2: 8 HIL plans documented (non-blocking). |
+| C3 Test contract | ◑ Tier-1: 5 host test folders, **34/34 green** under `pio test -e native` in CI; 4 host tests (PIN-KDF, vCard, backup, capability) deferred — need firmware refactoring (RF-02/RF-03). On-device (optional, `tools/ondevice/`): 12 automatic serial tests + 11 semi-automatic plans, both non-blocking; the release is flashed once and tested live. |
 | C4 Doc reconciliation | ✅ D1–D3 fixed + per-area sweep complete; see `doc-reconciliation.md` |
 | C5 ADRs recorded | ✅ ADR-0001..0012 accepted under `website/.../dev/adr/` |
 | C6 No behaviour/version drift | ✅ see Gate C6 result above |
 | C7 Risk visibility | ✅ `risks.md` (R-01..09); WIP features flagged in specs 007/008/011 |
-| C8 Refactor discipline | ✅ `refactoring-backlog.md` (RF-01..06, all `execute: NO`); no refactor applied |
+| C8 Refactor discipline | ✅ `data-model.md` §5 refactoring register (RF-01..06, all `execute: NO`); no refactor applied |
 
 Net: gates C1, C2, C4, C5, C6, C7, C8 fully met; C3 met for the host tier (deferred items
 explicitly tracked, not silently dropped).

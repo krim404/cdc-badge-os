@@ -47,6 +47,7 @@ extern "C" {
 #define CTAP2_ERR_MISSING_PARAMETER     0x14
 #define CTAP2_ERR_LIMIT_EXCEEDED        0x15
 #define CTAP2_ERR_UNSUPPORTED_EXT       0x16
+#define CTAP2_ERR_LARGE_BLOB_STORAGE_FULL 0x18
 #define CTAP2_ERR_CREDENTIAL_EXCLUDED   0x19
 #define CTAP2_ERR_PROCESSING            0x21
 #define CTAP2_ERR_INVALID_CREDENTIAL    0x22
@@ -75,6 +76,7 @@ extern "C" {
 #define CTAP2_ERR_ACTION_TIMEOUT        0x3A
 #define CTAP2_ERR_UP_REQUIRED           0x3B
 #define CTAP2_ERR_UV_BLOCKED            0x3C
+#define CTAP2_ERR_INTEGRITY_FAILURE     0x3D
 #define CTAP2_ERR_OTHER                 0x7F
 
 // ============================================================================
@@ -133,6 +135,8 @@ extern "C" {
 #define CTAP2_INFO_MAX_CRED_ID_LENGTH       0x08
 #define CTAP2_INFO_TRANSPORTS               0x09
 #define CTAP2_INFO_ALGORITHMS               0x0A
+#define CTAP2_INFO_MAX_SERIALIZED_LARGE_BLOB_ARRAY  0x0B
+#define CTAP2_INFO_MIN_PIN_LENGTH                   0x0D
 
 // authenticatorMakeCredential parameter keys (Section 6.1)
 #define CTAP2_MC_CLIENT_DATA_HASH           0x01
@@ -205,6 +209,32 @@ extern "C" {
 #define CTAP2_CM_RESP_TOTAL_CREDENTIALS     0x09
 #define CTAP2_CM_RESP_CRED_PROTECT          0x0A
 
+// authenticatorLargeBlobs parameter keys (Section 6.10)
+#define CTAP2_LB_GET                        0x01
+#define CTAP2_LB_SET                        0x02
+#define CTAP2_LB_OFFSET                     0x03
+#define CTAP2_LB_LENGTH                     0x04
+#define CTAP2_LB_PIN_UV_AUTH_PARAM          0x05
+#define CTAP2_LB_PIN_UV_AUTH_PROTOCOL       0x06
+#define CTAP2_LB_RESP_CONFIG                0x01
+
+// authenticatorConfig parameter keys (Section 6.11)
+#define CTAP2_CONFIG_SUBCOMMAND             0x01
+#define CTAP2_CONFIG_SUBCOMMAND_PARAMS      0x02
+#define CTAP2_CONFIG_PIN_UV_AUTH_PROTOCOL   0x03
+#define CTAP2_CONFIG_PIN_UV_AUTH_PARAM      0x04
+
+// authenticatorConfig subcommands (Section 6.11)
+#define CTAP2_CONFIG_SUB_ENABLE_EP          0x01
+#define CTAP2_CONFIG_SUB_TOGGLE_ALWAYS_UV   0x02
+#define CTAP2_CONFIG_SUB_SET_MIN_PIN_LENGTH 0x03
+#define CTAP2_CONFIG_SUB_VENDOR_PROTOTYPE   0xFF
+
+// setMinPINLength subCommandParams keys (Section 6.11)
+#define CTAP2_CONFIG_PARAM_NEW_MIN_PIN_LEN  0x01
+#define CTAP2_CONFIG_PARAM_MIN_PIN_RPIDS    0x02
+#define CTAP2_CONFIG_PARAM_FORCE_CHANGE_PIN 0x03
+
 // ============================================================================
 // Processing Functions
 // ============================================================================
@@ -274,6 +304,12 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
                                uint8_t *response, uint16_t *response_len);
 
 uint8_t ctap2_selection(uint8_t *response, uint16_t *response_len);
+
+uint8_t ctap2_large_blobs(const uint8_t *params, uint16_t params_len,
+                          uint8_t *response, uint16_t *response_len);
+
+uint8_t ctap2_config(const uint8_t *params, uint16_t params_len,
+                     uint8_t *response, uint16_t *response_len);
 
 #ifdef __cplusplus
 }

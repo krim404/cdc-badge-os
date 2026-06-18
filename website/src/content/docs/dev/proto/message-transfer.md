@@ -12,17 +12,6 @@ encrypts the link with an ephemeral pairing, and delivers the bytes to whatever
 module or plugin registered a handler for that MIME type. The core
 (`MessageTransfer`) is headless; the OS UI layer renders the prompts.
 
-:::caution[Work in progress]
-This framework is work in progress and has not been verified on hardware. The
-vCard exchange built on it is marked WIP/untested in the project README.
-:::
-
-:::note
-This page documents the current `cdc_msg` implementation. The earlier
-`ble_vcard` service has been deleted and any `docs/ble_vcard_protocol.md` is
-stale.
-:::
-
 ## Roles
 
 - **Sender (central)** connects out to a peer, discovers the service, offers a
@@ -68,9 +57,11 @@ is `1`; a mismatch is rejected.
 | `Offer` | `0x01` | `[op][ver][u32 totalLen][mimeLen][nameLen][mime...][name...]` (8-byte fixed header) |
 | `Abort` | `0x02` | sender aborts the in-flight transfer |
 
-The receiver validates the OFFER bounds-first: header length, version, a
-non-zero `mimeLen <= 63`, `nameLen <= 31`, that `8 + mimeLen + nameLen` fits the
-frame, and that `0 < totalLen <= 4096`. A bad frame is declined with
+The `nameLen` byte carries the name length in its low 5 bits (`0..31`); bit 7 is
+a flag that requests a [session-persistent pairing](#pairing). The receiver
+validates the OFFER bounds-first: header length, version, a non-zero
+`mimeLen <= 63`, the masked `nameLen <= 31`, that `8 + mimeLen + nameLen` fits
+the frame, and that `0 < totalLen <= 4096`. A bad frame is declined with
 `BadFrame`; an over-size payload with `TooLarge`.
 
 ### Data (sender -> receiver), byte 0 = opcode
@@ -122,7 +113,9 @@ always on the final byte).
    budget allows, the receiver moves to *AwaitingConsent* and publishes
    `BLE_CONSENT_REQUEST`; the UI renders the prompt. On accept the receiver
    notifies `Accept`; on decline it notifies `Decline(UserDeclined)` and starts
-   a quiet cooldown.
+   a quiet cooldown. A persistent offer from a peer already trusted this session
+   skips this step (and the prompt budget): the receiver notifies `Accept`
+   straight away. See [Pairing](#pairing).
 5. **Encrypt (ephemeral pairing).** On `Accept` the sender calls
    `initiateSecurity()`, triggering numeric-comparison pairing. When the link is
    encrypted, the receiver allocates the reassembly buffer (PSRAM) and moves to
@@ -143,15 +136,30 @@ State machines:
 - Receiver: `Idle -> AwaitingConsent -> AwaitingEncrypt -> Receiving ->
   Delivering -> Done | Failed`.
 
-## Ephemeral pairing
+## Pairing
 
 The link is encrypted with a **numeric-comparison** pairing, the same mechanism
-host pairing uses. The bond created for the transfer is **ephemeral**: each side
-records the peer's identity address while encrypting and forgets the bond
-(`forgetBond`) when the connection drops, so a transfer does not leave a
-persistent bond behind. The bond-tracking table is sized to the controller's
-connection capacity; a full table is logged as a warning since an un-forgotten
-bond is security-relevant.
+host pairing uses. By default the bond is **ephemeral**: each side records the
+peer's identity address while encrypting and forgets the bond (`forgetBond`)
+when the connection drops, so a transfer leaves no persistent bond behind. The
+bond-tracking table is sized to the controller's connection capacity; a full
+table is logged as a warning since an un-forgotten bond is security-relevant.
+
+### Session-persistent pairing
+
+A send may opt in to a **session-persistent** pairing by setting bit 7 of the
+OFFER `nameLen` byte (`kOfferFlagPersist`). When set, both sides add the peer's
+identity address to an in-RAM trusted set once the link is encrypted and keep
+the bond instead of forgetting it on disconnect. A later send to the same peer
+then reconnects and re-encrypts from the stored link key with no
+numeric-comparison prompt; on the receiver, an offer from a trusted peer is
+auto-accepted without the consent prompt.
+
+The trust is runtime-only and is **never persisted across a reboot**. Remembered
+bonds are dropped at clean service teardown, and a boot-time janitor clears any
+left in the shared bond store by a previous run (tracked via an address-only
+ledger in the `msg` NVS namespace, cleared once acted upon). The trusted set is
+capped at the controller's bond capacity.
 
 ## Limits
 
@@ -210,14 +218,15 @@ only if the payload was accepted/stored. The registry holds up to 8 handlers.
 
 ### Sending
 
-- `beginInteractiveSend(mime, data, len)` buffers the payload and requests the
-  interactive peer picker (the UI confirms a target, then the framework
-  connects).
-- `sendTo(addr, addrType, mime, data, len)` sends directly to a known peer with
-  no picker.
+- `beginInteractiveSend(mime, data, len, persistent = false)` buffers the
+  payload and requests the interactive peer picker (the UI confirms a target,
+  then the framework connects).
+- `sendTo(addr, addrType, mime, data, len, persistent = false)` sends directly
+  to a known peer with no picker.
 
 Both copy the payload into PSRAM and refuse if a send is already in progress or
-arguments are invalid.
+arguments are invalid. `persistent = true` opts the transfer into a
+[session-persistent pairing](#session-persistent-pairing).
 
 ## Deferred (plugin) handlers
 

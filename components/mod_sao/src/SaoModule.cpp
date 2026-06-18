@@ -41,19 +41,13 @@ bool SaoModule::init() {
 }
 
 bool SaoModule::start() {
-    if (state_ != core::ServiceState::INITIALIZED &&
-        state_ != core::ServiceState::STOPPED) {
+    if (!core::ModuleBase::start()) {
         return false;
     }
     if (!sao_init()) {
         LOG_W(TAG, "SAO init failed (I2C1 may be unavailable)");
     }
-    state_ = core::ServiceState::STARTED;
     return true;
-}
-
-void SaoModule::stop() {
-    state_ = core::ServiceState::STOPPED;
 }
 
 uint8_t SaoModule::getMenuItems(core::ModuleMenuItem* items, uint8_t maxItems) {

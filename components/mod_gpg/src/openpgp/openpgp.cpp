@@ -14,6 +14,8 @@
 #include "mod_gpg/gpg.h"
 #include "mod_gpg/GpgStorage.h"
 #include "ecdh.h"
+#include "rsa.h"
+#include "mod_gpg/openpgp/kdf.h"
 #include "cdc_core/pin_storage_c.h"
 #include "cdc_core/PinManager.h"
 #include "cdc_hal/ISecureElement.h"
@@ -238,6 +240,30 @@ static uint8_t selected_curve_sig = CDC_CURVE_ED25519;
 static uint8_t selected_curve_aut = CDC_CURVE_ED25519;
 
 /**
+ * \brief Per-role algorithm selection beyond the ECC curve. When
+ * `role_is_rsa[r]` is set the role is an RSA software key (blob in the
+ * `mod_gpg_rsa` R-Memory pool) and the rsa_* parameters carry its algorithm
+ * attributes; otherwise the role is ECC and `selected_curve_*` (SIG/AUT) or the
+ * fixed DEC P-256 ECDH apply. Index order matches `key_type_t`: SIG=0, DEC=1,
+ * AUT=2.
+ */
+static bool     role_is_rsa[3]     = {false, false, false};
+static uint16_t role_rsa_n_bits[3] = {0, 0, 0};
+static uint16_t role_rsa_e_bits[3] = {0, 0, 0};
+static uint8_t  role_rsa_fmt[3]    = {0, 0, 0};
+
+/**
+ * \brief KDF-DO (tag 0xF9) state. When `kdf_active` the host pre-hashes the
+ * PINs (PBKDF2) before VERIFY / CHANGE REFERENCE DATA / RESET RETRY COUNTER;
+ * PW1/PW3 are then compared through the binary PinManager path. The raw DO
+ * bytes are echoed back on GET DATA 0xF9.
+ */
+static bool    kdf_active = false;
+static uint8_t kdf_pin_len = 0;          // 32 (SHA-256) or 64 (SHA-512)
+static uint8_t kdf_do_bytes[124] = {};
+static uint8_t kdf_do_len = 0;
+
+/**
  * \brief Card lifecycle state per OpenPGP 3.4.1 §7.2.18.
  *
  * `false` = operational, `true` = terminated. While terminated the dispatcher
@@ -327,9 +353,17 @@ struct __attribute__((packed)) OpenpgpNvsState {
     char     cardholder_lang[8];
     char     cardholder_url[64];
     char     cardholder_login[32];
+    uint8_t  role_is_rsa[3];
+    uint16_t role_rsa_n_bits[3];
+    uint16_t role_rsa_e_bits[3];
+    uint8_t  role_rsa_fmt[3];
+    uint8_t  kdf_active;
+    uint8_t  kdf_pin_len;
+    uint8_t  kdf_do_len;
+    uint8_t  kdf_do_bytes[124];
 };
 
-static constexpr uint8_t OPENPGP_NVS_SCHEMA_V2 = 2;
+static constexpr uint8_t OPENPGP_NVS_SCHEMA_V3 = 3;
 
 /**
  * \brief Data object storage buffers (fingerprints and related metadata).
@@ -499,8 +533,22 @@ typedef enum {
  * \return Pointer to the selected algorithm-attribute byte array.
  */
 static const uint8_t* get_algo_attr(key_type_t key_type, size_t *len) {
-    // DEC is fixed to P-256 ECDH (software path); SIG / AUT follow the
-    // currently configured curve which PUT DATA C1 / C3 may override.
+    const int r = static_cast<int>(key_type);  // SIG=0, DEC=1, AUT=2
+    // RSA roles advertise the RSA attribute: 01 || N-bits || E-bits || import-fmt.
+    if (role_is_rsa[r]) {
+        static uint8_t s_rsa_attr[6];
+        const uint16_t eb = role_rsa_e_bits[r] ? role_rsa_e_bits[r] : 32;
+        s_rsa_attr[0] = ALGO_RSA;
+        s_rsa_attr[1] = static_cast<uint8_t>((role_rsa_n_bits[r] >> 8) & 0xFF);
+        s_rsa_attr[2] = static_cast<uint8_t>(role_rsa_n_bits[r] & 0xFF);
+        s_rsa_attr[3] = static_cast<uint8_t>((eb >> 8) & 0xFF);
+        s_rsa_attr[4] = static_cast<uint8_t>(eb & 0xFF);
+        s_rsa_attr[5] = role_rsa_fmt[r];
+        *len = sizeof(s_rsa_attr);
+        return s_rsa_attr;
+    }
+    // ECC: DEC is P-256 ECDH (software path); SIG / AUT follow the configured
+    // curve which PUT DATA C1 / C3 may override.
     if (key_type == KEY_TYPE_DEC) {
         *len = sizeof(ALGO_ATTR_P256_ECDH);
         return ALGO_ATTR_P256_ECDH;
@@ -713,7 +761,7 @@ static void load_state_from_nvs(void) {
 
     OpenpgpNvsState state = {};
     memcpy(&state, blob, sizeof(state));
-    if (state.schema_version != OPENPGP_NVS_SCHEMA_V2) {
+    if (state.schema_version != OPENPGP_NVS_SCHEMA_V3) {
         return;
     }
     if (!verify_state_signature(get_se(), blob, sizeof(state),
@@ -756,6 +804,17 @@ static void load_state_from_nvs(void) {
     cardholder_lang[sizeof(cardholder_lang) - 1]   = '\0';
     cardholder_url[sizeof(cardholder_url) - 1]     = '\0';
     cardholder_login[sizeof(cardholder_login) - 1] = '\0';
+
+    for (int r = 0; r < 3; ++r) {
+        role_is_rsa[r]     = state.role_is_rsa[r] != 0;
+        role_rsa_n_bits[r] = state.role_rsa_n_bits[r];
+        role_rsa_e_bits[r] = state.role_rsa_e_bits[r];
+        role_rsa_fmt[r]    = state.role_rsa_fmt[r];
+    }
+    kdf_active  = state.kdf_active != 0;
+    kdf_pin_len = state.kdf_pin_len;
+    kdf_do_len  = (state.kdf_do_len <= sizeof(kdf_do_bytes)) ? state.kdf_do_len : 0;
+    memcpy(kdf_do_bytes, state.kdf_do_bytes, sizeof(kdf_do_bytes));
 }
 
 /**
@@ -764,7 +823,7 @@ static void load_state_from_nvs(void) {
  */
 static void save_state_to_nvs(void) {
     OpenpgpNvsState state = {};
-    state.schema_version     = OPENPGP_NVS_SCHEMA_V2;
+    state.schema_version     = OPENPGP_NVS_SCHEMA_V3;
     state.card_terminated    = card_terminated ? 1 : 0;
     state.selected_curve_sig = selected_curve_sig;
     state.selected_curve_aut = selected_curve_aut;
@@ -789,6 +848,16 @@ static void save_state_to_nvs(void) {
     memcpy(state.cardholder_lang,  cardholder_lang,  sizeof(state.cardholder_lang));
     memcpy(state.cardholder_url,   cardholder_url,   sizeof(state.cardholder_url));
     memcpy(state.cardholder_login, cardholder_login, sizeof(state.cardholder_login));
+    for (int r = 0; r < 3; ++r) {
+        state.role_is_rsa[r]     = role_is_rsa[r] ? 1 : 0;
+        state.role_rsa_n_bits[r] = role_rsa_n_bits[r];
+        state.role_rsa_e_bits[r] = role_rsa_e_bits[r];
+        state.role_rsa_fmt[r]    = role_rsa_fmt[r];
+    }
+    state.kdf_active  = kdf_active ? 1 : 0;
+    state.kdf_pin_len = kdf_pin_len;
+    state.kdf_do_len  = kdf_do_len;
+    memcpy(state.kdf_do_bytes, kdf_do_bytes, sizeof(state.kdf_do_bytes));
 
     constexpr size_t BLOB_SIZE = sizeof(OpenpgpNvsState) + OPENPGP_STATE_SIG_SIZE;
     uint8_t blob[BLOB_SIZE];
@@ -823,6 +892,111 @@ static void save_state_to_nvs(void) {
     nvs_close(nvs);
     if (err != ESP_OK) {
         LOG_E(TAG, "save_state: %s", esp_err_to_name(err));
+    }
+}
+
+/**
+ * \brief NVS key holding the (public) cardholder certificate (DO 0x7F21).
+ */
+#define NVS_CERT_KEY "cardcert"
+static constexpr size_t CARDHOLDER_CERT_MAX = 2048;
+
+/**
+ * \brief Persists the cardholder certificate as a standalone NVS blob.
+ *        `len == 0` erases it. Stored unsigned: a certificate is public data.
+ */
+static bool save_cardholder_cert(const uint8_t* data, size_t len) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return false;
+    esp_err_t err;
+    if (len == 0) {
+        err = nvs_erase_key(nvs, NVS_CERT_KEY);
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    } else {
+        err = nvs_set_blob(nvs, NVS_CERT_KEY, data, len);
+    }
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    return err == ESP_OK;
+}
+
+/**
+ * \brief Loads the cardholder certificate into `out`.
+ * \return Number of bytes read, or 0 when absent / too large for `cap`.
+ */
+static size_t load_cardholder_cert(uint8_t* out, size_t cap) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return 0;
+    size_t len = cap;
+    esp_err_t err = nvs_get_blob(nvs, NVS_CERT_KEY, out, &len);
+    nvs_close(nvs);
+    return (err == ESP_OK) ? len : 0;
+}
+
+/**
+ * \brief Returns the on-device byte length of an SHA-256/512 KDF pre-hash.
+ */
+static uint8_t kdf_hash_len(kdf_hash_t hash) {
+    return (hash == KDF_HASH_SHA512) ? 64 : 32;
+}
+
+/**
+ * \brief Applies a KDF-DO payload written via PUT DATA 0xF9.
+ *
+ * On enable, PW1/PW3 references are initialised from the host-supplied initial
+ * hashes (tags 0x87 / 0x88). On disable, the PINs are reset to the cleartext
+ * defaults so the regular VERIFY path keeps working.
+ * \return An OpenPGP status word.
+ */
+static uint16_t apply_kdf_do(const uint8_t* data, size_t len) {
+    kdf_do_t parsed;
+    if (kdf_do_parse(data, len, &parsed) != KDF_OK) {
+        return SW_WRONG_DATA;
+    }
+    if (len > sizeof(kdf_do_bytes)) {
+        return SW_WRONG_LENGTH;
+    }
+
+    if (parsed.algo == KDF_ALGO_NONE) {
+        kdf_active = false;
+        kdf_pin_len = 0;
+        kdf_do_len = static_cast<uint8_t>(len);
+        memcpy(kdf_do_bytes, data, len);
+        pin_storage_openpgp_change_pw1(cdc::core::PinManager::DEFAULT_PW1);
+        pin_storage_openpgp_change_pw3(cdc::core::PinManager::DEFAULT_PW3);
+        save_state_to_nvs();
+        LOG_I(TAG, "KDF disabled, PINs reset to defaults");
+        return SW_OK;
+    }
+
+    if (parsed.hash != KDF_HASH_SHA256 && parsed.hash != KDF_HASH_SHA512) {
+        return SW_WRONG_DATA;
+    }
+    kdf_active = true;
+    kdf_pin_len = kdf_hash_len(parsed.hash);
+    kdf_do_len = static_cast<uint8_t>(len);
+    memcpy(kdf_do_bytes, data, len);
+    if (parsed.has_pw1_initial) {
+        pin_storage_openpgp_set_pw1_raw(parsed.pw1_initial, parsed.pw1_initial_len);
+    }
+    if (parsed.has_pw3_initial) {
+        pin_storage_openpgp_set_pw3_raw(parsed.pw3_initial, parsed.pw3_initial_len);
+    }
+    save_state_to_nvs();
+    LOG_I(TAG, "KDF enabled (hash len %u)", kdf_pin_len);
+    return SW_OK;
+}
+
+/**
+ * \brief Maps an OpenPGP key reference (B6/B8/A4) to a 0-based role index.
+ * \return 0 = SIG, 1 = DEC, 2 = AUT, or -1 if unknown.
+ */
+static int role_index_for_key_ref(uint8_t key_ref) {
+    switch (key_ref) {
+        case KEY_SIG: return 0;
+        case KEY_DEC: return 1;
+        case KEY_AUT: return 2;
+        default:      return -1;
     }
 }
 
@@ -1007,6 +1181,37 @@ static int cmd_select(const apdu_t *apdu, uint8_t *resp, size_t resp_max) {
 }
 
 /**
+ * \brief Returns a payload larger than the response window using response
+ *        chaining, priming the GET RESPONSE buffer directly.
+ *
+ * Unlike `apply_response_chaining` (which trims a fully-built response) this
+ * handles payloads that exceed `resp_max` by emitting the first chunk plus a
+ * `61xx` status word and stashing the remainder. The dispatcher's trailing
+ * `apply_response_chaining` is a no-op afterwards (61xx is not SW_OK).
+ */
+static int respond_chunked(const uint8_t *payload, size_t payload_len, uint32_t le,
+                           uint8_t *resp, size_t resp_max) {
+    size_t first = (le > 0 && le < payload_len) ? le : payload_len;
+    if (first + 2 > resp_max) first = resp_max - 2;
+    memcpy(resp, payload, first);
+    const size_t remainder = payload_len - first;
+    if (remainder == 0) {
+        resp[first] = 0x90;
+        resp[first + 1] = 0x00;
+        return static_cast<int>(first + 2);
+    }
+    if (remainder > sizeof(g_resp_buffer)) {
+        return apdu_sw(resp, SW_WRONG_LENGTH);
+    }
+    memcpy(g_resp_buffer, payload + first, remainder);
+    g_resp_remaining = remainder;
+    g_resp_pos = 0;
+    resp[first] = 0x61;
+    resp[first + 1] = (remainder > 0xFF) ? 0x00 : static_cast<uint8_t>(remainder);
+    return static_cast<int>(first + 2);
+}
+
+/**
  * \brief Handles APDU `GET DATA` command processing.
  * \param apdu Parsed APDU request.
  * \param resp Output response buffer.
@@ -1147,21 +1352,24 @@ static int cmd_get_data(const apdu_t *apdu, uint8_t *resp, size_t resp_max) {
             uint8_t key_info[6];
             uint8_t pubkey[P256_PUBKEY_SIZE], curve;
 
-            // Check SIG key
+            // Check SIG key (RSA blob or SE ECC slot)
             key_info[0] = 0x01;  // Key reference for SIG
-            key_info[1] = se_ecc_key_read(gpg_storage_sig_slot(), pubkey, sizeof(pubkey), &curve)
-                          ? 0x00  // generated
+            key_info[1] = (role_is_rsa[0] ? gpg_storage_has_rsa_key(0)
+                                          : se_ecc_key_read(gpg_storage_sig_slot(), pubkey, sizeof(pubkey), &curve))
+                          ? 0x00  // present
                           : 0x02;  // Not present
 
-            // Check DEC key
+            // Check DEC key (RSA blob or software ECDH key)
             key_info[2] = 0x02;  // Key reference for DEC
-            key_info[3] = se_ecc_key_read(gpg_storage_dec_slot(), pubkey, sizeof(pubkey), &curve)
+            key_info[3] = (role_is_rsa[1] ? gpg_storage_has_rsa_key(1)
+                                          : gpg_storage_has_dec_privkey())
                           ? 0x00
                           : 0x02;
 
-            // Check AUT key
+            // Check AUT key (RSA blob or SE ECC slot)
             key_info[4] = 0x03;  // Key reference for AUT
-            key_info[5] = se_ecc_key_read(gpg_storage_aut_slot(), pubkey, sizeof(pubkey), &curve)
+            key_info[5] = (role_is_rsa[2] ? gpg_storage_has_rsa_key(2)
+                                          : se_ecc_key_read(gpg_storage_aut_slot(), pubkey, sizeof(pubkey), &curve))
                           ? 0x00
                           : 0x02;
 
@@ -1180,12 +1388,26 @@ static int cmd_get_data(const apdu_t *apdu, uint8_t *resp, size_t resp_max) {
             return apdu_build_response(resp, resp_max, sec_tpl, 5, SW_OK);
         }
 
-        // KDF-DO (Key Derivation Function) - empty means no KDF
-        case DO_KDF:
-            return apdu_sw(resp, SW_OK);  // Empty = no KDF configured
+        // KDF-DO (Key Derivation Function). Returns the stored DO bytes, or the
+        // "disabled" body (81 01 00) when KDF has never been configured.
+        case DO_KDF: {
+            if (kdf_do_len > 0) {
+                return apdu_build_response(resp, resp_max, kdf_do_bytes, kdf_do_len, SW_OK);
+            }
+            uint8_t disabled[3];
+            size_t disabled_len = 0;
+            kdf_do_build_disabled(disabled, sizeof(disabled), &disabled_len);
+            return apdu_build_response(resp, resp_max, disabled, disabled_len, SW_OK);
+        }
 
-        case DO_CARDHOLDER_CERT:
-            return apdu_sw(resp, SW_REFERENCED_DATA_NOT_FOUND);
+        case DO_CARDHOLDER_CERT: {
+            static EXT_RAM_BSS_ATTR uint8_t cert_buf[CARDHOLDER_CERT_MAX];
+            size_t cert_len = load_cardholder_cert(cert_buf, sizeof(cert_buf));
+            if (cert_len == 0) {
+                return apdu_sw(resp, SW_REFERENCED_DATA_NOT_FOUND);
+            }
+            return respond_chunked(cert_buf, cert_len, apdu->le, resp, resp_max);
+        }
 
         default:
             LOG_W(TAG, "GET DATA: Unknown tag 0x%04X", tag);
@@ -1304,51 +1526,94 @@ static int apply_put_data_desc(const put_data_desc_t *desc, const apdu_t *apdu, 
  * DEC (C2) is constrained to P-256 ECDH (software path), so we accept the
  * documented attribute and reject everything else.
  */
+/**
+ * \brief Invalidates all stored key material for a role (ECC slot, RSA blob,
+ *        software DEC key, fingerprint and generation time). Used when the
+ *        algorithm attributes change so the next GENERATE / import is clean.
+ * \param r Role index: 0 = SIG, 1 = DEC, 2 = AUT.
+ */
+static void wipe_role_key(int r) {
+    auto* se = get_se();
+    gpg_storage_delete_rsa_key(static_cast<uint8_t>(r));
+    switch (r) {
+        case 0:
+            if (se) se->eccDelete(gpg_storage_sig_slot());
+            memset(fingerprint_sig, 0, sizeof(fingerprint_sig));
+            memset(gen_time_sig, 0, sizeof(gen_time_sig));
+            break;
+        case 1:
+            gpg_storage_delete_dec_privkey();
+            memset(fingerprint_dec, 0, sizeof(fingerprint_dec));
+            memset(gen_time_dec, 0, sizeof(gen_time_dec));
+            break;
+        case 2:
+            if (se) se->eccDelete(gpg_storage_aut_slot());
+            memset(fingerprint_aut, 0, sizeof(fingerprint_aut));
+            memset(gen_time_aut, 0, sizeof(gen_time_aut));
+            break;
+        default:
+            break;
+    }
+}
+
 static int put_data_algo_attr(uint16_t tag, const apdu_t *apdu, uint8_t *resp) {
     algo_attr_t attr;
     if (algo_attr_parse(apdu->data, apdu->lc, &attr) != ALGO_ATTR_OK) {
         return apdu_sw(resp, SW_WRONG_DATA);
     }
     algo_attr_role_t role;
-    uint8_t *target = nullptr;
-    uint8_t slot = 0;
+    int r;
     switch (tag) {
-        case DO_ALGO_SIG: role = ALGO_ATTR_ROLE_SIG; target = &selected_curve_sig; slot = gpg_storage_sig_slot(); break;
-        case DO_ALGO_AUT: role = ALGO_ATTR_ROLE_AUT; target = &selected_curve_aut; slot = gpg_storage_aut_slot(); break;
-        case DO_ALGO_DEC: role = ALGO_ATTR_ROLE_DEC; break;
+        case DO_ALGO_SIG: role = ALGO_ATTR_ROLE_SIG; r = 0; break;
+        case DO_ALGO_AUT: role = ALGO_ATTR_ROLE_AUT; r = 2; break;
+        case DO_ALGO_DEC: role = ALGO_ATTR_ROLE_DEC; r = 1; break;
         default:          return apdu_sw(resp, SW_FILE_NOT_FOUND);
     }
     if (algo_attr_validate_role(&attr, role) != ALGO_ATTR_OK) {
         return apdu_sw(resp, SW_WRONG_DATA);
     }
-    if (algo_attr_validate_capability(&attr, /*rsa_supported=*/false) != ALGO_ATTR_OK) {
+    if (algo_attr_validate_capability(&attr, /*rsa_supported=*/true) != ALGO_ATTR_OK) {
         return apdu_sw(resp, SW_WRONG_DATA);
     }
+
+    if (attr.is_rsa) {
+        if (role_is_rsa[r] && role_rsa_n_bits[r] == attr.rsa_n_bits) {
+            return apdu_sw(resp, SW_OK);
+        }
+        wipe_role_key(r);
+        role_is_rsa[r]     = true;
+        role_rsa_n_bits[r] = attr.rsa_n_bits;
+        role_rsa_e_bits[r] = attr.rsa_e_bits ? attr.rsa_e_bits : 32;
+        role_rsa_fmt[r]    = attr.rsa_import_fmt;
+        save_state_to_nvs();
+        LOG_I(TAG, "Algorithm attributes for role %d set to RSA-%u", r, attr.rsa_n_bits);
+        return apdu_sw(resp, SW_OK);
+    }
+
     if (role == ALGO_ATTR_ROLE_DEC) {
-        // DEC role: we only support the existing P-256 ECDH configuration.
+        // DEC ECC is constrained to P-256 ECDH (software path).
         if (attr.curve != ALGO_ATTR_CURVE_P256 || attr.algo_id != ALGO_ATTR_ID_ECDH) {
             return apdu_sw(resp, SW_WRONG_DATA);
         }
+        if (!role_is_rsa[r]) {
+            return apdu_sw(resp, SW_OK);
+        }
+        wipe_role_key(r);
+        role_is_rsa[r] = false;
+        save_state_to_nvs();
+        LOG_I(TAG, "DEC role reverted to P-256 ECDH");
         return apdu_sw(resp, SW_OK);
     }
+
+    // SIG / AUT ECC: honour the selected curve.
     const uint8_t new_curve = (attr.curve == ALGO_ATTR_CURVE_ED25519) ? CDC_CURVE_ED25519
                                                                        : CDC_CURVE_P256;
-    if (*target == new_curve) {
+    uint8_t* target = (tag == DO_ALGO_SIG) ? &selected_curve_sig : &selected_curve_aut;
+    if (!role_is_rsa[r] && *target == new_curve) {
         return apdu_sw(resp, SW_OK);
     }
-    // Curve actually changed — invalidate the existing key in the SE so the
-    // next GENERATE KEY PAIR yields material consistent with the new attrs.
-    auto* se = get_se();
-    if (se) {
-        se->eccDelete(slot);
-    }
-    if (tag == DO_ALGO_SIG) {
-        memset(fingerprint_sig, 0, sizeof(fingerprint_sig));
-        memset(gen_time_sig, 0, sizeof(gen_time_sig));
-    } else {
-        memset(fingerprint_aut, 0, sizeof(fingerprint_aut));
-        memset(gen_time_aut, 0, sizeof(gen_time_aut));
-    }
+    wipe_role_key(r);
+    role_is_rsa[r] = false;
     *target = new_curve;
     save_state_to_nvs();
     LOG_I(TAG, "Algorithm attributes for %s updated to curve %u",
@@ -1418,6 +1683,17 @@ static int cmd_put_data(const apdu_t *apdu, uint8_t *resp, size_t resp_max) {
             bool ok = gpg_storage_save_aes_key(apdu->data, apdu->lc, pin);
             return apdu_sw(resp, ok ? SW_OK : SW_UNKNOWN);
         }
+        case DO_KDF:
+            return apdu_sw(resp, apply_kdf_do(apdu->data, apdu->lc));
+        case DO_CARDHOLDER_CERT:
+            if (apdu->lc > CARDHOLDER_CERT_MAX) {
+                return apdu_sw(resp, SW_WRONG_LENGTH);
+            }
+            if (!save_cardholder_cert(apdu->data, apdu->lc)) {
+                return apdu_sw(resp, SW_UNKNOWN);
+            }
+            LOG_I(TAG, "Cardholder certificate stored (%u bytes)", apdu->lc);
+            return apdu_sw(resp, SW_OK);
         default:
             break;
     }
@@ -1479,21 +1755,66 @@ static bool ehl_parse_one(const uint8_t *buf, size_t buf_len, size_t *pos,
 }
 
 /**
+ * \brief Splits the RSA key material (5F48) into e / p / q using the lengths
+ *        declared in the Cardholder Private Key Template (7F48).
+ *
+ * The template is a sequence of `<tag><length>` pairs with no inline value;
+ * the 5F48 concatenation carries the values in the same order. RSA tags:
+ * 0x91 = e, 0x92 = p, 0x93 = q (0x94-0x97 are recomputed by mbedTLS).
+ * \return `true` when e, p and q were all located.
+ */
+static bool parse_rsa_import(const uint8_t* tmpl, size_t tmpl_len,
+                             const uint8_t* concat, size_t concat_len,
+                             const uint8_t** e, size_t* e_len,
+                             const uint8_t** p, size_t* p_len,
+                             const uint8_t** q, size_t* q_len) {
+    size_t tpos = 0, cpos = 0;
+    *e = *p = *q = nullptr;
+    *e_len = *p_len = *q_len = 0;
+    while (tpos < tmpl_len) {
+        const uint8_t t = tmpl[tpos++];
+        if (tpos >= tmpl_len) return false;
+        size_t clen;
+        const uint8_t lb = tmpl[tpos++];
+        if (lb < 0x80) {
+            clen = lb;
+        } else if (lb == 0x81) {
+            if (tpos >= tmpl_len) return false;
+            clen = tmpl[tpos++];
+        } else if (lb == 0x82) {
+            if (tpos + 1 >= tmpl_len) return false;
+            clen = (static_cast<size_t>(tmpl[tpos]) << 8) | tmpl[tpos + 1];
+            tpos += 2;
+        } else {
+            return false;
+        }
+        if (cpos + clen > concat_len) return false;
+        const uint8_t* val = concat + cpos;
+        cpos += clen;
+        switch (t) {
+            case 0x91: *e = val; *e_len = clen; break;
+            case 0x92: *p = val; *p_len = clen; break;
+            case 0x93: *q = val; *q_len = clen; break;
+            default: break;
+        }
+    }
+    return (*e && *p && *q);
+}
+
+/**
  * \brief Handles APDU `PUT DATA (odd INS, 0xDB)` for keypair import.
  *
- * Used by `gpg --card-edit` → `generate` when the user answers "Y" to
- * "Make off-card backup of encryption key?": GnuPG generates the key on the
- * host and ships it as an OpenPGP 3.4.1 §7.2.8 Extended Header List
+ * Used by `gpg --card-edit` → `keytocard` / off-card backup import: GnuPG ships
+ * a key as an OpenPGP 3.4.1 §7.2.8 Extended Header List
  *
  *     4D LL
  *        <CRT>          // B6 00 (SIG) / B8 00 (DEC) / A4 00 (AUT)
  *        7F48 LL        // Cardholder Private Key Template (tag list)
- *        5F48 LL        // Concatenation of values (priv [|| pub])
+ *        5F48 LL        // Concatenation of values
  *
- * Currently only DEC (CRT B8) is supported, mirroring the on-card path that
- * also reserves software-ECDH for the decipher key (the only role TROPIC01
- * does not handle natively). SIG/AUT keys live in the secure element with
- * no key-import path exposed by our HAL.
+ * ECC roles: the 32-byte private scalar is imported into the TROPIC01 ECC slot
+ * (SIG / AUT) or the software ECDH store (DEC). RSA roles: e / p / q are parsed
+ * per the template and stored as an encrypted blob in the RSA R-Memory pool.
  */
 static int cmd_put_data_odd(const apdu_t *apdu, uint8_t *resp, size_t resp_max) {
     (void)resp_max;
@@ -1516,43 +1837,84 @@ static int cmd_put_data_odd(const apdu_t *apdu, uint8_t *resp, size_t resp_max) 
         return apdu_sw(resp, SW_WRONG_DATA);
     }
 
-    // Walk the inner template: first the CRT (B6/B8/A4), then 7F48 (skipped),
-    // then 5F48 with the concatenated key material.
+    // First inner element is the CRT identifying the target role.
     size_t inner = 0;
     const uint8_t *crt_val = nullptr;
     size_t crt_len = 0;
-    if (!ehl_parse_one(outer_val, outer_len, &inner, &tag, &crt_val, &crt_len) ||
-        tag != KEY_DEC) {
+    if (!ehl_parse_one(outer_val, outer_len, &inner, &tag, &crt_val, &crt_len)) {
+        return apdu_sw(resp, SW_WRONG_DATA);
+    }
+    const uint8_t key_ref = static_cast<uint8_t>(tag);
+    const int r = role_index_for_key_ref(key_ref);
+    if (r < 0) {
         return apdu_sw(resp, SW_WRONG_DATA);
     }
 
-    const uint8_t *key_concat = nullptr;
-    size_t key_concat_len = 0;
+    // Collect the private-key template (7F48) and the value concatenation (5F48).
+    const uint8_t *tmpl = nullptr;   size_t tmpl_len = 0;
+    const uint8_t *concat = nullptr; size_t concat_len = 0;
     while (inner < outer_len) {
         const uint8_t *v = nullptr;
         size_t vlen = 0;
         if (!ehl_parse_one(outer_val, outer_len, &inner, &tag, &v, &vlen)) {
             return apdu_sw(resp, SW_WRONG_DATA);
         }
-        if (tag == 0x5F48) {
-            key_concat = v;
-            key_concat_len = vlen;
-            break;
-        }
-        // 7F48 (template) is informational; we know the format for our curve.
+        if (tag == 0x7F48)      { tmpl = v;   tmpl_len = vlen; }
+        else if (tag == 0x5F48) { concat = v; concat_len = vlen; }
     }
-    if (!key_concat || key_concat_len < P256_PRIVKEY_SIZE) {
+    if (!concat || concat_len == 0) {
         return apdu_sw(resp, SW_WRONG_DATA);
     }
 
-    uint8_t privkey[P256_PRIVKEY_SIZE];
-    memcpy(privkey, key_concat, P256_PRIVKEY_SIZE);
-    bool saved = gpg_storage_save_dec_privkey(privkey, nullptr);
-    mbedtls_platform_zeroize(privkey, sizeof(privkey));
-    if (!saved) {
+    if (role_is_rsa[r]) {
+        if (!tmpl) {
+            return apdu_sw(resp, SW_WRONG_DATA);
+        }
+        const uint8_t *e = nullptr, *p = nullptr, *q = nullptr;
+        size_t e_len = 0, p_len = 0, q_len = 0;
+        if (!parse_rsa_import(tmpl, tmpl_len, concat, concat_len,
+                              &e, &e_len, &p, &p_len, &q, &q_len)) {
+            return apdu_sw(resp, SW_WRONG_DATA);
+        }
+        static EXT_RAM_BSS_ATTR uint8_t blob[GPG_RSA_BLOB_MAX];
+        size_t blob_len = 0;
+        bool built = gpg_rsa_blob_build(role_rsa_n_bits[r], e, e_len, p, p_len, q, q_len,
+                                        blob, sizeof(blob), &blob_len);
+        bool saved = built && gpg_storage_save_rsa_key(static_cast<uint8_t>(r), blob, blob_len, nullptr);
+        mbedtls_platform_zeroize(blob, sizeof(blob));
+        if (!saved) {
+            return apdu_sw(resp, built ? SW_UNKNOWN : SW_WRONG_DATA);
+        }
+        update_generation_timestamp(key_ref);
+        LOG_I(TAG, "Imported RSA key for role %d", r);
+        return apdu_sw(resp, SW_OK);
+    }
+
+    // ECC import: the first 32 bytes of the concatenation are the private scalar.
+    if (concat_len < P256_PRIVKEY_SIZE) {
+        return apdu_sw(resp, SW_WRONG_DATA);
+    }
+    uint8_t scalar[P256_PRIVKEY_SIZE];
+    memcpy(scalar, concat, P256_PRIVKEY_SIZE);
+    bool ok = false;
+    if (r == 1) {
+        // DEC: software ECDH key.
+        ok = gpg_storage_save_dec_privkey(scalar, nullptr);
+    } else {
+        // SIG / AUT: inject into the TROPIC01 ECC slot.
+        auto* se = get_se();
+        const uint8_t slot = (r == 0) ? gpg_storage_sig_slot() : gpg_storage_aut_slot();
+        const uint8_t curve = (r == 0) ? selected_curve_sig : selected_curve_aut;
+        const cdc::hal::EccCurve ec = (curve == CDC_CURVE_ED25519) ? cdc::hal::EccCurve::ED25519
+                                                                   : cdc::hal::EccCurve::P256;
+        ok = se && (se->eccImport(slot, scalar, ec) == cdc::hal::SeResult::OK);
+    }
+    mbedtls_platform_zeroize(scalar, sizeof(scalar));
+    if (!ok) {
         return apdu_sw(resp, SW_UNKNOWN);
     }
-    update_generation_timestamp(KEY_DEC);
+    update_generation_timestamp(key_ref);
+    LOG_I(TAG, "Imported ECC key for role %d", r);
     return apdu_sw(resp, SW_OK);
 }
 
@@ -1585,30 +1947,55 @@ static int cmd_verify(const apdu_t *apdu, uint8_t *resp, size_t resp_max) {
         return apdu_sw(resp, 0x63C0 | retries);
     }
 
-    // Convert PIN data to null-terminated string
-    char pin_str[OPENPGP_PIN_MAX_LEN + 1];
-    if (apdu->lc > OPENPGP_PIN_MAX_LEN) {
-        return apdu_sw(resp, SW_WRONG_LENGTH);
-    }
-    memcpy(pin_str, apdu->data, apdu->lc);
-    pin_str[apdu->lc] = '\0';
-
-    // Verify PIN via TROPIC01 storage
+    // In KDF mode the host sends a PBKDF2 pre-hash (binary, 32/64 bytes); the
+    // cleartext path caps at OPENPGP_PIN_MAX_LEN and NUL-terminates.
     bool verified = false;
     uint8_t retries;
 
     if (pw_ref == PW1_CODE_1 || pw_ref == PW1_CODE_2) {
-        verified = pin_storage_openpgp_verify_pw1(pin_str);
+        // A 32/64-byte field is a KDF pre-hash (a cleartext PIN never reaches
+        // that length): verify it raw even before PUT DATA 0xF9 flips kdf_active
+        // on, so gpg's kdf-setup VERIFY succeeds during the enable transition.
+        if (kdf_active || apdu->lc == 32 || apdu->lc == 64) {
+            verified = pin_storage_openpgp_verify_pw1_raw(apdu->data, apdu->lc);
+            if (verified) {
+                pw1_verified = true;
+                mbedtls_platform_zeroize(s_session_pin, sizeof(s_session_pin));
+                gpg_storage_clear_session();
+            }
+        } else {
+            if (apdu->lc > OPENPGP_PIN_MAX_LEN) {
+                return apdu_sw(resp, SW_WRONG_LENGTH);
+            }
+            char pin_str[OPENPGP_PIN_MAX_LEN + 1];
+            memcpy(pin_str, apdu->data, apdu->lc);
+            pin_str[apdu->lc] = '\0';
+            verified = pin_storage_openpgp_verify_pw1(pin_str);
+            if (verified) {
+                pw1_verified = true;
+                strncpy(s_session_pin, pin_str, OPENPGP_PIN_MAX_LEN);
+                s_session_pin[OPENPGP_PIN_MAX_LEN] = '\0';
+                gpg_storage_set_session_pin(pin_str);
+            }
+            mbedtls_platform_zeroize(pin_str, sizeof(pin_str));
+        }
         if (verified) {
-            pw1_verified = true;
-            strncpy(s_session_pin, pin_str, OPENPGP_PIN_MAX_LEN);
-            s_session_pin[OPENPGP_PIN_MAX_LEN] = '\0';
-            gpg_storage_set_session_pin(pin_str);
             LOG_I(TAG, "PW1 verified successfully");
         }
         retries = pin_storage_openpgp_pw1_retries();
     } else if (pw_ref == PW3_CODE) {
-        verified = pin_storage_openpgp_verify_pw3(pin_str);
+        if (kdf_active || apdu->lc == 32 || apdu->lc == 64) {
+            verified = pin_storage_openpgp_verify_pw3_raw(apdu->data, apdu->lc);
+        } else {
+            if (apdu->lc > OPENPGP_PIN_MAX_LEN) {
+                return apdu_sw(resp, SW_WRONG_LENGTH);
+            }
+            char pin_str[OPENPGP_PIN_MAX_LEN + 1];
+            memcpy(pin_str, apdu->data, apdu->lc);
+            pin_str[apdu->lc] = '\0';
+            verified = pin_storage_openpgp_verify_pw3(pin_str);
+            mbedtls_platform_zeroize(pin_str, sizeof(pin_str));
+        }
         if (verified) {
             pw3_verified = true;
             LOG_I(TAG, "PW3 verified successfully");
@@ -1811,6 +2198,70 @@ static int cmd_change_reference_data(const apdu_t *apdu, uint8_t *resp, size_t r
         return apdu_sw(resp, SW_INCORRECT_P1P2);
     }
 
+    // KDF mode: payload is old-prehash || new-prehash, each kdf_pin_len bytes.
+    if (kdf_active) {
+        if (apdu->lc != static_cast<uint16_t>(2 * kdf_pin_len)) {
+            return apdu_sw(resp, SW_WRONG_LENGTH);
+        }
+        const uint8_t* old_h = apdu->data;
+        const uint8_t* new_h = apdu->data + kdf_pin_len;
+        bool old_ok = (slot == PIN_SLOT_PW1)
+                          ? pin_storage_openpgp_verify_pw1_raw(old_h, kdf_pin_len)
+                          : pin_storage_openpgp_verify_pw3_raw(old_h, kdf_pin_len);
+        if (!old_ok) {
+            uint8_t retries = retries_fn();
+            if (retries == 0) {
+                return apdu_sw(resp, SW_AUTH_METHOD_BLOCKED);
+            }
+            return apdu_sw(resp, 0x63C0 | retries);
+        }
+        bool set_ok = (slot == PIN_SLOT_PW1)
+                          ? pin_storage_openpgp_set_pw1_raw(new_h, kdf_pin_len)
+                          : pin_storage_openpgp_set_pw3_raw(new_h, kdf_pin_len);
+        if (!set_ok) {
+            return apdu_sw(resp, SW_WRONG_DATA);
+        }
+        LOG_I(TAG, "%s changed successfully (KDF)", log_label);
+        return apdu_sw(resp, SW_OK);
+    }
+
+    // KDF-enable transition: gpg sends `cleartext-old || raw-new` here (before
+    // PUT DATA 0xF9 turns KDF on), where the new value is a 32- or 64-byte KDF
+    // pre-hash. Verify the cleartext old normally, then store the raw new ref.
+    {
+        size_t new_raw = 0;
+        if (apdu->lc >= min_len + 64 && apdu->lc - 64 <= OPENPGP_PIN_MAX_LEN) {
+            new_raw = 64;
+        } else if (apdu->lc >= min_len + 32 && apdu->lc - 32 <= OPENPGP_PIN_MAX_LEN) {
+            new_raw = 32;
+        }
+        if (new_raw) {
+            const size_t old_len = apdu->lc - new_raw;
+            char old_pin[OPENPGP_PIN_MAX_LEN + 1];
+            memcpy(old_pin, apdu->data, old_len);
+            old_pin[old_len] = '\0';
+            const bool old_ok = (slot == PIN_SLOT_PW1)
+                                    ? pin_storage_openpgp_verify_pw1(old_pin)
+                                    : pin_storage_openpgp_verify_pw3(old_pin);
+            mbedtls_platform_zeroize(old_pin, sizeof(old_pin));
+            if (!old_ok) {
+                uint8_t retries = retries_fn();
+                if (retries == 0) {
+                    return apdu_sw(resp, SW_AUTH_METHOD_BLOCKED);
+                }
+                return apdu_sw(resp, 0x63C0 | retries);
+            }
+            const bool set_ok = (slot == PIN_SLOT_PW1)
+                                    ? pin_storage_openpgp_set_pw1_raw(apdu->data + old_len, new_raw)
+                                    : pin_storage_openpgp_set_pw3_raw(apdu->data + old_len, new_raw);
+            if (!set_ok) {
+                return apdu_sw(resp, SW_WRONG_DATA);
+            }
+            LOG_I(TAG, "%s changed (KDF enable transition)", log_label);
+            return apdu_sw(resp, SW_OK);
+        }
+    }
+
     if (apdu->lc < min_len * 2) {
         return apdu_sw(resp, SW_WRONG_LENGTH);
     }
@@ -1847,6 +2298,25 @@ static int cmd_change_reference_data(const apdu_t *apdu, uint8_t *resp, size_t r
 static int cmd_pso_cds(const apdu_t *apdu, uint8_t *resp, size_t resp_max) {
     if (!pw1_verified) {
         return apdu_sw(resp, SW_SECURITY_NOT_SATISFIED);
+    }
+
+    if (role_is_rsa[0]) {
+        static EXT_RAM_BSS_ATTR uint8_t blob[GPG_RSA_BLOB_MAX];
+        size_t blob_len = 0;
+        if (!gpg_storage_load_rsa_key(0, blob, sizeof(blob), &blob_len, nullptr)) {
+            return apdu_sw(resp, SW_CONDITIONS_NOT_SATISFIED);
+        }
+        static EXT_RAM_BSS_ATTR uint8_t rsa_sig[GPG_RSA_MAX_MODULUS_BYTES];
+        size_t rsa_sig_len = 0;
+        bool ok = gpg_rsa_sign(blob, blob_len, apdu->data, apdu->lc,
+                               rsa_sig, sizeof(rsa_sig), &rsa_sig_len);
+        mbedtls_platform_zeroize(blob, sizeof(blob));
+        if (!ok) {
+            return apdu_sw(resp, SW_UNKNOWN);
+        }
+        sig_count++;
+        save_state_to_nvs();
+        return apdu_build_response(resp, resp_max, rsa_sig, rsa_sig_len, SW_OK);
     }
 
     // Check if signature key exists by trying to read it
@@ -1988,6 +2458,30 @@ static int cmd_pso_decipher(const apdu_t *apdu, uint8_t *resp, size_t resp_max) 
     // OpenPGP 3.4.1 §7.2.11: padding indicator 0x02 = AES decryption.
     if (apdu->data[0] == 0x02) {
         return cmd_pso_decipher_aes(apdu, resp, resp_max);
+    }
+
+    if (role_is_rsa[1]) {
+        // RSA decipher: data[0] = 0x00 padding indicator, remainder = cryptogram.
+        if (apdu->lc < 2) {
+            return apdu_sw(resp, SW_WRONG_DATA);
+        }
+        static EXT_RAM_BSS_ATTR uint8_t blob[GPG_RSA_BLOB_MAX];
+        size_t blob_len = 0;
+        if (!gpg_storage_load_rsa_key(1, blob, sizeof(blob), &blob_len, nullptr)) {
+            return apdu_sw(resp, SW_CONDITIONS_NOT_SATISFIED);
+        }
+        static EXT_RAM_BSS_ATTR uint8_t pt[GPG_RSA_MAX_MODULUS_BYTES];
+        size_t pt_len = 0;
+        bool ok = gpg_rsa_decrypt(blob, blob_len, apdu->data + 1, apdu->lc - 1,
+                                  pt, sizeof(pt), &pt_len);
+        mbedtls_platform_zeroize(blob, sizeof(blob));
+        if (!ok) {
+            mbedtls_platform_zeroize(pt, sizeof(pt));
+            return apdu_sw(resp, SW_UNKNOWN);
+        }
+        int n = apdu_build_response(resp, resp_max, pt, pt_len, SW_OK);
+        mbedtls_platform_zeroize(pt, sizeof(pt));
+        return n;
     }
 
     if (!gpg_storage_has_dec_privkey()) {
@@ -2145,6 +2639,23 @@ static int cmd_internal_authenticate(const apdu_t *apdu, uint8_t *resp, size_t r
         return apdu_sw(resp, SW_WRONG_LENGTH);
     }
 
+    if (role_is_rsa[2]) {
+        static EXT_RAM_BSS_ATTR uint8_t blob[GPG_RSA_BLOB_MAX];
+        size_t blob_len = 0;
+        if (!gpg_storage_load_rsa_key(2, blob, sizeof(blob), &blob_len, nullptr)) {
+            return apdu_sw(resp, SW_CONDITIONS_NOT_SATISFIED);
+        }
+        static EXT_RAM_BSS_ATTR uint8_t rsa_sig[GPG_RSA_MAX_MODULUS_BYTES];
+        size_t rsa_sig_len = 0;
+        bool ok = gpg_rsa_sign(blob, blob_len, apdu->data, apdu->lc,
+                               rsa_sig, sizeof(rsa_sig), &rsa_sig_len);
+        mbedtls_platform_zeroize(blob, sizeof(blob));
+        if (!ok) {
+            return apdu_sw(resp, SW_UNKNOWN);
+        }
+        return apdu_build_response(resp, resp_max, rsa_sig, rsa_sig_len, SW_OK);
+    }
+
     uint8_t pubkey[P256_PUBKEY_SIZE];
     uint8_t curve = 0;
     if (!se_ecc_key_read(gpg_storage_aut_slot(), pubkey, sizeof(pubkey), &curve)) {
@@ -2222,8 +2733,12 @@ void openpgp_factory_reset(void) {
         se->eccDelete(gpg_storage_aut_slot());
     }
     gpg_storage_delete_dec_privkey();
+    gpg_storage_delete_rsa_key(0);
+    gpg_storage_delete_rsa_key(1);
+    gpg_storage_delete_rsa_key(2);
     gpg_storage_clear_session();
     pin_storage_openpgp_reset();
+    save_cardholder_cert(nullptr, 0);
 
     memset(fingerprint_sig, 0, sizeof(fingerprint_sig));
     memset(fingerprint_dec, 0, sizeof(fingerprint_dec));
@@ -2242,6 +2757,16 @@ void openpgp_factory_reset(void) {
     sig_count = 0;
     selected_curve_sig = CDC_CURVE_ED25519;
     selected_curve_aut = CDC_CURVE_ED25519;
+    for (int r = 0; r < 3; ++r) {
+        role_is_rsa[r] = false;
+        role_rsa_n_bits[r] = 0;
+        role_rsa_e_bits[r] = 0;
+        role_rsa_fmt[r] = 0;
+    }
+    kdf_active = false;
+    kdf_pin_len = 0;
+    kdf_do_len = 0;
+    mbedtls_platform_zeroize(kdf_do_bytes, sizeof(kdf_do_bytes));
     mbedtls_platform_zeroize(s_rc_salt, sizeof(s_rc_salt));
     mbedtls_platform_zeroize(s_rc_hash, sizeof(s_rc_hash));
     s_rc_len = 0;
@@ -2320,6 +2845,18 @@ static int cmd_reset_retry_counter(const apdu_t *apdu, uint8_t *resp, size_t res
     // P1 == 0x02 — admin-driven reset.
     if (!pw3_verified) {
         return apdu_sw(resp, SW_SECURITY_NOT_SATISFIED);
+    }
+    // A 32/64-byte new PW1 is a KDF pre-hash, even before kdf_active flips on
+    // (gpg's kdf-setup resets PW1 this way prior to PUT DATA 0xF9).
+    if (kdf_active || apdu->lc == 32 || apdu->lc == 64) {
+        // New PW1 arrives as a PBKDF2 pre-hash.
+        if (!pin_storage_openpgp_set_pw1_raw(apdu->data, apdu->lc)) {
+            return apdu_sw(resp, SW_WRONG_LENGTH);
+        }
+        pin_storage_openpgp_reset_pw1_retries();
+        pw1_verified = false;
+        LOG_I(TAG, "RESET RETRY COUNTER: PW1 reset by admin (KDF)");
+        return apdu_sw(resp, SW_OK);
     }
     if (apdu->lc < OPENPGP_PW1_MIN_LEN || apdu->lc > OPENPGP_PIN_MAX_LEN) {
         return apdu_sw(resp, SW_WRONG_LENGTH);
@@ -2498,6 +3035,42 @@ static void encode_pubkey_with_prefix(const uint8_t *pubkey, uint8_t curve,
 }
 
 /**
+ * \brief Builds the `7F49 { 81 <modulus> 82 <exponent> }` public-key response
+ *        for an RSA role from its stored private-key blob.
+ * \param r Role index (0 = SIG, 1 = DEC, 2 = AUT).
+ * \return APDU status/response length result.
+ */
+static int build_rsa_pubkey_from_storage(int r, uint8_t *resp, size_t resp_max) {
+    static EXT_RAM_BSS_ATTR uint8_t blob[GPG_RSA_BLOB_MAX];
+    size_t blob_len = 0;
+    if (!gpg_storage_load_rsa_key(static_cast<uint8_t>(r), blob, sizeof(blob), &blob_len, nullptr)) {
+        return apdu_sw(resp, SW_REFERENCED_DATA_NOT_FOUND);
+    }
+    static EXT_RAM_BSS_ATTR uint8_t n_buf[GPG_RSA_MAX_MODULUS_BYTES];
+    uint8_t e_buf[8];
+    size_t n_len = 0, e_len = 0;
+    bool ok = gpg_rsa_blob_public(blob, blob_len, n_buf, sizeof(n_buf), &n_len,
+                                  e_buf, sizeof(e_buf), &e_len);
+    mbedtls_platform_zeroize(blob, sizeof(blob));
+    if (!ok) {
+        return apdu_sw(resp, SW_UNKNOWN);
+    }
+    // Inner public-key DO: 81 <modulus> 82 <exponent>.
+    static EXT_RAM_BSS_ATTR uint8_t inner[GPG_RSA_MAX_MODULUS_BYTES + 16];
+    size_t inner_len = 0;
+    inner_len += tlv_build(inner + inner_len, sizeof(inner) - inner_len, 0x81, n_buf, n_len);
+    inner_len += tlv_build(inner + inner_len, sizeof(inner) - inner_len, 0x82, e_buf, e_len);
+    // Wrap in 7F49 (Public Key DO).
+    static EXT_RAM_BSS_ATTR uint8_t outbuf[GPG_RSA_MAX_MODULUS_BYTES + 32];
+    size_t pos = 0;
+    pos += tlv_write_tag(outbuf + pos, 0x7F49);
+    pos += tlv_write_len(outbuf + pos, inner_len);
+    memcpy(outbuf + pos, inner, inner_len);
+    pos += inner_len;
+    return apdu_build_response(resp, resp_max, outbuf, pos, SW_OK);
+}
+
+/**
  * \brief Handles APDU `GENERATE ASYMMETRIC KEY PAIR`.
  * \param apdu Parsed APDU request.
  * \param resp Output response buffer.
@@ -2519,6 +3092,33 @@ static int cmd_generate_keypair(const apdu_t *apdu, uint8_t *resp, size_t resp_m
 
     LOG_I(TAG, "GENERATE_KEYPAIR: P1=0x%02X, key_ref=0x%02X, slot=%d, type=%d",
              apdu->p1, key_ref, ecc_slot, key_type);
+
+    // RSA roles are software keys (slower, less secure than the SE-backed ECC
+    // path); generation and public-key read go through the mbedTLS backend.
+    const int role_idx = role_index_for_key_ref(key_ref);
+    if (role_idx >= 0 && role_is_rsa[role_idx]) {
+        if (apdu->p1 == 0x80) {
+            if (!pw3_verified) {
+                return apdu_sw(resp, SW_SECURITY_NOT_SATISFIED);
+            }
+            static EXT_RAM_BSS_ATTR uint8_t blob[GPG_RSA_BLOB_MAX];
+            size_t blob_len = 0;
+            LOG_W(TAG, "Generating RSA-%u key (software fallback, slow) for role %d",
+                  role_rsa_n_bits[role_idx], role_idx);
+            if (!gpg_rsa_generate(role_rsa_n_bits[role_idx], blob, sizeof(blob), &blob_len)) {
+                return apdu_sw(resp, SW_UNKNOWN);
+            }
+            bool saved = gpg_storage_save_rsa_key(static_cast<uint8_t>(role_idx), blob, blob_len, nullptr);
+            mbedtls_platform_zeroize(blob, sizeof(blob));
+            if (!saved) {
+                return apdu_sw(resp, SW_UNKNOWN);
+            }
+            update_generation_timestamp(key_ref);
+            return build_rsa_pubkey_from_storage(role_idx, resp, resp_max);
+        }
+        // P1 == 0x81: read existing public key.
+        return build_rsa_pubkey_from_storage(role_idx, resp, resp_max);
+    }
 
     if (apdu->p1 == 0x80) {
         // P1=0x80: Generate new key (admin PIN required).
@@ -2811,6 +3411,18 @@ int openpgp_process_apdu(const uint8_t *cmd, size_t cmd_len,
             if (len > sizeof(challenge)) len = sizeof(challenge);
             se_random_fill(challenge, len);
             result_len = apdu_build_response(resp, resp_max, challenge, len, SW_OK);
+            break;
+        }
+
+        case INS_GET_VERSION: {
+            // Vendor command (pico-openpgp heritage): report the firmware version.
+#ifndef APP_VERSION
+#define APP_VERSION "0.0.0"
+#endif
+            const char* ver = APP_VERSION;
+            result_len = apdu_build_response(resp, resp_max,
+                                             reinterpret_cast<const uint8_t*>(ver),
+                                             strlen(ver), SW_OK);
             break;
         }
 

@@ -3,7 +3,7 @@
  * \brief File operations confined to the plugins FAT partition.
  *
  * Shared by the serial shell and the GUI explorer. All paths are relative to
- * the partition root (PluginStorage::basePath(), e.g. "/plugins") and may not
+ * the partition root (PluginStorage::basePath(), e.g. "/vfat") and may not
  * escape it: any ".." component or absolute path is rejected.
  */
 
@@ -28,7 +28,7 @@ namespace fs {
 /// Cap on entries returned by a single list() call.
 constexpr size_t MAX_LIST_ENTRIES = 256;
 
-/// \brief Partition root mount path (e.g. "/plugins").
+/// \brief Partition root mount path (e.g. "/vfat").
 const char* root();
 
 /**
@@ -46,7 +46,8 @@ bool resolve(const std::string& relPath, std::string& absOut);
  * \param truncated Set true if more entries existed than the cap.
  * \return false if the directory could not be opened.
  */
-bool list(const std::string& relDir, std::vector<FsEntry>& out, bool& truncated);
+bool list(const std::string& relDir, std::vector<FsEntry>& out, bool& truncated,
+          bool includeHidden = false);
 
 /// \brief Read a file into `out` (up to maxBytes). \return false if not found.
 bool readText(const std::string& relFile, std::string& out, size_t maxBytes);

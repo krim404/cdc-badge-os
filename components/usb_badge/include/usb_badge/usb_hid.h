@@ -32,6 +32,9 @@ bool usb_hid_init(void);
 // if host may require replug.
 bool usb_hid_apply_config(const UsbInterfaceDef* defs, size_t count, bool* needs_replug);
 
+// Add (true) or remove (false) the MSC mass-storage interface and re-enumerate.
+void usb_hid_set_msc(bool active);
+
 // Check if USB is ready (CDC or HID).
 bool usb_hid_ready(void);
 

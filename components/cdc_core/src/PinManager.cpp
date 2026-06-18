@@ -13,6 +13,7 @@
 #include "mbedtls/ecdsa.h"
 #include "mbedtls/ecp.h"
 #include "mbedtls/bignum.h"
+#include "mbedtls/platform_util.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include <cstring>
@@ -374,20 +375,25 @@ bool PinManager::computeBadgeHash(const char* pin, uint8_t* hashOut) {
  * \return `true` on success.
  */
 bool PinManager::computeKdfHash(const char* pin, const uint8_t* salt, uint8_t* hashOut) const {
-    if (!pin || !salt || !hashOut) return false;
+    if (!pin) return false;
+    return computeKdfHash(reinterpret_cast<const uint8_t*>(pin), strlen(pin), salt, hashOut);
+}
 
-    // OpenPGP Iterated+Salted S2K (RFC 4880)
-    // Hash iteration count bytes of (salt + password) repeated
-    size_t pinLen = strlen(pin);
-    size_t combined = SALT_SIZE + pinLen;
+bool PinManager::computeKdfHash(const uint8_t* data, size_t len, const uint8_t* salt,
+                                uint8_t* hashOut) const {
+    if (!data || !salt || !hashOut) return false;
+    // Salt + input must fit the iteration buffer; the KDF-DO path supplies a
+    // pre-hash of up to 64 bytes, the cleartext path a PIN of up to PIN_MAX.
+    if (len > 64) return false;
 
-    // Calculate actual byte count from iteration count
-    // OpenPGP uses coded count, here we use direct iteration count
+    // OpenPGP Iterated+Salted S2K (RFC 4880): hash iteration-count bytes of
+    // (salt + input) repeated.
+    size_t combined = SALT_SIZE + len;
     size_t totalBytes = iterations_;
 
-    uint8_t buffer[64];  // Salt + PIN (max 16)
+    uint8_t buffer[SALT_SIZE + 64];
     memcpy(buffer, salt, SALT_SIZE);
-    memcpy(buffer + SALT_SIZE, pin, pinLen);
+    memcpy(buffer + SALT_SIZE, data, len);
 
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
@@ -402,6 +408,7 @@ bool PinManager::computeKdfHash(const char* pin, const uint8_t* salt, uint8_t* h
 
     mbedtls_sha256_finish(&ctx, hashOut);
     mbedtls_sha256_free(&ctx);
+    mbedtls_platform_zeroize(buffer, sizeof(buffer));
 
     return true;
 }
@@ -471,6 +478,14 @@ bool PinManager::verifyPin(PinSlot slot, const char* pin) {
         return false;
     }
 
+    // PW1/PW3 use the binary-capable path; the cleartext PIN is just its bytes.
+    return verifyPinRaw(slot, reinterpret_cast<const uint8_t*>(pin), strlen(pin));
+}
+
+bool PinManager::verifyPinRaw(PinSlot slot, const uint8_t* data, size_t len) {
+    if (!data) return false;
+    if (!pinLoaded_) init();
+
     // PW1/PW3: smartcard semantics. Pre-decrement is persisted synchronously
     // before the verify so a power-cycle between hash and persist cannot
     // resurrect the counter. Reaching zero is terminal until an admin reset.
@@ -505,7 +520,7 @@ bool PinManager::verifyPin(PinSlot slot, const char* pin) {
     }
 
     uint8_t inputHash[KDF_HASH_SIZE];
-    if (!computeKdfHash(pin, salt, inputHash)) return false;
+    if (!computeKdfHash(data, len, salt, inputHash)) return false;
 
     const uint8_t before = *retries;
     (*retries)--;
@@ -554,11 +569,18 @@ bool PinManager::changeBadgePin(const char* currentPin, const char* newPin) {
  * \param newPin New PIN value.
  * \return `true` if update succeeded.
  */
+void PinManager::setMinPinLengthFloor(uint8_t minLen) {
+    if (minLen > BADGE_PIN_MAX) minLen = BADGE_PIN_MAX;
+    if (minLen < BADGE_PIN_MIN) minLen = BADGE_PIN_MIN;
+    minPinFloor_ = minLen;
+}
+
 bool PinManager::setBadgePin(const char* newPin) {
     if (!newPin) return false;
     size_t len = strlen(newPin);
-    if (len < BADGE_PIN_MIN || len > BADGE_PIN_MAX) {
-        LOG_E(TAG, "Badge PIN must be %d-%d digits", BADGE_PIN_MIN, BADGE_PIN_MAX);
+    uint8_t minLen = minPinFloor_ > BADGE_PIN_MIN ? minPinFloor_ : BADGE_PIN_MIN;
+    if (len < minLen || len > BADGE_PIN_MAX) {
+        LOG_E(TAG, "Badge PIN must be %d-%d digits", minLen, BADGE_PIN_MAX);
         return false;
     }
     for (size_t i = 0; i < len; i++) {
@@ -749,6 +771,20 @@ bool PinManager::setPW1(const char* newPin) {
     return true;
 }
 
+bool PinManager::verifyPW1Raw(const uint8_t* data, size_t len) {
+    return verifyPinRaw(PinSlot::PW1, data, len);
+}
+
+bool PinManager::setPW1Raw(const uint8_t* data, size_t len) {
+    if (!data || (len != 32 && len != 64)) return false;
+    generateSalt(pw1Salt_);
+    if (!computeKdfHash(data, len, pw1Salt_, pw1Hash_)) return false;
+    pw1Retries_ = MAX_RETRIES;
+    saveToStorage();
+    LOG_I(TAG, "PW1 set from KDF reference");
+    return true;
+}
+
 /**
  * \brief Copies stored PW1 hash into caller buffer.
  * \param hashOut Output hash buffer.
@@ -824,6 +860,20 @@ bool PinManager::setPW3(const char* newPin) {
 
     saveToStorage();
     LOG_I(TAG, "PW3 changed");
+    return true;
+}
+
+bool PinManager::verifyPW3Raw(const uint8_t* data, size_t len) {
+    return verifyPinRaw(PinSlot::PW3, data, len);
+}
+
+bool PinManager::setPW3Raw(const uint8_t* data, size_t len) {
+    if (!data || (len != 32 && len != 64)) return false;
+    generateSalt(pw3Salt_);
+    if (!computeKdfHash(data, len, pw3Salt_, pw3Hash_)) return false;
+    pw3Retries_ = MAX_RETRIES;
+    saveToStorage();
+    LOG_I(TAG, "PW3 set from KDF reference");
     return true;
 }
 

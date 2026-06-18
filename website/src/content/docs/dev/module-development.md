@@ -70,13 +70,13 @@ module-specific) and either inherits `start()`/`stop()` unchanged or overrides
 them, calling the base for the state transition while adding its own work
 (`ModuleBase.h:8-18`).
 
-:::note[mod_sao implements IModule directly]
-The worked example `mod_sao` derives from `core::IModule` and tracks `state_`
-itself (`components/mod_sao/include/mod_sao/SaoModule.h:7`,
-`SaoModule.h:23`). Its `start()` reproduces the same
-`INITIALIZED`/`STOPPED` guard as `ModuleBase::start()`
-(`components/mod_sao/src/SaoModule.cpp:43-53`). New modules should prefer
-`ModuleBase` to avoid repeating this; `mod_sao` predates the helper.
+:::note[mod_sao is a ModuleBase subclass]
+The worked example `mod_sao` derives from `core::ModuleBase`
+(`components/mod_sao/include/mod_sao/SaoModule.h`) and passes its name to the
+base constructor. It inherits `getName()`, `getState()` and `stop()`, implements
+`init()` and `getVersion()`, and overrides `start()` to call `ModuleBase::start()`
+for the state transition before bringing up its hardware
+(`components/mod_sao/src/SaoModule.cpp`).
 :::
 
 ## The single registration point
@@ -112,12 +112,14 @@ deferred initializer with the registry (`ModuleRegistry.h:42`,
 (NVS, I18n, TropicStorage), from `runAllInitializers()`
 (`ModuleRegistry.cpp:67-119`).
 
-:::caution[TropicStorage must be up first]
-`runAllInitializers()` hard-fails and aborts module init if `TropicStorage` is
-not `STARTED`, because modules read slot-map metadata during their `init()`
+:::note[Module init runs after TropicStorage]
+Modules read slot-map metadata during their `init()`, so `runAllInitializers()`
+requires `TropicStorage` to be `STARTED` and aborts module init otherwise
 (`ModuleRegistry.cpp:68-76`). The boot sequence brings TropicStorage up in
 `initSystemServices()` before `initModules()` (`main/main.cpp:624`,
-`main/main.cpp:631`).
+`main/main.cpp:631`). This is init ordering, not a security gate: a secure
+element that fails to come up is handled one layer down, where the HAL locks the
+device instead of letting boot continue.
 :::
 
 ## Boot order: init, then start
@@ -278,9 +280,13 @@ idf_component_register(
 (`components/mod_sao/CMakeLists.txt:3-15`)
 
 :::caution[BLE-using modules]
-A module that uses Bluetooth must NOT add `bt` to its `REQUIRES` and must not
-touch NimBLE directly; it uses `IBluetoothController` only. This is a project
-rule enforced by review, verified against the BLE-capable modules in the tree.
+This is the BLE-specific case of the general rule that modules reach hardware
+only through HAL interfaces, never the driver (see
+[Architecture](/dev/architecture/)). BLE is singled out because NimBLE is the
+easiest HAL to bypass and the most damaging to bypass: its GAP event handler
+must be singular, so a second handler causes connection-state conflicts. A
+module that uses Bluetooth must NOT add `bt` to its `REQUIRES` and must not touch
+NimBLE directly; it uses `IBluetoothController` only.
 :::
 
 ## Checklist for a new module

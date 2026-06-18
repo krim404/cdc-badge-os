@@ -85,6 +85,7 @@ extern "C" {
 #define CFG_TUD_CDC_RX_BUFSIZE      CONFIG_TINYUSB_CDC_RX_BUFSIZE
 #define CFG_TUD_CDC_TX_BUFSIZE      CONFIG_TINYUSB_CDC_TX_BUFSIZE
 #define CFG_TUD_MSC_BUFSIZE         CONFIG_TINYUSB_MSC_BUFSIZE
+#define CFG_TUD_MSC_EP_BUFSIZE      4096   // one vfat WL sector per read10/write10 (matches FATFS sector size)
 #define CFG_TUD_HID_BUFSIZE         CONFIG_TINYUSB_HID_BUFSIZE
 
 // ============================================================================
@@ -92,7 +93,7 @@ extern "C" {
 // ============================================================================
 
 #define CFG_TUD_CDC                 1   // CDC enabled for serial console
-#define CFG_TUD_MSC                 0   // MSC not used
+#define CFG_TUD_MSC                 1   // MSC: optional vfat mass-storage (mod_msc), dormant until a LUN is registered
 #define CFG_TUD_HID                 2   // HID instances; must cover MAX_ACTIVE_HID concurrent HID-class interfaces (e.g. FIDO2 + keyboard)
 #define CFG_TUD_MIDI                0   // MIDI not used
 #define CFG_TUD_VENDOR              0   // Vendor not used

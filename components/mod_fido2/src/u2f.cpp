@@ -11,6 +11,9 @@
 #include "cdc_core/Bytes.h"
 #include "cdc_log.h"
 #include <mbedtls/sha256.h>
+#include <mbedtls/x509_crt.h>
+#include <mbedtls/pk.h>
+#include <nvs.h>
 #include <esp_attr.h>
 #include <string.h>
 #include <stdio.h>
@@ -42,6 +45,55 @@ EXT_RAM_BSS_ATTR static uint8_t g_attest_cert[U2F_MAX_ATT_CERT_SIZE];
 static uint16_t g_attest_cert_len = 0;
 static uint8_t g_attest_pubkey[65];  // 0x04 || X || Y
 static bool g_attest_initialized = false;
+
+/** \brief NVS location of an optionally imported (CA-signed) attestation cert. */
+static constexpr const char* ATTEST_NVS_NS   = "attest";
+static constexpr const char* ATTEST_NVS_CERT = "cert";
+
+/**
+ * \brief Checks whether a DER certificate's public key matches the slot-0
+ *        attestation key. `g_attest_pubkey` must already be populated.
+ * \param der DER-encoded X.509 certificate.
+ * \param der_len Certificate length.
+ * \return `true` if the certificate's EC point equals the attestation key.
+ */
+static bool cert_matches_attest_key(const uint8_t* der, size_t der_len) {
+    mbedtls_x509_crt crt;
+    mbedtls_x509_crt_init(&crt);
+    bool ok = false;
+    if (mbedtls_x509_crt_parse_der(&crt, der, der_len) == 0) {
+        uint8_t spki[256];
+        int n = mbedtls_pk_write_pubkey_der(&crt.pk, spki, sizeof(spki));
+        if (n >= 65) {
+            // mbedtls writes the DER at the end of the buffer; the uncompressed
+            // EC point (0x04 || X || Y) is its trailing 65 bytes.
+            ok = memcmp(spki + sizeof(spki) - 65, g_attest_pubkey, 65) == 0;
+        }
+    }
+    mbedtls_x509_crt_free(&crt);
+    return ok;
+}
+
+/**
+ * \brief Loads an imported attestation certificate from NVS when present and
+ *        its public key still matches slot 0.
+ * \param out Output buffer for the DER certificate.
+ * \param out_size Capacity of `out`.
+ * \return Certificate length, or 0 when none is usable.
+ */
+static uint16_t u2f_load_imported_cert(uint8_t* out, size_t out_size) {
+    nvs_handle_t nvs;
+    if (nvs_open(ATTEST_NVS_NS, NVS_READONLY, &nvs) != ESP_OK) return 0;
+    size_t len = out_size;
+    esp_err_t err = nvs_get_blob(nvs, ATTEST_NVS_CERT, out, &len);
+    nvs_close(nvs);
+    if (err != ESP_OK || len == 0 || len > out_size) return 0;
+    if (!cert_matches_attest_key(out, len)) {
+        LOG_W(TAG, "Imported attestation cert does not match slot 0, ignoring");
+        return 0;
+    }
+    return static_cast<uint16_t>(len);
+}
 
 /**
  * \brief Encodes a single big-endian unsigned integer as a DER INTEGER element.
@@ -154,6 +206,17 @@ bool u2f_init_attestation(void) {
     // Store public key (with uncompressed point prefix)
     g_attest_pubkey[0] = EC_POINT_UNCOMPRESSED;
     memcpy(g_attest_pubkey + 1, pubkey, 64);
+
+    // Prefer a CA-signed certificate imported for this device; fall back to the
+    // self-signed certificate built below.
+    uint16_t imported = u2f_load_imported_cert(g_attest_cert, sizeof(g_attest_cert));
+    if (imported > 0) {
+        g_attest_cert_len = imported;
+        g_attest_initialized = true;
+        LOG_I(TAG, "Using imported attestation certificate (%u bytes)",
+              static_cast<unsigned>(imported));
+        return true;
+    }
 
     // Build self-signed X.509 certificate manually (DER encoded)
     // This is a minimal certificate structure for U2F
@@ -345,6 +408,45 @@ bool u2f_get_attestation_cert(const uint8_t **cert, uint16_t *cert_len) {
     *cert = g_attest_cert;
     *cert_len = g_attest_cert_len;
     return true;
+}
+
+bool u2f_get_attestation_pubkey(uint8_t out[65]) {
+    if (!out) return false;
+    if (!u2f_init_attestation()) return false;
+    memcpy(out, g_attest_pubkey, 65);
+    return true;
+}
+
+bool u2f_import_attestation_cert(const uint8_t *der, size_t len) {
+    if (!der || len == 0 || len > U2F_MAX_ATT_CERT_SIZE) return false;
+    // Ensure g_attest_pubkey reflects the live slot-0 key before validating.
+    if (!u2f_init_attestation()) return false;
+    if (!cert_matches_attest_key(der, len)) {
+        LOG_W(TAG, "Rejecting attestation cert: public key mismatch");
+        return false;
+    }
+
+    nvs_handle_t nvs;
+    if (nvs_open(ATTEST_NVS_NS, NVS_READWRITE, &nvs) != ESP_OK) return false;
+    esp_err_t err = nvs_set_blob(nvs, ATTEST_NVS_CERT, der, len);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    if (err != ESP_OK) return false;
+
+    // Reload so subsequent makeCredential responses use the imported cert.
+    g_attest_initialized = false;
+    return u2f_init_attestation();
+}
+
+bool u2f_clear_attestation_cert(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(ATTEST_NVS_NS, NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_erase_key(nvs, ATTEST_NVS_CERT);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    g_attest_initialized = false;
+    return u2f_init_attestation();
 }
 
 /**

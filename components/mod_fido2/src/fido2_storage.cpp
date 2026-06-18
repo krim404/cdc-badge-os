@@ -5,6 +5,7 @@
 
 #include "mod_fido2/fido2_storage.h"
 #include "mod_fido2/fido2_common.h"
+#include "mod_fido2/LargeBlobStore.h"
 #include "cdc_hal/ISecureElement.h"
 #include "cdc_log.h"
 #include "esp_attr.h"
@@ -23,6 +24,9 @@ static const char* TAG = "FIDO2";
 #define FIDO2_RMEM_MAGIC_LEN    4
 #define NVS_NAMESPACE           "fido2"
 #define NVS_KEY_COUNTER         "auth_cnt"
+#define NVS_KEY_LARGEBLOB       "lblob"
+#define NVS_KEY_ALWAYS_UV       "always_uv"
+#define NVS_KEY_MIN_PIN         "min_pin"
 
 #ifdef __DOXYGEN__
 namespace cdc::mod_fido2 {
@@ -412,6 +416,109 @@ bool fido2_storage_counter_increment(void) {
  */
 bool fido2_storage_counter_flush(void) {
     return true;
+}
+
+/** \brief authenticatorLargeBlobs and authenticatorConfig persistence (NVS). */
+
+uint16_t fido2_storage_largeblob_length(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return cdc::mod_fido2::kLargeBlobEmptyLen;
+    }
+    size_t sz = 0;
+    esp_err_t err = nvs_get_blob(nvs, NVS_KEY_LARGEBLOB, nullptr, &sz);
+    nvs_close(nvs);
+    if (err != ESP_OK || sz == 0) {
+        return cdc::mod_fido2::kLargeBlobEmptyLen;
+    }
+    return static_cast<uint16_t>(sz);
+}
+
+bool fido2_storage_largeblob_get(uint8_t* out, uint16_t max_len, uint16_t* out_len) {
+    if (!out || !out_len) return false;
+
+    bool fall_back_to_empty = false;
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        fall_back_to_empty = true;
+    } else {
+        size_t sz = max_len;
+        esp_err_t err = nvs_get_blob(nvs, NVS_KEY_LARGEBLOB, out, &sz);
+        nvs_close(nvs);
+        if (err == ESP_OK) {
+            *out_len = static_cast<uint16_t>(sz);
+            return true;
+        }
+        if (err != ESP_ERR_NVS_NOT_FOUND) {
+            LOG_W(TAG, "largeblob read failed: %s", esp_err_to_name(err));
+            return false;
+        }
+        fall_back_to_empty = true;
+    }
+
+    if (fall_back_to_empty) {
+        if (max_len < cdc::mod_fido2::kLargeBlobEmptyLen) return false;
+        memcpy(out, cdc::mod_fido2::kLargeBlobEmpty, cdc::mod_fido2::kLargeBlobEmptyLen);
+        *out_len = cdc::mod_fido2::kLargeBlobEmptyLen;
+        return true;
+    }
+    return false;
+}
+
+bool fido2_storage_largeblob_set(const uint8_t* data, uint16_t len) {
+    if (!data || len == 0 || len > cdc::mod_fido2::kLargeBlobMaxArray) return false;
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return false;
+    esp_err_t err = nvs_set_blob(nvs, NVS_KEY_LARGEBLOB, data, len);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    return err == ESP_OK;
+}
+
+bool fido2_storage_get_always_uv(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return false;
+    uint8_t v = 0;
+    esp_err_t err = nvs_get_u8(nvs, NVS_KEY_ALWAYS_UV, &v);
+    nvs_close(nvs);
+    return err == ESP_OK && v != 0;
+}
+
+bool fido2_storage_set_always_uv(bool enabled) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return false;
+    esp_err_t err = nvs_set_u8(nvs, NVS_KEY_ALWAYS_UV, enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    return err == ESP_OK;
+}
+
+uint8_t fido2_storage_get_min_pin_len(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return 0;
+    uint8_t v = 0;
+    esp_err_t err = nvs_get_u8(nvs, NVS_KEY_MIN_PIN, &v);
+    nvs_close(nvs);
+    return (err == ESP_OK) ? v : 0;
+}
+
+bool fido2_storage_set_min_pin_len(uint8_t min_len) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return false;
+    esp_err_t err = nvs_set_u8(nvs, NVS_KEY_MIN_PIN, min_len);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    return err == ESP_OK;
+}
+
+void fido2_storage_config_reset(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return;
+    nvs_erase_key(nvs, NVS_KEY_LARGEBLOB);
+    nvs_erase_key(nvs, NVS_KEY_ALWAYS_UV);
+    nvs_erase_key(nvs, NVS_KEY_MIN_PIN);
+    nvs_commit(nvs);
+    nvs_close(nvs);
 }
 
 /** \brief Initialization and cache rebuild routines. */

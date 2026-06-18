@@ -10,6 +10,10 @@ CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 
 # Flash configuration
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# FATFS volume label support (f_getlabel/f_setlabel) so the vfat volume can be
+# named CDCBADGE instead of the fatfsgen default.
+CONFIG_FATFS_USE_LABEL=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 CONFIG_ESPTOOLPY_FLASHSIZE_DETECT=n
 

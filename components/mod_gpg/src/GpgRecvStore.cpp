@@ -140,6 +140,7 @@ bool GpgRecvStore::deleteKey(uint8_t index) {
 
 bool GpgRecvStore::setSignature(uint8_t index,
                                 const uint8_t* sig, uint8_t sig_len,
+                                uint32_t sig_created_at,
                                 uint8_t flags)
 {
     if (!sig || sig_len == 0 || sig_len > sizeof(gpg_recv_key_t::my_signature)) {
@@ -155,6 +156,7 @@ bool GpgRecvStore::setSignature(uint8_t index,
     std::memset(key.my_signature, 0, sizeof(key.my_signature));
     std::memcpy(key.my_signature, sig, sig_len);
     key.sig_len = sig_len;
+    key.sig_created_at = sig_created_at;
     key.flags = flags;
 
     return writeByName(name, key);

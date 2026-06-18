@@ -46,7 +46,7 @@ logical channels > 0 are rejected with `0x6E00`.
 | `0xA4` | SELECT | By AID; always allowed, even when terminated |
 | `0xCA` | GET DATA | Data objects (see below) |
 | `0xDA` | PUT DATA | Requires PW3 |
-| `0xDB` | PUT DATA (odd) | Key import - DEC only |
+| `0xDB` | PUT DATA (odd) | Key import (SIG / DEC / AUT, ECC or RSA) |
 | `0x20` | VERIFY | PW1 / PW3 |
 | `0x24` | CHANGE REFERENCE DATA | PIN change |
 | `0x2C` | RESET RETRY COUNTER | Unblock PW1 |
@@ -58,6 +58,9 @@ logical channels > 0 are rejected with `0x6E00`.
 | `0xC0` | GET RESPONSE | Drain a chained response |
 | `0xE6` | TERMINATE DF | Enter terminated state |
 | `0x44` | ACTIVATE FILE | Factory reset when terminated |
+| `0xF1` | GET VERSION | Firmware version string (vendor command) |
+
+`PSO:ENCIPHER` (`2A 86 80`) is not implemented; GnuPG does not use it.
 
 Command chaining (CLA bit `0x10`) is accumulated into a single synthetic APDU;
 long responses are returned via response chaining (`61xx` + GET RESPONSE).
@@ -67,23 +70,34 @@ long responses are returned via response chaining (`61xx` + GET RESPONSE).
 The three OpenPGP key roles map to fixed storage. GPG uses TROPIC01 ECC slots
 **1-3** and R-Memory slots **1-3** (see `main/tropic_slot_map.h`).
 
-| Role | Key ref | Curve(s) | Storage |
+| Role | Key ref | Algorithm | Storage |
 | --- | --- | --- | --- |
-| Signature | `0xB6` | Ed25519 (default) / P-256 | TROPIC01 ECC slot |
-| Decryption | `0xB8` | P-256 (fixed) | Software key, encrypted in R-Memory |
-| Authentication | `0xA4` | Ed25519 (default) / P-256 | TROPIC01 ECC slot |
+| Signature | `0xB6` | Ed25519 (default) / P-256 ECDSA / RSA | ECC: TROPIC01 ECC slot; RSA: encrypted R-Memory |
+| Decryption | `0xB8` | P-256 ECDH (default) / RSA | Software key, encrypted in R-Memory |
+| Authentication | `0xA4` | Ed25519 (default) / P-256 ECDSA / RSA | ECC: TROPIC01 ECC slot; RSA: encrypted R-Memory |
 
-RSA is not supported. Algorithm attributes advertise EdDSA (`0x16`, OID
-1.3.6.1.4.1.11591.15.1), ECDSA (`0x13`, OID 1.2.840.10045.3.1.7) and ECDH
-(`0x12`, P-256 OID). The signature and authentication curves default to Ed25519
-and can be changed to P-256 via `PUT DATA C1` / `C3`; doing so wipes the existing
-key in that slot so the next generation matches the new attributes.
+ECC is the default and preferred path. Algorithm attributes advertise EdDSA
+(`0x16`, OID 1.3.6.1.4.1.11591.15.1), ECDSA (`0x13`, OID 1.2.840.10045.3.1.7) and
+ECDH (`0x12`, P-256 OID). The signature and authentication curves default to
+Ed25519 and can be changed to P-256 via `PUT DATA C1` / `C3`; doing so wipes the
+existing key in that role.
 
-The decryption role is fixed to **P-256 ECDH**. The TROPIC01 has no ECDH
+The decryption role's ECC option is **P-256 ECDH**. The TROPIC01 has no ECDH
 primitive, so the DEC private key is generated in software, stored encrypted in
-R-Memory (AES-256-GCM, wrapping key derived via HKDF over chip id and PIN hash,
-with AAD binding the record to its slot), and decrypted into RAM only for the
-duration of one ECDH computation, then zeroized.
+R-Memory (AES-256-GCM, wrapping key derived via HKDF over chip id, with AAD
+binding the record to its slot), and decrypted into RAM only for the duration of
+one ECDH computation, then zeroized.
+
+### RSA (software fallback)
+
+Each role can be switched to RSA (2048 / 3072 / 4096) with `PUT DATA C1` / `C2` /
+`C3`. RSA is a software fallback: it is slower and weaker than the secure-element
+ECC path because the TROPIC01 cannot perform RSA, so the private key lives as an
+AES-256-GCM-encrypted blob in the dedicated `mod_gpg_rsa` R-Memory pool (two slots
+per role, since an RSA-4096 blob spans two) and is loaded into RAM for each
+operation. Only the two primes and the public exponent are stored; mbedTLS
+reconstructs the remaining CRT parameters on load. Switching a role to RSA wipes
+its previous key.
 
 ### Key generation
 
@@ -91,12 +105,15 @@ duration of one ECDH computation, then zeroized.
 
 - `P1 = 0x80` generates a new key for the role in the CRT (`B6` / `B8` / `A4`)
   and requires PW3. SIG / AUT use the configured curve; DEC is generated in
-  software as P-256.
+  software as P-256. For an RSA role the key is generated in software via mbedTLS;
+  on-card RSA generation is slow (seconds for 2048, up to minutes for 4096), so
+  importing a host-generated key is the faster path.
 - `P1 = 0x81` reads the existing public key. An empty slot returns `0x6A88`
   (referenced data not found), which `gpg --card-status` treats as "no key yet".
 
-The public key is returned as `7F49 { 86 <pubkey> }`: P-256 as `0x04 || X || Y`
-(65 bytes), Ed25519 as 32 raw bytes.
+For ECC the public key is returned as `7F49 { 86 <pubkey> }`: P-256 as
+`0x04 || X || Y` (65 bytes), Ed25519 as 32 raw bytes. For RSA it is returned as
+`7F49 { 81 <modulus> 82 <exponent> }`.
 
 The on-device wizard uses a separate path (`gpg_generate_key`) that creates all
 three keys at once and records their fingerprints; it does not go through this
@@ -104,10 +121,12 @@ APDU.
 
 ### Key import
 
-`PUT DATA (odd, 0xDB)` accepts an OpenPGP Extended Header List for key import,
-but **only the decryption key** (CRT `B8`) is supported - it is the one role the
-secure element cannot hold natively. There is no import path for the signature or
-authentication keys.
+`PUT DATA (odd, 0xDB)` accepts an OpenPGP Extended Header List (`4D` → CRT →
+`7F48` template → `5F48` values) for key import into any role. ECC keys: the
+32-byte private scalar is injected into the TROPIC01 ECC slot (SIG / AUT) or the
+software ECDH store (DEC). RSA keys: the modulus primes and public exponent
+(`e` / `p` / `q`, located via the `7F48` template) are stored as an encrypted blob
+in the RSA R-Memory pool.
 
 ## Cryptographic operations
 
@@ -115,8 +134,9 @@ authentication keys.
 
 Requires PW1. For P-256 the input must be a 32-byte SHA-256 digest, signed as
 ECDSA; for Ed25519 the data is signed as EdDSA. The output is 64 bytes
-(`R || S`). Each successful signature increments the persisted digital-signature
-counter.
+(`R || S`). For an RSA signature role the input is the host-supplied DigestInfo,
+padded with EMSA-PKCS1-v1.5 and signed; the output is the modulus-sized block.
+Each successful signature increments the persisted digital-signature counter.
 
 ### PSO: DECIPHER (`2A 80 86`)
 
@@ -124,6 +144,8 @@ Requires PW1. The first data byte is the padding indicator:
 
 - `0x02` selects symmetric **AES** decryption against the stored AES key
   (DO `0xD5`), AES-CFB128 over `IV || ciphertext`.
+- `0x00` (RSA decryption role) is followed by the cryptogram; the card performs
+  RSAES-PKCS1-v1.5 decryption and returns the recovered plaintext.
 - Otherwise the data is parsed as a Cipher DO (`A6 / 7F49 / 86`) carrying the
   peer's 65-byte P-256 point, and the card returns the 32-byte ECDH shared
   secret.
@@ -131,8 +153,9 @@ Requires PW1. The first data byte is the padding indicator:
 ### INTERNAL AUTHENTICATE (`0x88`)
 
 Requires PW1 and `P1=P2=0x00`. Signs the supplied challenge with the
-authentication key (ECDSA or EdDSA depending on the AUT curve). This is the
-operation `gpg-agent` uses for SSH client authentication.
+authentication key (ECDSA / EdDSA depending on the AUT curve, or RSA
+PKCS#1-v1.5 for an RSA AUT key). This is the operation `gpg-agent` uses for SSH
+client authentication.
 
 ### MANAGE SECURITY ENVIRONMENT (`0x22`)
 
@@ -159,6 +182,21 @@ PIN behaviour follows smartcard semantics:
 - PINs are stored as iterated-salted SHA-256 (OpenPGP S2K) in the
   secure-element-backed PIN store. The iteration count is read from that store at
   verification time; the firmware default is 100000.
+
+#### KDF Data Object (`0xF9`)
+
+The KDF DO lets the host pre-hash PINs with PBKDF2 (SHA-256 or SHA-512) so the
+cleartext PIN never crosses the USB / PC-SC link. `GET DATA 0xF9` returns the
+stored configuration (or the disabled body `81 01 00`); `PUT DATA 0xF9` (PW3)
+enables or disables it. When enabled, `VERIFY`, `CHANGE REFERENCE DATA` and the
+admin `RESET RETRY COUNTER` carry the PBKDF2 pre-hash instead of the PIN, and the
+PW1 / PW3 references are taken from the DO's initial-hash fields at setup. Enabling
+or disabling KDF resets PW1 / PW3 (disabling restores the cleartext defaults).
+
+Enabling is compatible with GnuPG's `kdf-setup`: a 32- or 64-byte PIN field is
+treated as a pre-hash on `VERIFY`, `CHANGE REFERENCE DATA` and `RESET RETRY
+COUNTER`, so the host can change PW1 / PW3 to their pre-hash form (cleartext old
+PIN, pre-hash new value) before `PUT DATA 0xF9` turns the mode on.
 
 ### Unblocking and reset
 
@@ -195,10 +233,14 @@ GET DATA returns the standard OpenPGP DOs. Selected highlights:
 | `0xCE`-`0xD0` | Generation times | 4-byte big-endian, per role |
 | `0x93` | Digital signature counter | 3 bytes |
 | `0x5F50` | URL | Public-key retrieval URL |
+| `0xF9` | KDF | PBKDF2 PIN pre-hash configuration (disabled by default) |
+| `0x7F21` | Cardholder Certificate | Up to 2048 bytes, stored in NVS |
 
 PUT DATA (requires PW3) covers cardholder name / language / URL / login,
 the fingerprint and generation-time DOs, CA fingerprints, the algorithm
-attributes (curve switch), the Resetting Code and the AES key.
+attributes (curve or RSA switch), the Resetting Code, the AES key, the KDF DO and
+the cardholder certificate. `GET DATA 0x7F21` returns the stored certificate using
+response chaining; an absent certificate returns `0x6A88`.
 
 Persistent card state (fingerprints, generation times, cardholder data, selected
 curves, signature counter, PINs' Resetting-Code material) lives in a single NVS
@@ -206,19 +248,17 @@ blob that is signed with the slot-0 P-256 ECDSA attestation key; an invalid
 signature causes the card to re-initialise to defaults rather than trust tampered
 state.
 
-## Gaps and unimplemented features
+## Caveats
 
-- **KDF Data Object (`0xF9`)**: GET DATA returns an empty object, signalling
-  "no KDF configured", and there is no PUT DATA handler for it. A KDF-DO byte
-  codec (`kdf.h`) exists in the tree but is not wired into the card processing,
-  so host-managed PBKDF2 PIN pre-hashing is **not** supported. (The internal PIN
-  hashing described above is unrelated to the host-facing KDF DO.) **GAP.**
-- **Cardholder Certificate (`0x7F21`)**: GET DATA returns `0x6A88`; the
-  certificate is not stored. **GAP.**
-- **RSA**: not supported; algorithm-attribute validation rejects RSA. **GAP.**
-- **Key import for SIG / AUT**: no path exists; only the DEC key can be
-  imported. **GAP.**
-- **DEC private key in RAM**: the decryption key is necessarily decrypted into
-  RAM for each ECDH operation (the secure element cannot perform ECDH), unlike
-  the SIG / AUT keys which never leave the element. It is re-encrypted at rest
-  and zeroized after use. **CAVEAT.**
+- **Software keys live in RAM during use.** The decryption key is decrypted into
+  RAM for each ECDH operation (the secure element cannot perform ECDH), re-encrypted
+  at rest and zeroized after use. The same applies to any role configured for RSA,
+  whose private key is a software blob. ECDSA / EdDSA SIG and AUT keys never leave
+  the secure element.
+- **RSA is a software fallback.** It is slower and weaker than the secure-element
+  ECC path and is offered only when a host explicitly selects it; ECC (Ed25519 /
+  P-256) is the default and preferred choice.
+- **Resetting Code is cleartext-only.** The optional Resetting Code unblock path
+  uses the cleartext S2K hash and is not KDF-aware; under an active KDF DO, use the
+  admin `RESET RETRY COUNTER` (`P1=0x02`) to unblock PW1.
+- **`PSO:ENCIPHER` is not implemented**, matching GnuPG, which never issues it.

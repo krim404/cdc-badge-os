@@ -60,7 +60,8 @@ def select_python() -> str:
     return sys.executable
 
 
-def build_image(lang_dir: Path, output: Path, partition_size: int) -> None:
+def build_image(lang_dir: Path, output: Path, partition_size: int,
+                assets_dir: Path | None = None) -> None:
     lang_files = sorted(lang_dir.glob("lang_*.json")) if lang_dir.is_dir() else []
     if not lang_files:
         raise FileNotFoundError(f"no lang_<code>.json files in: {lang_dir}")
@@ -69,11 +70,24 @@ def build_image(lang_dir: Path, output: Path, partition_size: int) -> None:
     fatfsgen = find_wl_fatfsgen()
 
     with tempfile.TemporaryDirectory() as staging:
-        i18n_dir = Path(staging) / "i18n"
-        i18n_dir.mkdir()
+        # System files live in a "system" folder so the partition root is a safe
+        # user area: i18n overlays go to system/i18n; plugins land in system/
+        # at runtime. The user-facing file explorer hides the system folder.
+        i18n_dir = Path(staging) / "system" / "i18n"
+        i18n_dir.mkdir(parents=True)
         for f in lang_files:
             shutil.copy(f, i18n_dir / f.name)
-        print(f"Seeding i18n with: {', '.join(f.name for f in lang_files)}")
+        print(f"Seeding system/i18n with: {', '.join(f.name for f in lang_files)}")
+
+        # Demo files for the user area (partition root).
+        bundled = []
+        if assets_dir and assets_dir.is_dir():
+            for f in sorted(assets_dir.iterdir()):
+                if f.is_file() and not f.name.startswith("."):
+                    shutil.copy(f, Path(staging) / f.name)
+                    bundled.append(f.name)
+        if bundled:
+            print(f"Bundling user files: {', '.join(bundled)}")
 
         cmd = [
             select_python(),
@@ -104,10 +118,14 @@ def main() -> int:
     ap.add_argument("--partition-size", type=lambda x: int(x, 0),
                     default=0x200000,
                     help="Partition size in bytes (default: 0x200000 = 2 MiB)")
+    ap.add_argument("--assets-dir", type=Path,
+                    default=Path("assets/vfat"),
+                    help="Directory of demo files bundled into the user area "
+                         "(partition root) (default: assets/vfat)")
     args = ap.parse_args()
 
     try:
-        build_image(args.lang_dir, args.output, args.partition_size)
+        build_image(args.lang_dir, args.output, args.partition_size, args.assets_dir)
     except (FileNotFoundError, subprocess.CalledProcessError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

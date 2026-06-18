@@ -56,6 +56,10 @@ static bool s_initialized = false;
 static uint16_t s_backlightLevel = BACKLIGHT_DEFAULT;
 static bool s_backlightOn = true;
 
+// Serialises writes to the backlight state (s_backlightOn / s_backlightLevel)
+// and the LEDC duty across the UI, fido2 and ctaphid tasks.
+static SemaphoreHandle_t s_backlightMutex = nullptr;
+
 /** \brief Render-task runtime state. */
 static SemaphoreHandle_t s_renderMutex = nullptr;
 static TaskHandle_t s_renderTask = nullptr;
@@ -269,7 +273,8 @@ bool EpaperDisplay::init() {
     // Create render task
     s_renderMutex = xSemaphoreCreateMutex();
     s_panelMutex = xSemaphoreCreateMutex();
-    if (!s_renderMutex || !s_panelMutex) {
+    s_backlightMutex = xSemaphoreCreateMutex();
+    if (!s_renderMutex || !s_panelMutex || !s_backlightMutex) {
         LOG_E(TAG, "Failed to create render mutex");
         state_ = core::ServiceState::ERROR;
         return false;
@@ -369,6 +374,7 @@ void EpaperDisplay::flushSync(RefreshMode mode) {
  */
 void EpaperDisplay::setBacklight(uint16_t level) {
     if (level > BACKLIGHT_MAX) level = BACKLIGHT_MAX;
+    cdc::core::MutexGuard guard(s_backlightMutex);
     s_backlightLevel = level;
     // Always apply immediately for live preview (e.g., brightness slider)
     // Also turn on backlight if level > 0
@@ -389,6 +395,7 @@ void EpaperDisplay::saveBacklight() {
  * \brief Enables backlight using current configured level.
  */
 void EpaperDisplay::backlightOn() {
+    cdc::core::MutexGuard guard(s_backlightMutex);
     s_backlightOn = true;
     applyBacklight(s_backlightLevel);
     LOG_I(TAG, "Backlight ON (level=%u)", s_backlightLevel);
@@ -398,6 +405,7 @@ void EpaperDisplay::backlightOn() {
  * \brief Disables backlight output.
  */
 void EpaperDisplay::backlightOff() {
+    cdc::core::MutexGuard guard(s_backlightMutex);
     s_backlightOn = false;
     applyBacklight(0);
     LOG_I(TAG, "Backlight OFF");
@@ -579,15 +587,19 @@ void winkBacklight(uint8_t count, uint16_t period_ms) {
     auto* display = getDisplayInstance();
     if (!display) return;
 
-    const bool was_on = display->isBacklightOn();
+    // Pulse the LEDC duty only; never touch the logical state (s_backlightOn),
+    // so a concurrent owner (lock screen / FIDO2 prompt) stays authoritative.
     const TickType_t ticks = pdMS_TO_TICKS(period_ms);
     for (uint8_t i = 0; i < count; ++i) {
-        display->backlightOff();
+        applyBacklight(0);
         vTaskDelay(ticks);
-        display->backlightOn();
+        applyBacklight(s_backlightLevel);
         vTaskDelay(ticks);
     }
-    if (!was_on) display->backlightOff();
+
+    // Re-sync the physical duty to the current logical state.
+    cdc::core::MutexGuard guard(s_backlightMutex);
+    applyBacklight((s_backlightOn && s_backlightLevel > 0) ? s_backlightLevel : 0);
 }
 
 } // namespace cdc::hal

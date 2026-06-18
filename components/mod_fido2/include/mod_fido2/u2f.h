@@ -69,6 +69,35 @@ bool u2f_init_attestation(void);
 bool u2f_get_attestation_cert(const uint8_t **cert, uint16_t *cert_len);
 
 /**
+ * Get the attestation public key (slot 0) as an uncompressed EC point.
+ *
+ * @param out 65-byte output buffer receiving 0x04 || X || Y.
+ * @return true on success.
+ */
+bool u2f_get_attestation_pubkey(uint8_t out[65]);
+
+/**
+ * Import a CA-signed attestation certificate (DER).
+ *
+ * The certificate's public key must match the attestation key in slot 0.
+ * On success the DER is persisted and used in place of the self-signed
+ * certificate for future makeCredential responses.
+ *
+ * @param der DER-encoded X.509 certificate.
+ * @param len Certificate length.
+ * @return true if the certificate was validated and stored.
+ */
+bool u2f_import_attestation_cert(const uint8_t *der, size_t len);
+
+/**
+ * Remove an imported attestation certificate, reverting to the self-signed
+ * certificate generated on-device.
+ *
+ * @return true on success.
+ */
+bool u2f_clear_attestation_cert(void);
+
+/**
  * Sign data with attestation key (slot 30).
  * Must call u2f_init_attestation() first.
  *

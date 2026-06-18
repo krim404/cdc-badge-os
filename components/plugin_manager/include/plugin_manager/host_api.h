@@ -710,6 +710,18 @@ int host_fs_list  (char* out, size_t* out_len);
  */
 int host_fs_view  (const char* name);
 
+/**
+ * \brief Decode and show one of the plugin's own image files (PNG/JPEG) on the
+ *        e-paper, dithered and scaled to fit. \return HOST_OK or a HOST_ERR_* code.
+ */
+int host_fs_view_image  (const char* name);
+
+/**
+ * \brief Render and show one of the plugin's own Markdown files in the
+ *        scrollable text viewer. \return HOST_OK or a HOST_ERR_* code.
+ */
+int host_fs_view_markdown  (const char* name);
+
 /** \} */
 
 /**
@@ -791,6 +803,30 @@ int host_ui_push_confirm    (const char* text, uint8_t icon, uint32_t action_id)
 
 /// \brief Show a scrollable info screen with title and body.
 int host_ui_push_info       (const char* title, const char* body);
+
+/**
+ * \brief Decode and show an image (PNG/JPEG) from an in-memory buffer, dithered.
+ *        No capability required; the buffer is bounds-checked.
+ * \param data Encoded image bytes.
+ * \param len Byte length (rejected above 512 KB).
+ */
+int host_ui_view_image      (const uint8_t* data, uint32_t len);
+
+/**
+ * \brief Render and show Markdown from an in-memory (UTF-8) buffer.
+ *        No capability required; the buffer is bounds-checked.
+ * \param data Markdown bytes.
+ * \param len Byte length (truncated at ~64 KB).
+ */
+int host_ui_view_markdown   (const uint8_t* data, uint32_t len);
+
+/**
+ * \brief Open a URL in the badge browser (enters the browser and loads it).
+ *        No capability required. \return HOST_OK, HOST_ERR_INVALID_ARG, or
+ *        HOST_ERR_NOT_SUPPORTED when the browser module is not present.
+ * \param url Target URL (UTF-8, NUL-terminated).
+ */
+int host_browser_open       (const char* url);
 
 /**
  * \brief Show a context menu.
@@ -1354,6 +1390,17 @@ int host_cmd_consume (char* out, size_t out_size);
 #define HOST_MSG_MIME_MAX 64
 
 /**
+ * \brief Send flag: remember the verified pairing for this runtime session.
+ *
+ * The first send still shows the numeric-comparison (and the peer's consent)
+ * prompt once; afterwards follow-up sends to the same peer reconnect silently
+ * with no prompt on either side. The trust is held in RAM only: it is dropped
+ * on reboot and at clean teardown. Use for repeated traffic to the same peer
+ * (e.g. a messenger); omit for one-shot sends.
+ */
+#define HOST_MSG_FLAG_PERSIST 0x01
+
+/**
  * \brief Register that this plugin handles an incoming MIME type.
  *
  * Adds `mime_type` to the firmware MessageTransfer registry so an OFFER of that
@@ -1396,10 +1443,12 @@ int host_msg_consume(uint8_t* buf, size_t buf_size, char* mime_out, size_t mime_
  * \param mime_type NUL-terminated ASCII MIME type, max HOST_MSG_MIME_MAX-1 bytes.
  * \param data Payload bytes, at most HOST_MSG_PAYLOAD_MAX.
  * \param len Number of payload bytes.
+ * \param flags Bitwise OR of HOST_MSG_FLAG_* (0 for the default behaviour).
  * \return HOST_OK once the picker is shown, HOST_ERR_INVALID_ARG,
  *         HOST_ERR_NO_CAPABILITY, HOST_ERR_BUSY.
  */
-int host_msg_send_interactive(const char* mime_type, const uint8_t* data, size_t len);
+int host_msg_send_interactive(const char* mime_type, const uint8_t* data, size_t len,
+                              uint32_t flags);
 
 /**
  * \brief Send a typed payload directly to a known peer address (no picker).
@@ -1411,10 +1460,11 @@ int host_msg_send_interactive(const char* mime_type, const uint8_t* data, size_t
  * \param mime_type NUL-terminated ASCII MIME type.
  * \param data Payload bytes, at most HOST_MSG_PAYLOAD_MAX.
  * \param len Number of payload bytes.
+ * \param flags Bitwise OR of HOST_MSG_FLAG_* (0 for the default behaviour).
  * \return HOST_OK, HOST_ERR_INVALID_ARG, HOST_ERR_NO_CAPABILITY, HOST_ERR_BUSY.
  */
 int host_msg_send(const uint8_t addr[6], uint8_t addr_type, const char* mime_type,
-                  const uint8_t* data, size_t len);
+                  const uint8_t* data, size_t len, uint32_t flags);
 
 /** \} */
 

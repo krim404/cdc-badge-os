@@ -13,6 +13,9 @@
 #include "cdc_hal/IDisplay.h"
 #include "cdc_views/ToastView.h"
 #include "cdc_views/InfoView.h"
+#include "cdc_views/ImageView.h"
+#include "cdc_views/MarkdownView.h"
+#include "cdc_views/HtmlViewerHook.h"
 #include "cdc_ui/ViewStack.h"
 #include "host_str_conv.h"
 
@@ -60,6 +63,31 @@ int host_ui_push_info(const char* title, const char* body)
     auto* info = new cdc::ui::InfoView();
     info->init(cpTitle.c_str(), cpBody.c_str());
     cdc::ui::ViewStack::instance().push(info);
+    return HOST_OK;
+}
+
+int host_ui_view_image(const uint8_t* data, uint32_t len)
+{
+    if (!data || len == 0) return HOST_ERR_INVALID_ARG;
+    cdc::ui::showImage(nullptr, data, len);
+    return HOST_OK;
+}
+
+int host_ui_view_markdown(const uint8_t* data, uint32_t len)
+{
+    if (!data || len == 0) return HOST_ERR_INVALID_ARG;
+    std::string src(reinterpret_cast<const char*>(data), len);
+    std::string body = cdc::plugin_manager::toDisplay(src.c_str());
+    cdc::ui::showMarkdown(nullptr, body.c_str(), body.size());
+    return HOST_OK;
+}
+
+int host_browser_open(const char* url)
+{
+    if (!url || !url[0]) return HOST_ERR_INVALID_ARG;
+    cdc::ui::UrlOpenerFn opener = cdc::ui::urlOpener();
+    if (!opener) return HOST_ERR_NOT_SUPPORTED;  // browser module not present
+    opener(url);  // URL stays raw UTF-8 (not display-converted)
     return HOST_OK;
 }
 

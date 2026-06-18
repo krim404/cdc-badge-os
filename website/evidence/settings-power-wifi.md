@@ -16,7 +16,7 @@ Each row backs one claim in `guide/settings.md`, `guide/power-sleep.md`, or
 | Slider keys: 4 decrease, 6 increase, Y save, N cancel | components/cdc_views/include/cdc_views/SliderView.h:13-19 | VERIFIED |
 | Language is a ListView picker | components/cdc_os_ui/src/AppUi.cpp:606-609, 931-932 | VERIFIED |
 | Language list = English (in-code) + one entry per lang_<code>.json overlay | components/cdc_os_ui/src/AppUi.cpp:641-669 (rebuildLanguageMenu); 655-658 | VERIFIED |
-| Overlay languages discovered by scanning /plugins/i18n for lang_*.json | components/cdc_ui/src/I18n.cpp:384-436 (scanAvailableLanguages); OVERLAY_DIR | VERIFIED |
+| Overlay languages discovered by scanning /vfat/system/i18n for lang_*.json | components/cdc_ui/src/I18n.cpp (scanAvailableLanguages); OVERLAY_DIR | VERIFIED |
 | Each overlay labelled by its own core.lang_name endonym; falls back to code | components/cdc_ui/src/I18n.cpp:407, 419-422, 554-564 | VERIFIED |
 | English entry's name from in-code core.lang_name = "English" | components/cdc_ui/src/I18n.cpp:556-558; I18n.cpp:100 (core.lang_name "English") | VERIFIED |
 | Selecting a language applies it and persists (NVS) | components/cdc_os_ui/src/AppUi.cpp:676-683; I18n.cpp:566-579 (NVS langc) | VERIFIED |

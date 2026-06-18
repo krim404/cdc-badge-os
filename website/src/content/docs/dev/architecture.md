@@ -51,8 +51,15 @@ It also drives bulk lifecycle: `initAll()`, `startAll()`, and `stopAll()` (the l
 
 `PinManager` (`cdc_core/PinManager.h`) manages every device PIN in TROPIC01 R-Memory slot 0, with the payload covered by a slot-0 attestation signature so tampering forces a reset to defaults. It distinguishes a Badge/FIDO2 PIN (RAM-only retry counter with a recovery timer, so a crash mid-verify cannot brick the badge) from OpenPGP PW1/PW3, which use smartcard semantics where reaching zero retries is terminal until an admin reset.
 
-:::caution[Slot byte size unverified]
-The secure-element interface documents R-Memory as 512 slots; the exact byte size per slot is not asserted here because two in-tree sources disagree on it. Treat `main/tropic_slot_map.h` as authoritative for the slot layout.
+:::note[R-Memory slot byte size is firmware-dependent]
+The secure element exposes 512 R-Memory slots. The usable payload bytes per slot
+depend on the TROPIC01 application firmware: 444 bytes are guaranteed on every
+supported version (`RMEM_SLOT_SIZE`), while firmware 2.0 and newer report 475
+(`RMEM_SLOT_SIZE_MAX`); both constants live in `cdc_hal/ISecureElement.h`. The
+driver reads the size the chip reports at runtime and clamps it into that range
+(`Tropic01Element.cpp`). Static slot layouts use the 444-byte floor so they stay
+valid if the chip is reflashed with older firmware. Treat `main/tropic_slot_map.h`
+as authoritative for the slot layout.
 :::
 
 ## Hardware abstraction: `cdc_hal`
@@ -77,7 +84,7 @@ The secure-element interface documents R-Memory as 512 slots; the exact byte siz
 
 - `IView` (`cdc_ui/IView.h`): the base for all screens. Each view has lifecycle hooks (`onEnter`, `onExit`, `onResume`, `onPause`) and returns an `InputResult` (`CONSUMED`, `IGNORED`, `REQUEST_POP`, `REQUEST_PUSH`) from input handling.
 - `ViewStack` (`cdc_ui/ViewStack.h`): a singleton navigation stack (`MAX_DEPTH = 20`) supporting `push`, `pop`, `replace`, and modal overlays.
-- `I18n` (`cdc_ui/I18n.h`): internationalization. English fallbacks are registered in code as `I18nEntry` tables (in rodata, always available); other languages live as flat `/plugins/i18n/lang_<code>.json` files parsed into a PSRAM-backed table at runtime. Lookup falls back to English, then to `?<key>` if even English is missing.
+- `I18n` (`cdc_ui/I18n.h`): internationalization. English fallbacks are registered in code as `I18nEntry` tables (in rodata, always available); other languages live as flat `/vfat/system/i18n/lang_<code>.json` files parsed into a PSRAM-backed table at runtime. Lookup falls back to English, then to `?<key>` if even English is missing.
 
 ## Reusable views: `cdc_views`
 
@@ -98,7 +105,7 @@ The secure-element interface documents R-Memory as 512 slots; the exact byte siz
 
 ## Plugins: `plugin_manager`
 
-`plugin_manager` discovers, loads, runs, and unloads sandboxed WASM plugins on top of the `wamr_runtime` component. At most one foreground plugin runs at a time; a plugin can declare `background` (keeps running and ticking after the user leaves its view) or `autoload` (loaded into the background at boot). Plugins are stored on the `plugins` FAT partition, mounted at `/plugins`. The host API they call is documented in [Host API](/api/).
+`plugin_manager` discovers, loads, runs, and unloads sandboxed WASM plugins on top of the `wamr_runtime` component. At most one foreground plugin runs at a time; a plugin can declare `background` (keeps running and ticking after the user leaves its view) or `autoload` (loaded into the background at boot). Plugins are stored on the `plugins` FAT partition, mounted at `/vfat`, under the `system/` subfolder (`/vfat/system/<id>.wasm`). The host API they call is documented in [Host API](/api/).
 
 ## Module isolation and the IModule lifecycle
 

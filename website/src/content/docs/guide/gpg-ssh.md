@@ -43,18 +43,25 @@ which requires the User PIN.
 
 ## Curves and algorithms
 
-The badge implements elliptic-curve keys only. RSA is not supported.
+Elliptic-curve keys are the default and preferred choice. RSA is available as a
+software fallback that is slower and weaker (see below).
 
 | Role | Curve(s) | Algorithm |
 | --- | --- | --- |
-| Signature | Ed25519 (default) or NIST P-256 | EdDSA / ECDSA |
-| Authentication | Ed25519 (default) or NIST P-256 | EdDSA / ECDSA |
-| Decryption | NIST P-256 (fixed) | ECDH |
+| Signature | Ed25519 (default) or NIST P-256 | EdDSA / ECDSA / RSA |
+| Authentication | Ed25519 (default) or NIST P-256 | EdDSA / ECDSA / RSA |
+| Decryption | NIST P-256 (default) | ECDH / RSA |
 
 The signature and authentication roles default to **Ed25519** and can be set to
-**P-256**. The decryption role is always **P-256 ECDH**, because the secure
+**P-256**. The decryption role's ECC option is **P-256 ECDH**, because the secure
 element has no native ECDH primitive and the firmware performs that one operation
 in software with a separately protected key.
+
+Any role can be switched to **RSA** (2048 / 3072 / 4096) from the host with
+`gpg --card-edit` → `key-attr`. RSA keys are software keys: the secure element
+cannot perform RSA, so the private key is held as an encrypted blob and used in
+RAM. RSA is therefore slower and less protected than the secure-element ECC keys;
+prefer Ed25519 or P-256 unless a peer specifically requires RSA.
 
 Public-key fingerprints follow the OpenPGP v4 format (SHA-1, 20 bytes).
 
@@ -102,7 +109,9 @@ The OpenPGP card uses two PINs, matching standard smartcard semantics:
 | Admin PIN | PW3 | Key generation, card data changes, PIN reset | 8 | `12345678` |
 
 Change either PIN from **GPG ▸ Settings**, choosing **User PIN** or **Admin
-PIN**. PINs can also be changed from the host with `gpg --change-pin`.
+PIN**. Each entry shows its remaining attempts in parentheses, for example
+**User PIN (3)**, or **[Locked]** once the counter has reached zero. PINs can
+also be changed from the host with `gpg --change-pin`.
 
 :::caution
 Change the default PINs before relying on the card. The defaults are public.
@@ -129,20 +138,29 @@ over serial with the two-step `GPG RESET` command.
 ## Badge-to-badge cross-signing
 
 Two badges can exchange and cross-sign each other's keys directly, without a
-computer. One badge sends its public key to another over Bluetooth; the
-receiving badge stores it under **GPG ▸ Received Keys**, where you can:
+computer. Open **GPG ▸ Send Key** to push your public key to a nearby badge over
+the Bluetooth [message-transfer framework](/guide/bluetooth/) (the same beacon,
+peer picker and numeric-comparison pairing as the vCard exchange). The receiving
+badge stores it under **GPG ▸ Received Keys**, where each entry offers:
 
 - **Cross-Sign** the key (the badge produces an RFC 4880 certification signature
-  with its own signature key), and
+  with its own signature key),
 - **Export** the resulting signed key as an ASCII-armored OpenPGP block that you
-  later `gpg --import` on a computer.
+  later `gpg --import` on a computer,
+- **Send Signature** to push the certification back to the key's owner over
+  Bluetooth,
+- **Forward** the key on to another nearby badge,
+- **Show QR** to display the public key as a QR code, and
+- **Delete** the entry.
 
-:::caution
-The "Send Key" menu entry that initiates the Bluetooth push is a work in
-progress and currently shows a placeholder. Receiving, cross-signing and
-exporting a received key are implemented; the same actions are available over
-serial (`GPG RECV_LIST`, `GPG CROSS_SIGN`, `GPG EXPORT_SIGNED`).
-:::
+When a peer sends a certification back, it is collected under
+**GPG ▸ My Certifications**. **GPG ▸ Export Public** (and `GPG EXPORT`) then emit
+your OpenPGP public key with every collected certification attached, so a single
+`gpg --import` rebuilds the web of trust.
+
+The listing, cross-sign, export, send and delete actions are also available over
+serial (`GPG RECV_LIST`, `GPG RECV_INFO`, `GPG CROSS_SIGN`, `GPG EXPORT_SIGNED`,
+`GPG SEND_SIG`, `GPG CERT_LIST`, `GPG RECV_DELETE`).
 
 For the exchange protocol and signature construction, see
 [GPG key cross-signing](/dev/proto/gpg-cross-signing/).
@@ -155,10 +173,16 @@ The `GPG` serial command groups the card operations:
 | --- | --- |
 | `GPG STATUS` | Show user-id, curve, creation time, signature count |
 | `GPG GENERATE <curve> <user_id>` | Generate keys (`1` = Ed25519, `2` = P-256) |
-| `GPG EXPORT` | Print the public key as PEM |
+| `GPG EXPORT` | Print the own public key (armored, with certifications) |
 | `GPG RESET [token]` | Two-step destructive reset of all GPG keys |
 | `GPG RECV_LIST` | List received cross-sign keys |
 | `GPG RECV_INFO <index>` | Show a received key's details |
+| `GPG RECV_IMPORT <hex>` | Import a peer public-key wire payload (hex) |
 | `GPG CROSS_SIGN <index>` | Cross-sign a received key |
-| `GPG EXPORT_SIGNED <index>` | Export a signed key as an armored block |
+| `GPG EXPORT_SIGNED <index>` | Export a signed received key as an armored block |
+| `GPG SEND_SIG <index>` | Send a cross-signature back to the peer over BLE |
+| `GPG CERT_LIST` | List third-party certifications on the own key |
+| `GPG CERT_DELETE <index>` | Delete a stored certification on the own key |
+| `GPG CERT_IMPORT <hex>` | Import a certification-return payload (hex) onto the own key |
 | `GPG RECV_DELETE <index>` | Delete a received key |
+| `GPG RSA_SELFTEST [bits]` | Run the software-RSA self-test (gen/sign/verify/decrypt), default 2048 |

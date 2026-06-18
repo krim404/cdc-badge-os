@@ -138,13 +138,29 @@ when the module is built in (`main/CMakeLists.txt` MODULES list).
 |------------|-----------|-------------|
 | `STATUS` | - | Show keys, fingerprints and counters |
 | `GENERATE` | `<curve> <user_id>` | Generate SIG+DEC+AUT keys (curve `1`=Ed25519, `2`=P-256) |
-| `EXPORT` | - | Print primary and subkey public keys as PEM |
+| `EXPORT` | - | Print the own OpenPGP public key (armored, with certifications) |
 | `RESET` | `[token]` | Two-step destructive reset of all GPG keys |
 | `RECV_LIST` | - | List received cross-sign keys |
 | `RECV_INFO` | `<index>` | Show a received key's details |
 | `RECV_DELETE` | `<index>` | Delete a received key |
+| `RECV_IMPORT` | `<hex>` | Import a peer public-key wire payload (hex) into the received store |
 | `CROSS_SIGN` | `<index>` | Cross-sign a received key with the badge SIG subkey |
-| `EXPORT_SIGNED` | `<index>` | Export a signed key as an ASCII-armored OpenPGP block |
+| `EXPORT_SIGNED` | `<index>` | Export a signed received key as an ASCII-armored OpenPGP block |
+| `SEND_SIG` | `<index>` | Send a cross-signature back to the peer over BLE |
+| `CERT_LIST` | - | List third-party certifications on the own key |
+| `CERT_DELETE` | `<index>` | Delete a stored certification on the own key |
+| `CERT_IMPORT` | `<hex>` | Import a certification-return payload (hex) onto the own key |
+| `RSA_SELFTEST` | `[bits]` | Run the software-RSA self-test (gen/sign/verify/decrypt), default `2048` |
+
+### FIDO2 attestation (`ATTEST`, AUTH-gated)
+
+| Subcommand | Arguments | Description |
+|------------|-----------|-------------|
+| `EXPORT` | - | Print the attestation public key (P-256, uncompressed, hex) for CA signing |
+| `IMPORT` | - | Import a CA-signed attestation certificate (paste hex DER, end with `---` or `ABORT`) |
+| `CLEAR` | - | Remove the imported certificate, revert to self-signed |
+
+See the [attestation page](/security/attestation/) for the full import flow.
 
 ### 2FA / OATH (`TOTP` and `CHALRESP`, AUTH-gated)
 
@@ -228,7 +244,7 @@ root when the serial session locks).
 | Subcommand | Arguments | Description |
 |------------|-----------|-------------|
 | `INFO` | - | Show the active language and available overlays |
-| `RELOAD` | - | Rescan and reload overlays from `/plugins/i18n/` |
+| `RELOAD` | - | Rescan and reload overlays from `/vfat/system/i18n/` |
 
 ## Upload streaming protocol
 

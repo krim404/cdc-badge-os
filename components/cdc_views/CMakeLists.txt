@@ -12,11 +12,15 @@ idf_component_register(
         "src/T9InputView.cpp"
         "src/PasswordT9View.cpp"
         "src/InfoView.cpp"
+        "src/MarkdownParser.cpp"
+        "src/MarkdownView.cpp"
+        "src/ImageView.cpp"
         "src/ToastView.cpp"
         "src/ContextMenuView.cpp"
         "src/QRCodeView.cpp"
         "src/ConfirmView.cpp"
         "src/RenderHelpers.cpp"
+        "src/HtmlViewerHook.cpp"
         "src/CanvasView.cpp"
         "src/ColorPickerView.cpp"
         "src/Fonts.cpp"
@@ -29,4 +33,5 @@ idf_component_register(
         cdc_log
         CalEPD
         Adafruit-GFX
+        cdc_image
 )

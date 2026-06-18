@@ -497,6 +497,14 @@ fido2_user_presence_result_t fido2_ui_user_presence_callback(
         }
     }
 
+    // Capture the pre-prompt backlight state once, before any path (the
+    // overwrite confirm or the prompt itself) forces the backlight on, so the
+    // restore on completion reflects the real prior state, not a forced-on one.
+    {
+        auto* display = cdc::hal::getDisplayInstance();
+        s_promptBacklightWasOn = display && display->isBacklightOn();
+    }
+
     if (action == FIDO2_ACTION_OVERWRITE) {
         if (!s_overwriteSem) {
             s_overwriteSem = xSemaphoreCreateBinary();
@@ -507,8 +515,7 @@ fido2_user_presence_result_t fido2_ui_user_presence_callback(
         while (xSemaphoreTake(s_overwriteSem, 0) == pdTRUE) {}
 
         auto* display = cdc::hal::getDisplayInstance();
-        bool backlightWasOn = display && display->isBacklightOn();
-        if (display && !backlightWasOn) {
+        if (display && !s_promptBacklightWasOn) {
             display->backlightOn();
         }
 
@@ -538,7 +545,7 @@ fido2_user_presence_result_t fido2_ui_user_presence_callback(
         }
 
         if (!approved) {
-            if (display && !backlightWasOn) {
+            if (display && !s_promptBacklightWasOn) {
                 display->backlightOff();
             }
             LOG_I(TAG, "Overwrite denied/timeout - aborting registration");
@@ -578,11 +585,8 @@ fido2_user_presence_result_t fido2_ui_user_presence_callback(
     stack.hideModal();
 
     auto* display = cdc::hal::getDisplayInstance();
-    if (display) {
-        s_promptBacklightWasOn = display->isBacklightOn();
-        if (!s_promptBacklightWasOn) {
-            display->backlightOn();
-        }
+    if (display && !s_promptBacklightWasOn) {
+        display->backlightOn();
     }
 
     const char* headline = nullptr;

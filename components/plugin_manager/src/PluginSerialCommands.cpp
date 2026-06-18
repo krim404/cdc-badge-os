@@ -431,6 +431,9 @@ enum class PluginUploadKind { Wasm, Aot, Meta, Lang };
 // the streaming interceptor and answers READY. It is all one vFAT file write.
 void arm_upload(uint32_t crc)
 {
+    // The host is the sole writer while it holds the volume over USB MSC.
+    if (PluginStorage::hostActive()) { send("ERR msc_active"); return; }
+
     s_upload.received     = 0;
     s_upload.running_crc  = 0xffffffffu;
     s_upload.expected_crc = crc;
@@ -575,7 +578,7 @@ void cmdPluginDispatch(const char* args) {
 
 const cdc::serial::SubCommand kLangSubs[] = {
     {"INFO",   "",       "Show active language and available overlays",     cmdLangInfo},
-    {"RELOAD", "",       "Rescan + reload overlays from /plugins/i18n/",    cmdLangReload},
+    {"RELOAD", "",       "Rescan + reload overlays from /vfat/system/i18n/", cmdLangReload},
     {nullptr, nullptr, nullptr, nullptr},
 };
 void cmdLangDispatch(const char* args) {

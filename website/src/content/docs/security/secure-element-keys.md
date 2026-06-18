@@ -44,9 +44,10 @@ slots across modules (`main/tropic_slot_map.h`):
 | System / attestation | 0 (attestation key) | 0 (reserved) |
 | GPG | 1-3 | 1-3 |
 | CA | 4 | 4 |
-| FIDO2 | 5-30 | 5-31 |
-| TOTP (2FA) | - | 32-131 |
-| Password vault | - | 132-500 |
+| FIDO2 | 5-30 | 5-30 |
+| TOTP (2FA) | - | 31-130 |
+| GPG RSA keys | - | 131-136 |
+| Password vault | - | 137-500 |
 | Plugins | 31 | 501-511 |
 
 TOTP and the password vault use only R-Memory (they store secrets, not SE key
@@ -108,9 +109,13 @@ imported from outside:
   on the [attestation page](/security/attestation/).
 - **FIDO2 credential keys.** Created on-chip via `eccGenerate` when a new
   credential is registered (`mod_fido2/src/fido2_storage.cpp`).
-- **GPG / OpenPGP keys.** Generated on-chip via `eccGenerate` in the GPG module
-  and OpenPGP card path (`mod_gpg/src/gpg.cpp`,
-  `mod_gpg/src/openpgp/openpgp.cpp`).
+- **GPG / OpenPGP keys.** The signature and authentication ECC keys are
+  generated on-chip via `eccGenerate` in the GPG module and OpenPGP card path
+  (`mod_gpg/src/gpg.cpp`, `mod_gpg/src/openpgp/openpgp.cpp`). The decryption key
+  (P-256 ECDH) and any role configured for RSA are **software keys**: the secure
+  element cannot perform ECDH or RSA, so those private keys are held as
+  AES-256-GCM-encrypted blobs in R-Memory and decrypted into RAM only for the
+  operation. ECC is the default; RSA is an opt-in fallback.
 
 Because these keys are generated locally, a freshly flashed or wiped badge
 produces brand-new key material. There is no factory-installed key shared

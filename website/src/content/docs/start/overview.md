@@ -47,9 +47,9 @@ from the on-device secure-element slot map (`main/tropic_slot_map.h`).
 - **FIDO2 / WebAuthn** passkeys and U2F second-factor, with private keys stored in TROPIC01
   ECC slots.
 - **TOTP authenticator** for time-based one-time passwords. Up to **100 accounts**
-  (secure-element R-Memory slots 32-131).
-- **Password vault** for stored credentials. Up to **369 entries**
-  (secure-element R-Memory slots 132-500).
+  (secure-element R-Memory slots 31-130).
+- **Password vault** for stored credentials. Up to **364 entries**
+  (secure-element R-Memory slots 137-500).
 - **GPG / OpenPGP smartcard** over USB CCID for sign, encrypt, decrypt and SSH.
 
 ### Connectivity
@@ -58,12 +58,6 @@ from the on-device secure-element slot map (`main/tropic_slot_map.h`).
 - **Bluetooth Low Energy** HID (acts as a Bluetooth keyboard for auto-type).
 - **WiFi** for time synchronisation over NTP, controlled from the on-device
   **Tools → WiFi** menu (and also over the serial console).
-
-:::caution[Work in progress]
-Some Bluetooth features are not yet verified on hardware. **BLE vCard** (badge-to-badge
-contact exchange) and the **BLE serial console** (Nordic UART Service) are marked as
-work-in-progress and untested in the firmware source. Treat them as experimental.
-:::
 
 ### Extensibility
 

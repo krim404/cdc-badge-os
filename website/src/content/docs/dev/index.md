@@ -53,11 +53,11 @@ The canonical header is `components/plugin_manager/include/plugin_manager/host_a
 - [Build and flash](/dev/build-system/): the PlatformIO build, the MODULES-list mechanism, partition layout, and the memory model.
 - [Host API](/api/): the C ABI that plugins call into.
 - [Architecture Decision Records](/dev/adr/): the load-bearing technical decisions (PSRAM-first, module isolation, slot map, the two-KDF PIN hashing, plugin sandbox, and more).
-- [Refactoring backlog](/dev/refactoring-backlog/): documented-only refactors not yet executed.
 
 ## Testing
 
 Host-side unit tests for portable logic (CRC, base64, CP437, message framing, CBOR) run via the
-PlatformIO `native` environment with `pio test -e native` (no hardware, runs in CI). Hardware and
-protocol behaviour is covered by documented hardware-in-the-loop test plans. The first automated
-tests and the spec-driven baseline live under `specs/001-current-system-spec/`.
+PlatformIO `native` environment with `pio test -e native` (no hardware, runs in CI). On-device tests
+verify the shipped firmware on a real badge (flashed once, states reached at runtime), split into a
+fully automatic serial-driven catalog and an operator-assisted one; both are optional. See
+[Testing](/dev/testing/) for the full set and how to run it.

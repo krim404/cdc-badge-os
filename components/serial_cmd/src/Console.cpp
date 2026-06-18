@@ -5,7 +5,9 @@
 
 #include "serial_cmd/Console.h"
 #include "cdc_log.h"
+#include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace cdc::serial {
@@ -42,10 +44,30 @@ void Console::printf(const char* format, ...) {
  */
 void Console::vprintf(const char* format, va_list args) {
     char buffer[256];
+    va_list args_copy;
+    va_copy(args_copy, args);
     int len = vsnprintf(buffer, sizeof(buffer), format, args);
-    if (len > 0) {
+    if (len <= 0) {
+        va_end(args_copy);
+        return;
+    }
+    if (static_cast<size_t>(len) < sizeof(buffer)) {
+        print(buffer);
+        va_end(args_copy);
+        return;
+    }
+    // Output exceeds the stack buffer: format into a heap buffer so the tail
+    // (e.g. the CRC and END line of an armored block, or a long vCard line) is
+    // not silently dropped.
+    char* heap = static_cast<char*>(malloc(static_cast<size_t>(len) + 1));
+    if (heap) {
+        vsnprintf(heap, static_cast<size_t>(len) + 1, format, args_copy);
+        print(heap);
+        free(heap);
+    } else {
         print(buffer);
     }
+    va_end(args_copy);
 }
 
 /**

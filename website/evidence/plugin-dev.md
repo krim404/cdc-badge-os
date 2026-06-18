@@ -72,7 +72,7 @@ All paths are relative to the repo root `~/GIT/cdc-badge-os`.
 | `message_types`: MIME types handled; non-empty implies messaging; sending also requires `ble` | components/plugin_manager/include/plugin_manager/PluginManifest.h:56-58 | VERIFIED |
 | `background` = keep ticking after leaving the view; not a boot flag | components/plugin_manager/include/plugin_manager/PluginManifest.h:31-36 | VERIFIED |
 | `autoload` = start resident at boot | components/plugin_manager/include/plugin_manager/PluginManifest.h:45-51 | VERIFIED |
-| `vfat` = sandboxed file access in /plugins/data/<id>/ | components/plugin_manager/include/plugin_manager/PluginManifest.h:39-44 | VERIFIED |
+| `vfat` = sandboxed file access in /vfat/data/<id>/ | components/plugin_manager/include/plugin_manager/PluginManifest.h:39-44 | VERIFIED |
 
 ## Capability validation at load
 

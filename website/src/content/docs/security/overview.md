@@ -58,10 +58,10 @@ A few security-relevant things happen without you asking:
 | Page | What it covers |
 | --- | --- |
 | [Secure element & automatic key generation](/security/secure-element-keys/) | The TROPIC01 chip, slot model, slot allocation, what the chip does, and which keys are generated on-chip |
-| [FIDO2 attestation key & AAGUID](/security/attestation/) | The per-device, self-signed FIDO2 attestation identity in slot 0 |
+| [FIDO2 attestation key & AAGUID](/security/attestation/) | The FIDO2 attestation identity in slot 0 (self-signed per-device, or CA-signed when a certificate is imported) |
 | [PINs & lockout](/security/pin-lockout/) | The badge PIN's recovery timer versus the OpenPGP PW1/PW3 terminal lockout |
 | [Duress PIN / self-destruct](/security/duress/) | The optional wipe-on-entry PIN and exactly what it erases |
-| [Beta status & caveats](/security/caveats/) | Data-loss reality, no-migration policy, WIP features, and the `DEBUG_MODE` flag |
+| [Beta status & caveats](/security/caveats/) | Data-loss reality, no-migration policy, and the `DEBUG_MODE` flag |
 
 ## What we do and do not claim
 

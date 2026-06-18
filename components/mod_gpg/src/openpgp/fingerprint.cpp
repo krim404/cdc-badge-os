@@ -37,12 +37,14 @@ size_t buildPublicKeyBody(uint8_t curve,
     uint8_t mpi[MPI_FULL_SIZE_P256];
     size_t  mpi_len;
     if (is_ed25519) {
-        // RFC 4880-bis: Ed25519 MPI is 256 or 255 bits depending on MSB.
-        uint16_t bits = (pubkey[0] & 0x80) ? 256 : 255;
+        // EdDSA point in OpenPGP native format: 0x40 prefix + 32-byte point,
+        // encoded as a 263-bit MPI (RFC 9580 / 4880-bis).
+        uint16_t bits = 263;
         mpi[0] = static_cast<uint8_t>((bits >> 8) & 0xFF);
         mpi[1] = static_cast<uint8_t>(bits & 0xFF);
-        std::memcpy(mpi + MPI_HEADER_SIZE, pubkey, ED25519_PUBKEY_SIZE);
-        mpi_len = MPI_FULL_SIZE_ED25519;
+        mpi[MPI_HEADER_SIZE] = 0x40;
+        std::memcpy(mpi + MPI_HEADER_SIZE + 1, pubkey, ED25519_PUBKEY_SIZE);
+        mpi_len = MPI_HEADER_SIZE + 1 + ED25519_PUBKEY_SIZE;
     } else {
         // P-256 MPI: bit-length || 0x04 || X || Y.
         uint16_t bits = P256_PUBKEY_BITS;

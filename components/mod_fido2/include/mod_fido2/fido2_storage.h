@@ -291,6 +291,47 @@ bool fido2_storage_counter_increment(void);
  */
 bool fido2_storage_counter_flush(void);
 
+/* --- authenticatorLargeBlobs (CTAP2.1) persistence, NVS blob. --- */
+
+/**
+ * Loads the stored large-blob array, or the canonical empty array if unset.
+ *
+ * @param out Output buffer.
+ * @param max_len Output buffer capacity.
+ * @param out_len Receives the array length.
+ * @return true on success.
+ */
+bool fido2_storage_largeblob_get(uint8_t* out, uint16_t max_len, uint16_t* out_len);
+
+/**
+ * Persists the full serialized large-blob array.
+ *
+ * @param data Array bytes.
+ * @param len Array length (1..1024).
+ * @return true on success.
+ */
+bool fido2_storage_largeblob_set(const uint8_t* data, uint16_t len);
+
+/** @return Stored large-blob array length, or the empty-array length if unset. */
+uint16_t fido2_storage_largeblob_length(void);
+
+/* --- authenticatorConfig (CTAP2.1) persistent flags. --- */
+
+/** @return true when alwaysUv is enabled. */
+bool fido2_storage_get_always_uv(void);
+
+/** Sets the alwaysUv flag. @return true on success. */
+bool fido2_storage_set_always_uv(bool enabled);
+
+/** @return Stored minimum PIN length, or 0 when unset (i.e. use the default). */
+uint8_t fido2_storage_get_min_pin_len(void);
+
+/** Persists the minimum PIN length. @return true on success. */
+bool fido2_storage_set_min_pin_len(uint8_t min_len);
+
+/** Erases all CTAP2.1 large-blob and config keys (used by factory reset). */
+void fido2_storage_config_reset(void);
+
 #ifdef __cplusplus
 }
 #endif

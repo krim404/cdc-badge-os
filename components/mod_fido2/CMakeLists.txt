@@ -7,6 +7,7 @@ idf_component_register(
         "src/ctaphid.cpp"
         "src/fido2.cpp"
         "src/fido2_storage.cpp"
+        "src/LargeBlobStore.cpp"
         "src/Fido2Module.cpp"
         "src/Fido2Ui.cpp"
         "src/u2f.cpp"
@@ -20,4 +21,6 @@ idf_component_register(
         cdc_ui
         cdc_views
         cdc_hal
+        serial_cmd
+        mbedtls
 )

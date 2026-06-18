@@ -15,9 +15,9 @@ Each plugin reaches the firmware only through the host API (the `host_*` functio
 
 ## Where plugins live
 
-Plugins are stored on a dedicated FAT-FS partition named `plugins`, mounted at `/plugins`. The partition is **2 MB** (`0x200000`). It auto-formats on first boot if it is empty.
+Plugins are stored on a dedicated FAT-FS partition named `plugins`, mounted at `/vfat`. The partition is **2 MB** (`0x200000`). It auto-formats on first boot if it is empty. Plugin files live in the `system/` subfolder (`/vfat/system/`), so the partition root stays free for user files.
 
-A single plugin is made up of these files on the partition:
+A single plugin is made up of these files under `/vfat/system/`:
 
 | File | Purpose |
 | --- | --- |

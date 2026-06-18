@@ -18,6 +18,8 @@ set(MODULES
     mod_usbhid
     mod_otphid
     mod_vfat
+    mod_browser
+    mod_msc
 )
 # =============================================================================
 

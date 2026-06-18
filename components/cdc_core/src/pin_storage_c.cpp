@@ -28,6 +28,22 @@ bool pin_storage_openpgp_change_pw3(const char *new_pin) {
     return cdc::core::PinManager::instance().setPW3(new_pin);
 }
 
+bool pin_storage_openpgp_verify_pw1_raw(const uint8_t *data, size_t len) {
+    return cdc::core::PinManager::instance().verifyPW1Raw(data, len);
+}
+
+bool pin_storage_openpgp_verify_pw3_raw(const uint8_t *data, size_t len) {
+    return cdc::core::PinManager::instance().verifyPW3Raw(data, len);
+}
+
+bool pin_storage_openpgp_set_pw1_raw(const uint8_t *data, size_t len) {
+    return cdc::core::PinManager::instance().setPW1Raw(data, len);
+}
+
+bool pin_storage_openpgp_set_pw3_raw(const uint8_t *data, size_t len) {
+    return cdc::core::PinManager::instance().setPW3Raw(data, len);
+}
+
 uint8_t pin_storage_openpgp_pw1_retries(void) {
     return cdc::core::PinManager::instance().getPW1Retries();
 }
@@ -84,6 +100,14 @@ bool pin_storage_verify_fido2_hash(const uint8_t* hash_in) {
     auto& pm = cdc::core::PinManager::instance();
     pm.init();
     return pm.verifyBadgePinHash(hash_in);
+}
+
+void pin_storage_set_min_pin_floor(uint8_t min_len) {
+    cdc::core::PinManager::instance().setMinPinLengthFloor(min_len);
+}
+
+uint8_t pin_storage_get_min_pin_floor(void) {
+    return cdc::core::PinManager::instance().minPinLengthFloor();
 }
 
 } // extern "C"

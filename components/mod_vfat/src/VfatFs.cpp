@@ -47,7 +47,8 @@ bool resolve(const std::string& relPath, std::string& absOut)
     return true;
 }
 
-bool list(const std::string& relDir, std::vector<FsEntry>& out, bool& truncated)
+bool list(const std::string& relDir, std::vector<FsEntry>& out, bool& truncated,
+          bool includeHidden)
 {
     truncated = false;
     out.clear();
@@ -59,7 +60,12 @@ bool list(const std::string& relDir, std::vector<FsEntry>& out, bool& truncated)
     if (!d) return false;
 
     for (struct dirent* e = readdir(d); e != nullptr; e = readdir(d)) {
-        if (e->d_name[0] == '.') continue;  // skip "." and ".."
+        if (e->d_name[0] == '.') {
+            const bool dotOrDotDot = e->d_name[1] == '\0' ||
+                                     (e->d_name[1] == '.' && e->d_name[2] == '\0');
+            if (dotOrDotDot) continue;        // always skip "." and ".."
+            if (!includeHidden) continue;     // hide dot-entries (e.g. .system) in user view
+        }
         if (out.size() >= MAX_LIST_ENTRIES) { truncated = true; break; }
 
         FsEntry entry;

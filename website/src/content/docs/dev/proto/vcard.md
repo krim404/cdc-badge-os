@@ -11,12 +11,6 @@ BLE service of its own: it registers a handler for one MIME type and sends its
 own card through the framework. The old custom `ble_vcard` GATT service has been
 deleted.
 
-:::caution[Work in progress]
-Badge-to-badge vCard exchange is work in progress and has not been verified on
-hardware (per the project README). Local editing/storage works without
-Bluetooth.
-:::
-
 ## MIME type
 
 The vCard payload uses the MIME type **`text/vcard`**. The payload is raw

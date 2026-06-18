@@ -7,3 +7,12 @@ bleak>=0.21
 
 # coredump.py
 esp-coredump>=1.5
+
+# ondevice/ test harness (also upload.py, backup.py, 2fa.py)
+pyserial>=3.5
+
+# ondevice/ A-ATTEST + A-GPG-XSIGN (X.509 / key crafting)
+cryptography>=42
+
+# fido2_largeblob.py (USB-HID authenticatorLargeBlobs round-trip)
+fido2>=1.1

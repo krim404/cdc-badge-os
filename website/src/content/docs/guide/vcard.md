@@ -11,12 +11,6 @@ the lock screen, and import/export cards in encrypted backups.
 
 You reach the feature from **Tools -> vCards**.
 
-:::caution[Work in progress]
-Badge-to-badge vCard exchange runs on the Bluetooth message-transfer framework,
-which is work in progress and has not been verified on hardware. Editing,
-storing and showing your own card work locally without Bluetooth.
-:::
-
 ## The vCards menu
 
 **Tools -> vCards** has four items:

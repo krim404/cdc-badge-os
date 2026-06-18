@@ -14,7 +14,7 @@ Plugins reach the firmware through `host_*` functions grouped into families. The
 | Area | Host API family | What it covers |
 | --- | --- | --- |
 | Storage (key/value) | `host_nvs_*` | Persistent key/value storage in a plugin-private NVS namespace. |
-| Storage (files) | `host_fs_*` | Sandboxed files on the plugins partition, confined to the plugin's own folder. |
+| Storage (files) | `host_fs_*` | Sandboxed files on the FAT partition, confined to the plugin's own folder. |
 | Secure metadata | `host_rmem_*` | Named slots in the secure element's R-Memory. |
 | Networking | `host_wifi_*`, `host_http_*`, `host_socket_*` | WiFi control, HTTP requests, raw sockets. |
 | Bluetooth | `host_ble_*` | BLE GATT services and characteristics via the controller. |
@@ -32,7 +32,7 @@ Each sensitive area is also a manifest capability flag (for example `wifi`, `ble
 
 ## Storage rules
 
-- File access (`vfat`) is confined host-side to the plugin's own folder, `/plugins/data/<id>/`. A plugin cannot read another plugin's files or escape that directory.
+- File access (`vfat`) is confined host-side to the plugin's own folder, `/vfat/data/<id>/`. A plugin cannot read another plugin's files or escape that directory.
 - NVS use requires an `nvs_namespace` that starts with `plg_` or `plugin_`, uses only `[a-z0-9_]`, and is at most 15 characters.
 - Requesting R-Memory slots (`rmem`) requires a valid `nvs_namespace` to be declared as well.
 
@@ -66,7 +66,7 @@ These are the Grove, SAO, and 40-pin header pins.
 For I2C, **bus 0 is reserved** for internal hardware (the charger and IO expander) and is always rejected. Plugins use the expansion bus, I2C bus 1.
 
 :::caution
-Pin 3 is also an ESP32-S3 strapping pin (boot mode) and pin 40 is JTAG TDO. They are on the whitelist but should be used with care on hardware that relies on those functions.
+Two whitelist pins carry a secondary role. Pin 3 is an ESP32-S3 strapping pin (sampled only at reset, where it selects the JTAG signal source) and is also wired as Grove SIG1. Pin 40 is the JTAG TDO line; on a default badge JTAG runs over the built-in USB Serial/JTAG, so the pin is free, and it only matters if pin-based JTAG or an external debugger is in use. Both stay on the whitelist; use them with care on hardware that relies on those functions.
 :::
 
 ## Compatibility gate

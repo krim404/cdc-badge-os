@@ -109,7 +109,7 @@ The flash layout comes from `partitions.csv`. On the ESP32-S3 the bootloader liv
 | `plugins` | data | fat | `0xDF0000` | `0x200000` (2 MB) |
 | `coredump` | data | coredump | `0xFF0000` | `0x10000` (64 KB) |
 
-The `plugins` FAT partition is mounted at `/plugins` and holds installed WASM plugins plus the runtime i18n overlay files (`/plugins/i18n/lang_<code>.json`). The `coredump` partition stores crash dumps for offline analysis.
+The `plugins` FAT partition is mounted at `/vfat`. Installed WASM plugins and the runtime i18n overlay files live under the `system/` subfolder (`/vfat/system/<id>.wasm`, `/vfat/system/i18n/lang_<code>.json`); the partition root is the user file area. The `coredump` partition stores crash dumps for offline analysis.
 
 ## Memory model
 
@@ -128,7 +128,3 @@ Guidelines for new code:
 - Reserve internal RAM for task stacks, ISR-touched data, BLE/WiFi-internal buffers, and small static state. Everything else goes to PSRAM.
 - Large static buffers use the `EXT_RAM_BSS_ATTR` attribute so they land in PSRAM rather than internal BSS.
 - Runtime allocations larger than a few kilobytes use PSRAM. `cdc::core::psramAlloc<T>(count)` (in `cdc_core/Raii.h`) wraps `heap_caps_malloc(..., MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` and returns a `PsramUniquePtr<T>` that frees through the caps allocator on destruction.
-
-:::note[No version bumps without instruction]
-Do not change any version number (firmware version, host API level, schema version, manifest version) as part of an unrelated change. Version bumps are made deliberately, not implied by an API change.
-:::

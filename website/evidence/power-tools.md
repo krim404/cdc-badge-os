@@ -35,7 +35,7 @@ power/companion-tools.md, power/index.md.
 | English fallback compiled into firmware (core + per-module tables) | components/cdc_ui/src/I18n.cpp:290-310 (`registerCoreEnglishTable`, `registerEnglishTable`) | VERIFIED |
 | Lookup: overlay first (if not "en"), else English, else "?key" | components/cdc_ui/src/I18n.cpp:355-365 | VERIFIED |
 | Each non-English language is a flat lang_<code>.json of key:value | components/cdc_ui/include/cdc_ui/I18n.h:9-16; CLAUDE.md i18n section | VERIFIED |
-| Overlay files live under /plugins/i18n | components/cdc_ui/include/cdc_ui/I18n.h:69 (`OVERLAY_DIR = "/plugins/i18n"`) | VERIFIED |
+| Overlay files live under /vfat/system/i18n | components/cdc_ui/include/cdc_ui/I18n.h (`OVERLAY_DIR = "/vfat/system/i18n"`) | VERIFIED |
 | Active overlay parsed into PSRAM | components/cdc_ui/src/I18n.cpp:461-526 (psramAlloc blob/refs) | VERIFIED |
 | UTF-8 umlauts converted to CP437 at parse time | components/cdc_ui/src/I18n.cpp:490,507 (`cdc::core::cp437::fromUtf8`) | VERIFIED |
 | Picker reached via Settings -> Language | components/cdc_os_ui/src/AppUi.cpp:525 (`SETTINGS_IDX_LANGUAGE = core.language`), 606-609 | VERIFIED |
@@ -48,7 +48,7 @@ power/companion-tools.md, power/index.md.
 | Language choice persisted in NVS | components/cdc_ui/src/I18n.cpp:379 (`saveLanguageToNvs`), 566-577 (`loadLanguageFromNvs`) | VERIFIED |
 | Missing/omitted keys fall back to English (partial overlay = partial translation) | components/cdc_ui/src/I18n.cpp:358-361 | VERIFIED |
 | mod_vfat default-enabled | main/module_defaults.h:27 (`X("mod_vfat", true)`) | VERIFIED |
-| mod_vfat adds Expert-menu explorer entry opening at root | components/mod_vfat/src/VfatModule.cpp:207-211, 249-262 (MenuLocation::EXPERT_MENU; `openRoot`) | VERIFIED |
+| mod_vfat adds a main-menu Files entry (user area, hides system/) and an Expert System Files entry (full view) | components/mod_vfat/src/VfatModule.cpp (MenuLocation::MAIN_MENU + MenuLocation::EXPERT_MENU) | VERIFIED |
 | mod_vfat registers AUTH-gated VFAT serial command | components/mod_vfat/src/VfatModule.cpp:225-228 (registerCommand "VFAT", requireAuth=true) | VERIFIED |
 | VFAT sub-commands: LIST/PWD/CD/GET/PUT/RECEIVE/DELETE/MKDIR/RMDIR/FREE | components/mod_vfat/src/VfatModule.cpp:183-195 (`kSubs[]`) | VERIFIED |
 | VFAT PUT unescapes \n \t \\ | components/mod_vfat/src/VfatModule.cpp:53-67, 119 | VERIFIED |
@@ -70,7 +70,7 @@ power/companion-tools.md, power/index.md.
 | --erase-nvs wipes NVS partition (resets settings) | tools/flash_firmware.py:193-204, 233-234 | VERIFIED |
 | flash port auto-detected if omitted | tools/flash_firmware.py:46-53, 251 | VERIFIED |
 | upload.py modes: plugin (wasm/meta + list/info/delete/start/stop), lang-overlay, put | tools/upload.py:8-22, 310-322 | VERIFIED |
-| upload.py --lang-overlay writes to /plugins/i18n/ and reloads | tools/upload.py:11-12, 311-312 | VERIFIED |
+| upload.py --lang-overlay writes to partition-relative system/i18n/ (VFAT MKDIR system + system/i18n) and reloads | tools/upload.py | VERIFIED |
 | upload.py --put streams via VFAT RECEIVE | tools/upload.py:13-15, 313 | VERIFIED |
 | upload.py needs pyserial, supports --pin AUTH | tools/upload.py:29, 306-307 | VERIFIED |
 | ble_serial.py: BLE NUS console; --address/--name/--scan | tools/ble_serial.py:4-16, 160-176 | VERIFIED |
@@ -80,8 +80,8 @@ power/companion-tools.md, power/index.md.
 | backup.py reproduces byte-identical container | tools/backup.py:9-25 | VERIFIED |
 | coredump.py usage `python tools/coredump.py [port]` | tools/coredump.py:6-9, 60-63 | VERIFIED |
 | coredump.py reads coredump partition + runs GDB; needs esp-coredump/esptool | tools/coredump.py:11-19, 26-38 | VERIFIED |
-| build_lang_image.py builds plugins FAT seeded with lang files; --lang-dir/--output/--partition-size | tools/build_lang_image.py:2-7, 96-107 | VERIFIED |
-| build_lang_image default lang-dir assets/i18n | tools/build_lang_image.py:97-100 | VERIFIED |
+| build_lang_image.py builds plugins FAT seeding system/i18n lang files + user-area assets; --lang-dir/--assets-dir/--output/--partition-size | tools/build_lang_image.py | VERIFIED |
+| build_lang_image default lang-dir assets/i18n, default assets-dir assets/vfat | tools/build_lang_image.py | VERIFIED |
 | 2fa.py provisions TOTP/HOTP over serial; list/add/get/del + options | tools/2fa.py:23-30, 154-169 | VERIFIED |
 | start_webflasher.py serves web-flasher over HTTP; --port/--no-browser/--build/--lang | tools/start_webflasher.py:13-14, 150-160 | VERIFIED |
 | start_webflasher.py --lang invokes build_lang_image | tools/start_webflasher.py:84-89 | VERIFIED |

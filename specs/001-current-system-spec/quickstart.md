@@ -9,7 +9,7 @@ registries in [data-model.md](./data-model.md).
 
 - PlatformIO available at `~/.platformio/penv/bin/pio`.
 - Repo checked out; submodules initialised (`git submodule update --init --recursive`).
-- No hardware required for Tier-1 / gate checks; a CDC Badge on USB only for the HIL section.
+- No hardware required for Tier-1 / gate checks; a CDC Badge on USB only for the on-device section.
 
 ## 1. Specs exist and cover every capability (gate C1)
 
@@ -60,11 +60,22 @@ ADR-0004; no unresolved Category-A discrepancy remains (D4 doc reference repoint
 Confirm the CI workflow(s) invoke `pio test -e native` (and doc/spec checks) in addition to
 `pio run`, and that the stage is green.
 
-## 8. HIL verification (optional, hardware required)
+## 8. On-device verification (optional, hardware required)
 
-Run the Tier-2 HIL procedures (T-HIL01..T-HIL08) per their written steps with a badge on USB/BLE.
-These are **non-blocking** for the build but must each have a documented procedure and pass
-criteria; record outcomes. Conserve flashes (prefer the serial `BOOTLOADER` path).
+Verify the installed release on a real badge (flashed once; states reached at runtime). Both
+categories are **non-blocking** for the build.
+
+```bash
+# fully automatic, serial-only, unattended:
+~/.platformio/penv/bin/python tools/ondevice/run.py --pin 0000
+# include the state-mutating + slow automatic tests:
+~/.platformio/penv/bin/python tools/ondevice/run.py --pin 0000 --mutating --slow
+# append the operator-assisted semi-automatic catalog (runs last):
+~/.platformio/penv/bin/python tools/ondevice/run.py --pin 0000 --semi
+```
+
+The semi-automatic catalog maps to the written `hil/` plans (T-HIL01..08); record outcomes. No test
+or alternate-profile firmware is flashed.
 
 ---
 

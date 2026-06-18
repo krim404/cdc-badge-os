@@ -60,17 +60,22 @@ public:
     // === Send (central) ===
     /**
      * \brief Send a typed payload directly to a known peer (no picker).
-     * Copies the payload into PSRAM and starts connecting. \return false if a
+     * Copies the payload into PSRAM and starts connecting. \param persistent
+     * remembers the verified pairing for this runtime session so follow-up
+     * sends to the same peer skip the numeric-comparison and consent prompts;
+     * the bond is forgotten on reboot or at clean teardown. \return false if a
      * send is already in progress or arguments are invalid.
      */
     bool sendTo(const uint8_t addr[6], uint8_t addrType, const char* mime,
-                const uint8_t* data, uint32_t len);
+                const uint8_t* data, uint32_t len, bool persistent = false);
     /**
      * \brief Buffer a payload and request the interactive peer picker.
      * The cdc_os_ui layer renders the picker and then calls
-     * confirmInteractiveTarget() or cancelSend(). \return false if busy/invalid.
+     * confirmInteractiveTarget() or cancelSend(). \param persistent as in
+     * sendTo(). \return false if busy/invalid.
      */
-    bool beginInteractiveSend(const char* mime, const uint8_t* data, uint32_t len);
+    bool beginInteractiveSend(const char* mime, const uint8_t* data, uint32_t len,
+                              bool persistent = false);
     /// \brief UI poll: \return true once when a peer picker should be shown.
     bool takeInteractiveRequest();
     /// \brief UI selected a peer for the pending interactive send.
@@ -171,7 +176,8 @@ private:
     void notifyStatusU32(uint16_t conn, StatusOp op, uint32_t value);
 
     // Receiver helpers.
-    void enqueueOffer(uint16_t conn, const char* mime, uint32_t totalLen, const char* name);
+    void enqueueOffer(uint16_t conn, const char* mime, uint32_t totalLen, const char* name,
+                      bool persist);
     void promoteNextOffer(uint32_t nowMs);
     void tickRecv(uint32_t nowMs);
     void teardownRecv(bool sendError, Reason reason);
@@ -189,6 +195,14 @@ private:
     void recordBond(uint16_t conn, const uint8_t addr[6], uint8_t addrType);
     void forgetBondForConn(uint16_t conn);
     void storeResult(bool ok, bool wasSend, Reason reason, const char* mime, const char* peerName);
+
+    // Session-persistent pairings (kept across disconnects within one runtime
+    // session; never across a reboot). The NVS ledger is crash-cleanup only.
+    bool isSessionPeer(const uint8_t addr[6], uint8_t addrType) const;
+    void rememberSessionPeer(const uint8_t addr[6], uint8_t addrType);
+    void forgetAllSessionPeers();
+    void persistSessionLedger();
+    void cleanupStaleSessionBonds();
 
     uint16_t mtuPayload() const;
 
@@ -227,6 +241,7 @@ private:
         uint32_t  stateStartMs = 0;
         uint32_t  expectedCrc = 0;
         bool      completeReceived = false;
+        bool      persistent = false;  ///< OFFER requested a session-persistent pairing.
         bool      peerAddrValid = false;
         uint8_t   peerAddr[6] = {};
         uint8_t   peerAddrType = 0;
@@ -246,6 +261,7 @@ private:
         const char* descKey = nullptr;
         uint32_t    totalLen = 0;
         uint32_t    enqueuedMs = 0;
+        bool        persist = false;  ///< OFFER requested a session-persistent pairing.
     };
     std::array<PendingOffer, kOfferQueueDepth> queue_{};
 
@@ -272,6 +288,16 @@ private:
     };
     std::array<BondRef, 2> bonded_{};
 
+    // ---- Session-persistent peers (PSRAM; runtime-only trust) ----
+    struct SessionPeer {
+        bool    used = false;
+        uint8_t addr[6] = {};
+        uint8_t addrType = 0;
+    };
+    std::array<SessionPeer, cdc::hal::IBluetoothController::MAX_BONDED_DEVICES> sessionPeers_{};
+    bool sessionBondsCleaned_ = false;  ///< Boot janitor ran once BLE was up.
+    volatile bool ledgerDirty_ = false;  ///< Host-task set; tick() flushes the NVS ledger.
+
     // ---- Latest transfer result snapshot (read by the UI completion handler) ----
     TransferResult lastResult_{};
     bool           lastResultValid_ = false;
@@ -295,6 +321,7 @@ private:
         uint8_t   peerAddr[6] = {};
         uint8_t   peerAddrType = 0;
         bool      completeWritten = false;
+        bool      persistent = false;  ///< Remember the verified pairing this session.
         Reason    reason = Reason::None;
         // Cross-task signals consumed in tickSend().
         volatile bool connectedFlag = false;

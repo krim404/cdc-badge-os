@@ -85,7 +85,7 @@ The decrypted plaintext is a single unformatted JSON document. Top-level shape:
 ```json
 {
   "host_api_level": "0.7",
-  "fw_version": "0.6.5",
+  "fw_version": "0.6.6",
   "modules": {
     "mod_2fa": { },
     "mod_password": { },

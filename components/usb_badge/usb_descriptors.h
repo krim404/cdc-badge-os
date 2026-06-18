@@ -29,6 +29,7 @@ enum {
     STR_PRODUCT,
     STR_SERIAL,
     STR_CDC,
+    STR_MSC,          // Mass-storage interface name (when MSC active)
     STR_DYNAMIC_BASE  // Module interface names start here
 };
 

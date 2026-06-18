@@ -41,7 +41,7 @@ interface accepts any value inside the limits above.
 
 ## Capacity
 
-The 2FA module owns 100 secure-element R-Memory slots (slots 32 to 131), so up
+The 2FA module owns 100 secure-element R-Memory slots (slots 31 to 130), so up
 to 100 OATH accounts can be stored.
 
 ## Adding an account
@@ -84,6 +84,7 @@ TOTP DEL <index>
 - `<secret>` is the Base32 secret.
 - `<algo>` is `sha1`, `sha256` or `sha512`.
 - `[counter]` sets the initial HOTP moving factor (ignored for TOTP).
+- In `<name>` and `[issuer]`, use `\ ` (backslash space) to embed a literal space.
 
 `TOTP GET <index>` prints the current code. For HOTP it also advances and
 persists the counter.

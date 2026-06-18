@@ -18,7 +18,7 @@ AUTH when secure serial is enabled; the BLE console talks over Bluetooth instead
 | `ble_serial.py` | Interactive serial console over BLE (Nordic UART Service), like a wireless `pio device monitor`. | run with no args to auto-scan; `--address <mac>`, `--name`, `--scan`. |
 | `backup.py` | Drive the on-device backup command, transfer the encrypted container over the vFAT serial shell, and decrypt/encrypt it off-device. | `--export`/`--import <pass>`, `--delete`; `--download`/`--upload <file>`; `--decrypt`/`--encrypt` with `--out` and `--pass`. |
 | `coredump.py` | Read an ESP32 core dump from flash and analyze it with GDB. | `python tools/coredump.py [port]`. |
-| `build_lang_image.py` | Build the `plugins` FAT image seeded with the `lang_<code>.json` files, for first-flash provisioning. | `--lang-dir <dir>` (default `assets/i18n`), `--output`, `--partition-size`. |
+| `build_lang_image.py` | Build the `plugins` FAT image, seeding `system/i18n/lang_<code>.json` and bundling the user-area demo files, for first-flash provisioning. | `--lang-dir <dir>` (default `assets/i18n`), `--assets-dir <dir>` (default `assets/vfat`), `--output`, `--partition-size`. |
 | `2fa.py` | Provision OATH credentials (TOTP/HOTP) over the on-device serial command. | `--list`, `--add-totp`/`--add-hotp <name> <secret>`, `--get`/`--del <index>`, plus `--issuer`/`--digits`/`--period`/`--algo`/`--counter`. |
 | `start_webflasher.py` | Serve the local web-flasher over HTTP against the most recent local build and open the browser. | `--port`, `--no-browser`, `--build`, `--lang`. |
 | `pio_submodules.py` | PlatformIO pre-build hook: initialize the pinned git submodules if missing. | runs automatically during the build. |
@@ -39,7 +39,7 @@ resets all settings. The port is auto-detected if `--port` is omitted.
 
 `upload.py` is the one tool for getting content onto the badge over serial. It
 installs and manages plugins (`--wasm`/`--meta`, plus list/info/delete/
-start/stop), writes a UI language file to `/plugins/i18n/` and reloads it
+start/stop), writes a UI language file to `/vfat/system/i18n/` and reloads it
 (`--lang-overlay`), or streams any file onto the plugins partition via the vFAT
 `RECEIVE` path (`--put`). It needs `pyserial`.
 
@@ -61,9 +61,12 @@ local build.
 ### Language image
 
 `build_lang_image.py` builds a wear-levelled FAT image of the `plugins`
-partition seeded with the `lang_<code>.json` overlay files, so a fresh flash
-already has the languages installed. It is invoked by `start_webflasher.py
---lang` and can be run on its own. See [Languages](/power/languages/).
+partition. It seeds the `lang_<code>.json` overlay files into `system/i18n/`
+(`--lang-dir`, default `assets/i18n`) and bundles the user-area files from
+`--assets-dir` (default `assets/vfat`, shipping `demo.jpg` and `demo.md`) into
+the partition root, so a fresh flash already has the languages installed and the
+file area populated. It is invoked by `start_webflasher.py --lang` and can be
+run on its own. See [Languages](/power/languages/).
 
 ### Build helpers
 

@@ -1,0 +1,4 @@
+dependencies:
+  espressif/libpng: "^1.6.58"
+  idf:
+    version: ">=5.0"

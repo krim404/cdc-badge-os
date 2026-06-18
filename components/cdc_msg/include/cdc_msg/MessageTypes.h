@@ -80,8 +80,12 @@ inline constexpr uint8_t kMaxMimeLen = kMimeBufSize - 1;
 
 /// Peer display-name buffer size including NUL (matches hal::BleScanResult::name).
 inline constexpr uint8_t kNameBufSize = 32;
-/// Largest peer-name string length on the wire (excludes NUL).
+/// Largest peer-name string length on the wire (excludes NUL); fits in 5 bits.
 inline constexpr uint8_t kMaxNameLen = kNameBufSize - 1;
+/// Low 5 bits of the OFFER nameLen byte carry the name length (0..kMaxNameLen).
+inline constexpr uint8_t kOfferNameLenMask = 0x1F;
+/// Bit 7 of the OFFER nameLen byte: sender requests a session-persistent pairing.
+inline constexpr uint8_t kOfferFlagPersist = 0x80;
 
 /// OFFER fixed header length: op + ver + u32 totalLen + mimeLen + nameLen.
 inline constexpr uint8_t kOfferHeaderLen = 8;

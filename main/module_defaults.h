@@ -24,6 +24,7 @@ namespace cdc::module_defaults {
     X("mod_blehid",     true)  \
     X("mod_usbhid",     false) \
     X("mod_otphid",     false) \
-    X("mod_vfat",       true)
+    X("mod_vfat",       true)  \
+    X("mod_msc",        false)
 
 } // namespace cdc::module_defaults

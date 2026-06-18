@@ -23,11 +23,14 @@ spec-driven.
   invariant, not history.
 
 ### Test Item
-- **Fields**: `id` (T-Hxx host / T-HILxx hardware), `tier` (host-native | HIL), `target`,
-  `source_FRs`, `dependency` (none | mbedTLS | TROPIC01 | USB | BLE | display), `automatable`.
+- **Fields**: `id` (`T-Hxx` host / `A-*` on-device automatic / `S-*` on-device semi-automatic),
+  `tier` (host-native | on-device), `category` (host | auto-on-device | semi-on-device), `target`,
+  `source_FRs`, `interaction` (none | serial | button | host-ctap2 | host-ccid | second-badge |
+  visual), `dependency` (none | mbedTLS | TROPIC01 | USB | BLE | display).
 - **Relationships**: verifies one or more FRs of a Spec.
-- **Validation**: host tests run in CI without flash; HIL tests are repeatable documented
-  procedures with explicit pass criteria.
+- **Validation**: host tests run in CI without flash; automatic on-device tests run unattended over
+  the serial console and self-clean; semi-automatic tests are repeatable operator-assisted procedures
+  with explicit pass criteria. All on-device tests verify the installed release; none flash firmware.
 
 ### Risk
 - **Fields**: `id`, `description`, `severity` (low/med/high), `area` (security/process/CI/hardware),
@@ -81,18 +84,45 @@ documented procedures.
 | T-H08 | Capability/GPIO policy: hard block list + manifest whitelist + busy conflicts | FR-073 | none |
 | T-H09 | CP437 ↔ UTF-8 conversion (`cdc::core::cp437::fromUtf8`) | FR-094, FR-100 | none |
 
-### Tier 2 — hardware-in-the-loop (HIL) test plans (documented procedures)
+### Tier 2 — on-device tests (finished firmware, optional, non-blocking)
 
-| ID | Target | Source FRs | Dependency |
-|----|--------|-----------|------------|
-| T-HIL01 | FIDO2 register + assert; ClientPIN verify uses `LEFT(SHA-256,16)`; counter increments | FR-010..017 | TROPIC01, USB |
-| T-HIL02 | OpenPGP CCID: `gpg --card-status`, sign/decrypt/SSH; PW1/PW3 semantics | FR-040..043 | TROPIC01, USB |
-| T-HIL03 | BLE numeric-comparison transfer (vCard) round-trip; abuse budgets | FR-050..054 | BLE |
-| T-HIL04 | Duress wipe: full ECC 0–31 + R-Mem 0–511 + NVS; crash-safe re-run | FR-004, FR-070 | TROPIC01 |
-| T-HIL05 | PIN lockout: 3 attempts → 60s recovery → no permanent brick; shared serial AUTH lockout | FR-002, FR-003 | TROPIC01 |
-| T-HIL06 | E-paper refresh: PARTIAL_LIGHT clock never promoted to FULL | FR-094 | display |
-| T-HIL07 | Plugin sandbox: blocked pin / undeclared capability / OOB pointer rejected, no crash | FR-072, FR-073 | hardware |
-| T-HIL08 | Backup export/import round-trip on device; wrong passphrase rejected; SE keys excluded | FR-060..063 | TROPIC01 |
+Verify the installed release on a real badge. The release is flashed once; states are reached at
+runtime. Automatic tests are driven over the serial console by `tools/ondevice/` and run unattended;
+semi-automatic tests need an operator and run last. See [hil/README.md](./hil/README.md).
+
+**Automatic (serial-only, `tools/ondevice/catalog_auto.py`)** — `mut` = state-mutating (needs
+`--mutating`), `slow` = ~65 s (needs `--slow`):
+
+| ID | Target | Source FRs | Flags |
+|----|--------|-----------|-------|
+| A-SYS | PING/STATUS/MEM/CPU + MODULE LIST healthy | — | — |
+| A-PIN | PIN change round-trip via `PIN CHANGE` + `AUTH` | FR-001, FR-007 | mut |
+| A-LOCK | Serial-AUTH lockout → 60 s recovery → no brick (shared budget) | FR-002, FR-003 | slow |
+| A-2FA | TOTP code matches host-computed RFC 6238 vector | FR-020, FR-023 | — |
+| A-PWD | Password vault add/get/edit/delete round-trip | FR-030, FR-032 | — |
+| A-VCARD | Own vCard set/get round-trip (original restored) | FR-054 | — |
+| A-GPG | GPG generate → status → armored export (clean badge only) | FR-040, FR-044 | mut |
+| A-BACKUP | Backup export → container framing → wrong-pass reject → import | FR-060..063 | mut |
+| A-LANG | i18n overlay `LANG INFO`/`RELOAD` | FR-100 | — |
+| A-SET | Time set/get + NVS list | FR-091, FR-094 | — |
+| A-WIFI | WiFi status/on/scan/off | FR-090 | — |
+| A-TR01 | Secure-element status/slots healthy | persistence | — |
+
+**Semi-automatic (operator-assisted, run last, `tools/ondevice/catalog_semi.py`)**:
+
+| ID | Target | Source FRs | Interaction | Plan |
+|----|--------|-----------|-------------|------|
+| S-FIDO2 | FIDO2 register + assert; ClientPIN `LEFT(SHA-256,16)`; counter increments | FR-010..017 | host CTAP2 + button | T-HIL01 |
+| S-OPENPGP | OpenPGP CCID: `gpg --card-status`, sign/decrypt/SSH; PW1/PW3 | FR-040..043 | host CCID | T-HIL02 |
+| S-BLE-XFER | BLE numeric-comparison vCard transfer round-trip | FR-050..054 | two badges | T-HIL03 |
+| S-GPG-BLE | Cross-signature returned over BLE | FR-044 | two badges | T-HIL02 |
+| S-BLE-HID | BLE HID keyboard keystrokes | FR-090 | paired host | — |
+| S-USB-OTP | USB keyboard / Yubico OTP / HMAC-CR | FR-023 | host HID | — |
+| S-EPAPER | PARTIAL_LIGHT clock never promoted to FULL | FR-094 | visual | T-HIL06 |
+| S-PINUI | Lock-screen lockout countdown + recovery | FR-002, FR-003 | button | T-HIL05 |
+| S-DURESS | Duress wipe: full ECC + R-Mem + NVS; indistinguishable | FR-004, FR-070 | button (destructive) | T-HIL04 |
+| S-KEYPAD | Keypad / T9 input incl. umlauts | FR-110, FR-111 | button | — |
+| S-PLUGINUI | Plugin sandbox rejection + canvas back-key | FR-072, FR-073 | crafted plugin + button | T-HIL07 |
 
 ## 3. ADR Catalog — architecture decisions to document
 
@@ -131,7 +161,7 @@ All entries carry `execute: NO` for this plan. They are recorded so the knowledg
 
 | ID | Refactoring | Rationale | execute |
 |----|-------------|-----------|---------|
-| RF-01 | Convert `#ifndef` header guards → `#pragma once` in `mod_fido2`/`mod_gpg`/`openpgp` | Style uniformity (constitution outliers) | **NO** |
+| RF-01 | Convert `#ifndef` header guards → `#pragma once` in `mod_fido2`/`mod_gpg`/`openpgp` | Style uniformity (constitution outliers) | **DONE** — already `#pragma once` |
 | RF-02 | Consolidate duplicated CRC / base64 / hex helpers into one shared util | DRY across OTP/backup/PGP/transfer | **NO** |
 | RF-03 | OpenPGP DEC key is decrypted to RAM per ECDH op | Document the caveat; no design change now | **NO** |
 | RF-04 | Enforce `credProtect` levels at assertion | Close B2; needs CTAP2 design + HIL | **NO** |

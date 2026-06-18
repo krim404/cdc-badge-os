@@ -175,7 +175,7 @@ clarifications, none left silently wrong.
 
 **Goal**: Preserve the refactoring backlog as documentation only (gate C8); execute none.
 
-- [x] T063 [US7] Create `website/src/content/docs/dev/refactoring-backlog.md` with RF-01..RF-06, each `execute: NO` + rationale (incl. RF-05 rejected PIN-hash unification, RF-06 D4 stale `docs/SECURITY.md` reference in `feature_flags.h:48`) — Accept: 6 entries, all execute:NO; no code modified.
+- [x] T063 [US7] Catalogue RF-01..RF-06 in `specs/001-current-system-spec/data-model.md` §5, each `execute: NO` + rationale (incl. RF-05 rejected PIN-hash unification, RF-06 D4 stale `docs/SECURITY.md` reference in `feature_flags.h:48`) — Accept: 6 entries, all execute:NO; no code modified.
 
 ---
 
@@ -183,7 +183,7 @@ clarifications, none left silently wrong.
 
 - [x] T064 Verify gate C6: run `pio run -e cdc_badge_usb` and diff against the T006 baseline — Accept: firmware artifact unchanged by the scaffolding (no behaviour/size drift attributable to `test/host`, `[env:native]`, or doc files).
 - [x] T065 Run `quickstart.md` steps 1–7 and record outcomes in `specs/001-current-system-spec/coverage.md` — Accept: gates C1–C8 hold; any failures listed.
-- [x] T066 [P] Update the dev-docs index/nav (`website/src/content/docs/dev/index.md` + Astro sidebar config) to link ADRs, the refactoring backlog, the testing approach, and the reconciliation tracker — Accept: new pages reachable from the docs nav; site builds.
+- [x] T066 [P] Update the dev-docs index/nav (`website/src/content/docs/dev/index.md` + Astro sidebar config) to link ADRs, the testing approach, and the reconciliation tracker — Accept: new pages reachable from the docs nav; site builds.
 
 ---
 

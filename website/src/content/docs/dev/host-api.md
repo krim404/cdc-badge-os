@@ -64,10 +64,14 @@ is converted to the display codepage internally, and text read back
 (`host_api.h:1414-1424`). Plugins normally never convert anything themselves.
 
 For message transfer, payload bytes are opaque and not converted; for text MIME
-types they are UTF-8 (`host_api.h:1336-1339`). Two optional helpers,
-`host_str_to_display` and `host_str_to_utf8`, exist for advanced cases such as
-pre-rendering to a specific codepage; do not feed their output back into the
-auto-converting UI functions (`host_api.h:1428-1454`).
+types they are UTF-8 (`host_api.h:1336-1339`). `host_msg_send_interactive` and
+`host_msg_send` take a `flags` argument; passing `HOST_MSG_FLAG_PERSIST` opts the
+transfer into a session-persistent pairing, so repeated sends to the same peer
+(e.g. a messenger) confirm the numeric-comparison code only once per power
+session. Two optional helpers, `host_str_to_display` and `host_str_to_utf8`,
+exist for advanced cases such as pre-rendering to a specific codepage; do not
+feed their output back into the auto-converting UI functions
+(`host_api.h:1428-1454`).
 
 ## Function families
 
@@ -92,8 +96,8 @@ The "Capability" column reflects what is enforced at the host-call boundary
 | WiFi | `wifi` (manifest only, see note) | `host_wifi_request`, `host_wifi_is_connected`, `host_wifi_start_scan`, `host_wifi_scan_results` |
 | BLE | `ble` | `host_ble_register_service`, `host_ble_send_notification`, `host_ble_scan_start`, `host_ble_connect`, `host_ble_subscribe` |
 | NVS (plugin-namespaced) | none | `host_nvs_get_blob`, `host_nvs_set_blob`, `host_nvs_get_u32`, `host_nvs_erase_all` |
-| vFAT (sandboxed files) | `vfat` | `host_fs_write`, `host_fs_read`, `host_fs_remove`, `host_fs_list`, `host_fs_view` |
-| UI - Views | none | `host_ui_push_toast`, `host_ui_push_list`, `host_ui_push_t9_input`, `host_ui_push_confirm`, `host_ui_pop` |
+| vFAT (sandboxed files) | `vfat` | `host_fs_write`, `host_fs_read`, `host_fs_remove`, `host_fs_list`, `host_fs_view`, `host_fs_view_image`, `host_fs_view_markdown` |
+| UI - Views | none | `host_ui_push_toast`, `host_ui_push_list`, `host_ui_push_t9_input`, `host_ui_push_confirm`, `host_ui_pop`, `host_ui_view_image`, `host_ui_view_markdown`, `host_browser_open` |
 | UI - Canvas | none | `host_view_canvas_push`, `host_view_canvas_draw_text`, `host_view_canvas_add_slider`, `host_view_canvas_commit` |
 | UI - Low-level GFX | `display_lowlevel` | `host_display_width`, `host_display_draw_line`, `host_display_fill_rect`, `host_display_flush` |
 | I18n | none | `host_i18n_tr_key`, `host_i18n_tr_core`, `host_i18n_tr_meta`, `host_i18n_current_language` |

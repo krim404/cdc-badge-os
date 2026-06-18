@@ -88,6 +88,14 @@ public:
     bool isBadgeBlocked() const;  // Checks retries=0 OR time lockout active
     void resetBadgeRetries();
 
+    // === CTAP2 setMinPINLength policy floor (RAM; re-applied from NVS at boot) ===
+    /**
+     * \brief Sets the minimum badge-PIN length floor enforced on changes.
+     * \param minLen Requested floor; clamped into `[BADGE_PIN_MIN, BADGE_PIN_MAX]`.
+     */
+    void setMinPinLengthFloor(uint8_t minLen);
+    uint8_t minPinLengthFloor() const { return minPinFloor_; }
+
     // === Lockout Timer (RAM only, not persistent) ===
     static constexpr uint32_t LOCKOUT_DURATION_MS = 60000;  // 60 seconds
     void startLockout();
@@ -112,6 +120,12 @@ public:
     bool isPW1Blocked() const { return pw1Retries_ == 0; }
     void resetPW1Retries();
 
+    // OpenPGP KDF-DO path: PW1 reference is a host-supplied pre-hash (binary,
+    // may contain NUL bytes, up to 64 bytes). Same stored format and retry
+    // semantics as the cleartext path; only the input differs.
+    bool verifyPW1Raw(const uint8_t* data, size_t len);
+    bool setPW1Raw(const uint8_t* data, size_t len);
+
     // === OpenPGP PW3 (Admin PIN) ===
     bool verifyPW3(const char* pin);
     bool changePW3(const char* currentPin, const char* newPin);
@@ -121,6 +135,10 @@ public:
     uint8_t getPW3Retries() const { return pw3Retries_; }
     bool isPW3Blocked() const { return pw3Retries_ == 0; }
     void resetPW3Retries();
+
+    /// OpenPGP KDF-DO path: PW3 reference is a host-supplied pre-hash.
+    bool verifyPW3Raw(const uint8_t* data, size_t len);
+    bool setPW3Raw(const uint8_t* data, size_t len);
 
     // === Duress / Self-Destruct PIN (optional, default NOT set) ===
     /**
@@ -175,6 +193,7 @@ private:
     uint8_t badgeHash_[BADGE_HASH_SIZE] = {};
     uint8_t badgeRetries_ = MAX_RETRIES;
     bool    badgeLocked_  = false;
+    uint8_t minPinFloor_  = BADGE_PIN_MIN;
 
     // OpenPGP KDF data
     uint32_t iterations_ = DEFAULT_ITERATIONS;
@@ -216,6 +235,10 @@ private:
 
     // OpenPGP KDF hash: SHA256 iterated with salt
     bool computeKdfHash(const char* pin, const uint8_t* salt, uint8_t* hashOut) const;
+    // Length-aware variant accepting binary input (NUL-safe, up to 64 bytes),
+    // used by the KDF-DO pre-hashed PIN path.
+    bool computeKdfHash(const uint8_t* data, size_t len, const uint8_t* salt,
+                        uint8_t* hashOut) const;
 
     bool compareHash(const uint8_t* h1, const uint8_t* h2, size_t len) const;
     void generateSalt(uint8_t* salt);
@@ -237,6 +260,15 @@ private:
      * \return `true` if PIN matches the stored hash.
      */
     bool verifyPin(PinSlot slot, const char* pin);
+
+    /**
+     * \brief Binary-input verification for the PW1/PW3 slots (KDF-DO path).
+     * \param slot PW1 or PW3 (BADGE is rejected).
+     * \param data Candidate pre-hash bytes.
+     * \param len Candidate length (1..64).
+     * \return `true` if the value matches the stored reference.
+     */
+    bool verifyPinRaw(PinSlot slot, const uint8_t* data, size_t len);
 };
 
 } // namespace cdc::core

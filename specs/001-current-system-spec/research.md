@@ -32,18 +32,25 @@ process, tooling and documentation.
 ## Decision: test strategy on embedded firmware
 
 - **Decision**: two tiers. Tier 1 = **host `native` unit tests** (PlatformIO `[env:native]` + Unity)
-  for pure logic with no ESP-IDF/hardware dependency. Tier 2 = **documented HIL test plans**
-  (manual/semi-automated over USB CDC/HID/CCID + BLE) for hardware/protocol behaviour.
+  for pure logic with no ESP-IDF/hardware dependency. Tier 2 = **on-device tests that verify the
+  finished, shipped firmware** on a real badge, split into **fully automatic** (driven end-to-end over
+  the USB-CDC serial console, unattended, self-cleaning — `tools/ondevice/`) and **semi-automatic**
+  (operator-assisted: button/user-presence, a host CTAP2/CCID stack, a second badge, or a look at the
+  display — the `hil/` plans). The semi-automatic tests run last.
+- **One-image rule**: the release under test is flashed **once**; every test reaches its state at
+  runtime (serial commands, power-cycle, factory-reset/duress, buttons). No test-only or
+  alternate-profile firmware is ever flashed per test or per state.
 - **Rationale**: most security-critical *logic* (KDFs, CRCs, base64, CBOR encoders, framing, bounds,
-  capability/GPIO policy) is portable and testable on host in CI with zero flash cost; behaviour that
-  needs the secure element, USB stack, or radio cannot run in CI and is covered by repeatable HIL
-  procedures instead. Honors the flash-conservation rule and the constitution's "tests OPTIONAL,
-  hardware-verified" stance (tests are additive, non-blocking).
-- **Alternatives considered**: (a) on-target Unity via `pio test` — rejected as the default because
-  it requires a flash per run and a connected badge; kept as an option for SE-dependent units later.
-  (b) QEMU ESP32-S3 — rejected for now (no TROPIC01/peripheral models; high setup cost).
+  capability/GPIO policy) is portable and testable on host in CI with zero flash cost. Behaviour that
+  needs the secure element, USB stack, or radio is exercised against the running release: whatever the
+  serial console can drive and observe is automatic, the rest is operator-assisted. Both tiers are
+  **optional and non-blocking** (constitution: "tests OPTIONAL, hardware-verified").
+- **Alternatives considered**: (a) flashing a dedicated test/alternate-profile firmware per test or
+  per state — **rejected**: it wears the flash and does not verify what ships. (b) on-target Unity via
+  `pio test` — rejected as the default because it requires a flash per run; kept as an option for
+  SE-dependent units later. (c) QEMU ESP32-S3 — rejected for now (no TROPIC01/peripheral models).
 - **CI-scope caveat (logged as a risk)**: the TROPIC01 secure element, USB and BLE stacks are **not**
-  available on host, so attestation, key generation, CCID, and radio paths stay HIL-only.
+  available on host, so attestation, key generation, CCID, and radio paths are on-device only.
 
 ## Decision: ADR format and location
 

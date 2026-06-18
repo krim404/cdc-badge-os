@@ -68,9 +68,10 @@ The slot map is the compile-time, authoritative allocation across modules
 | System / attestation | 0 | 0 (reserved key slot) | 0 (reserved) |
 | GPG | 2 | 1-3 | 1-3 |
 | CA | 3 | 4 | 4 |
-| FIDO2 | 4 | 5-30 | 5-31 |
-| 2FA (TOTP) | 5 | - | 32-131 |
-| Password vault | 6 | - | 132-500 |
+| FIDO2 | 4 | 5-30 | 5-30 |
+| 2FA (TOTP) | 5 | - | 31-130 |
+| GPG RSA keys | 8 | - | 131-136 |
+| Password vault | 6 | - | 137-500 |
 | Plugins | 7 | 31 | 501-511 |
 
 Source lines in `main/tropic_slot_map.h`:
@@ -78,12 +79,13 @@ Source lines in `main/tropic_slot_map.h`:
 - Module IDs: `MODULE_ID_MOD_SYSTEM 0` (line 30), `MODULE_ID_MOD_GPG 2` (line
   31), `MODULE_ID_MOD_CA 3` (line 32), `MODULE_ID_MOD_FIDO2 4` (line 33),
   `MODULE_ID_MOD_2FA 5` (line 34), `MODULE_ID_MOD_PASSWORD 6` (line 35),
-  `MODULE_ID_PLUGIN_POOL 7` (line 36); `MODULE_ID_UNKNOWN 255` (line 37).
-- ECC ranges: GPG 1-3 (lines 40-41), CA 4-4 (lines 42-43), FIDO2 5-30 (lines
-  44-45), Plugins 31-31 (lines 47-48).
-- R-Memory ranges: GPG 1-3 (lines 51-52), CA 4-4 (lines 53-54), FIDO2 5-31
-  (lines 55-56), 2FA 32-131 (lines 57-58), Password 132-500 (lines 59-60),
-  Plugins 501-511 (lines 64-65).
+  `MODULE_ID_PLUGIN_POOL 7` (line 36), `MODULE_ID_MOD_GPG_RSA 8` (line 37);
+  `MODULE_ID_UNKNOWN 255` (line 38).
+- ECC ranges: GPG 1-3 (lines 41-42), CA 4-4 (lines 43-44), FIDO2 5-30 (lines
+  45-46), Plugins 31-31 (lines 48-49).
+- R-Memory ranges: GPG 1-3 (lines 56-57), CA 4-4 (lines 58-59), FIDO2 5-30
+  (lines 60-61), 2FA 31-130 (lines 62-63), GPG RSA 131-136 (lines 64-65),
+  Password 137-500 (lines 66-67), Plugins 501-511 (lines 71-72).
 
 Notes from the source:
 

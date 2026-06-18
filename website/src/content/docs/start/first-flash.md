@@ -159,7 +159,8 @@ Flashes the same three parts plus the initial plugins/language image:
 
 The factory image's `plugins_initial.bin` lands at `0xDF0000`, the start of the `plugins`
 partition, which is why Factory Setup resets the plugin/language partition while a plain
-Firmware Update leaves it untouched.
+Firmware Update leaves it untouched. The seed image carries the language overlays and the
+`demo.jpg` and `demo.md` files in the user file area.
 
 ## After flashing
 

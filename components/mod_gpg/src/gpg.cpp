@@ -105,10 +105,14 @@ bool gpg_get_status(gpg_status_t *status) {
     }
     status->created_at = openpgp_get_gen_time(KEY_SIG);
     status->sign_count = openpgp_get_sig_count();
-    // Curve isn't currently exposed by the OpenPGP card-application state;
-    // default to Ed25519 (the on-device generate default) until that lookup
-    // lands.
-    status->curve = CDC_CURVE_ED25519;
+    // Read the actual SIG-key curve from the secure element so EdDSA/ECDSA
+    // labelling and the v4 fingerprint body match the on-card key.
+    uint8_t sig_pub[64] = {0};
+    uint8_t sig_curve = CDC_CURVE_ED25519;
+    status->curve = se_get_pubkey(gpg_storage_sig_slot(), sig_pub, sizeof(sig_pub),
+                                  &sig_curve)
+                        ? sig_curve
+                        : CDC_CURVE_ED25519;
 
     char name[GPG_USER_ID_MAX] = {0};
     openpgp_get_cardholder_name(name, sizeof(name));

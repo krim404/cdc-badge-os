@@ -2,8 +2,10 @@
 #include "fingerprint.h"
 #include "mod_gpg/gpg.h"
 #include "mod_gpg/GpgStorage.h"
+#include "mod_gpg/GpgSelfCertStore.h"
 #include "mod_gpg/openpgp/constants.h"
 #include "cdc_hal/ISecureElement.h"
+#include "cdc_core/Raii.h"
 #include "cdc_log.h"
 
 #include <mbedtls/base64.h>
@@ -45,11 +47,14 @@ size_t buildPubkeyBody(const gpg_recv_key_t& key, uint8_t* out, size_t out_size)
     uint8_t mpi[MPI_FULL_SIZE_P256];
     size_t  mpi_len;
     if (is_ed25519) {
-        uint16_t bits = (key.pubkey[0] & 0x80) ? 256 : 255;
+        // EdDSA point in OpenPGP native format: 0x40 prefix + 32-byte point,
+        // encoded as a 263-bit MPI (RFC 9580 / 4880-bis).
+        uint16_t bits = 263;
         mpi[0] = static_cast<uint8_t>((bits >> 8) & 0xFF);
         mpi[1] = static_cast<uint8_t>(bits & 0xFF);
-        std::memcpy(mpi + MPI_HEADER_SIZE, key.pubkey, ED25519_PUBKEY_SIZE);
-        mpi_len = MPI_FULL_SIZE_ED25519;
+        mpi[MPI_HEADER_SIZE] = 0x40;
+        std::memcpy(mpi + MPI_HEADER_SIZE + 1, key.pubkey, ED25519_PUBKEY_SIZE);
+        mpi_len = MPI_HEADER_SIZE + 1 + ED25519_PUBKEY_SIZE;
     } else {
         uint16_t bits = P256_PUBKEY_BITS;
         mpi[0] = static_cast<uint8_t>((bits >> 8) & 0xFF);
@@ -64,10 +69,10 @@ size_t buildPubkeyBody(const gpg_recv_key_t& key, uint8_t* out, size_t out_size)
 
     size_t off = 0;
     out[off++] = 0x04;
-    out[off++] = (key.received_at >> 24) & 0xFF;
-    out[off++] = (key.received_at >> 16) & 0xFF;
-    out[off++] = (key.received_at >> 8) & 0xFF;
-    out[off++] = key.received_at & 0xFF;
+    out[off++] = (key.created_at >> 24) & 0xFF;
+    out[off++] = (key.created_at >> 16) & 0xFF;
+    out[off++] = (key.created_at >> 8) & 0xFF;
+    out[off++] = key.created_at & 0xFF;
     out[off++] = algo;
     std::memcpy(out + off, oid, oid_len);
     off += oid_len;
@@ -188,6 +193,55 @@ size_t armorBase64(const uint8_t* data, size_t len, char* out, size_t out_size)
     return out_idx;
 }
 
+/// Wrap assembled binary OpenPGP packets into an ASCII-armored
+/// `BEGIN/END PGP PUBLIC KEY BLOCK` with the trailing CRC-24 line.
+/// \return `true` on success, `false` on buffer overflow.
+bool armorBinaryBlock(const uint8_t* binary, size_t binary_off,
+                      char* out, size_t out_size, size_t* out_len)
+{
+    static constexpr const char* kBegin = "-----BEGIN PGP PUBLIC KEY BLOCK-----\r\n\r\n";
+    static constexpr const char* kEnd   = "-----END PGP PUBLIC KEY BLOCK-----\r\n";
+    const size_t begin_len = std::strlen(kBegin);
+    const size_t end_len   = std::strlen(kEnd);
+
+    if (begin_len + end_len + (binary_off * 2) + 16 > out_size) return false;
+
+    size_t off = 0;
+    std::memcpy(out + off, kBegin, begin_len);
+    off += begin_len;
+
+    size_t body_written = armorBase64(binary, binary_off, out + off, out_size - off);
+    if (body_written == 0) return false;
+    off += body_written;
+
+    // CRC24 line: "=" + 4 base64 chars + CRLF.
+    uint8_t crc_bytes[3];
+    uint32_t crc = crc24(binary, binary_off);
+    crc_bytes[0] = (crc >> 16) & 0xFF;
+    crc_bytes[1] = (crc >> 8)  & 0xFF;
+    crc_bytes[2] = crc & 0xFF;
+
+    if (off + 8 > out_size) return false;
+    out[off++] = '=';
+    size_t crc_len = 0;
+    if (mbedtls_base64_encode(reinterpret_cast<unsigned char*>(out + off),
+                              out_size - off, &crc_len,
+                              crc_bytes, sizeof(crc_bytes)) != 0) {
+        return false;
+    }
+    off += crc_len;
+    out[off++] = '\r';
+    out[off++] = '\n';
+
+    if (off + end_len > out_size) return false;
+    std::memcpy(out + off, kEnd, end_len);
+    off += end_len;
+
+    if (off < out_size) out[off] = '\0';
+    *out_len = off;
+    return true;
+}
+
 } // namespace
 
 bool gpgCrossSign(const gpg_recv_key_t& target,
@@ -280,53 +334,52 @@ bool gpgCrossSign(const gpg_recv_key_t& target,
            == cdc::hal::SeResult::OK;
 }
 
-bool gpgBuildSignedKeyArmored(const gpg_recv_key_t& key,
-                              char* out, size_t out_size,
-                              size_t* out_len)
+size_t buildCertSigPacket(const gpg_recv_key_t& key, uint8_t* out, size_t out_size)
 {
-    if (!out || !out_len || out_size < 256) return false;
-    if (key.sig_len != 64) return false;
+    if (!out || key.sig_len != 64) return 0;
 
     gpg_status_t self_status = {};
-    if (!gpg_get_status(&self_status)) return false;
+    if (!gpg_get_status(&self_status)) return 0;
 
     uint8_t self_fp_v4[20] = {0};
     std::memcpy(self_fp_v4, self_status.fingerprint, 20);
 
-    // Build the public-key packet body for the *target*.
+    // Build the public-key packet body for the *target* (the certified key).
     uint8_t pk_body[128];
     const size_t pk_body_len = buildPubkeyBody(key, pk_body, sizeof(pk_body));
-    if (pk_body_len == 0) return false;
+    if (pk_body_len == 0) return 0;
 
     const size_t uid_len = strnlen(key.user_id, sizeof(key.user_id));
     const uint8_t sig_algo = (self_status.curve == CDC_CURVE_ED25519)
                                  ? OPENPGP_ALGO_EDDSA : OPENPGP_ALGO_ECDSA;
 
-    // Hashed + unhashed subpacket blobs.
+    // Hashed + unhashed subpacket blobs. The signature creation time must be
+    // the value used when the hash was signed (stored in sig_created_at), not
+    // the receive time, or the signature will not verify.
     uint8_t hashed_subs[8];
     const size_t hashed_subs_len = buildSigSubpackets(true, self_fp_v4,
-                                                     key.received_at,
+                                                     key.sig_created_at,
                                                      hashed_subs, sizeof(hashed_subs));
     uint8_t unhashed_subs[10];
     const size_t unhashed_subs_len = buildSigSubpackets(false, self_fp_v4,
                                                        0,
                                                        unhashed_subs, sizeof(unhashed_subs));
 
-    // Compose Signature Packet body.
-    uint8_t sig_body[256];
-    size_t  sig_body_off = 0;
-    sig_body[sig_body_off++] = 0x04;
-    sig_body[sig_body_off++] = kSigTypeGenericCert;
-    sig_body[sig_body_off++] = sig_algo;
-    sig_body[sig_body_off++] = kHashAlgoSha256;
-    sig_body[sig_body_off++] = (hashed_subs_len >> 8) & 0xFF;
-    sig_body[sig_body_off++] = hashed_subs_len & 0xFF;
-    std::memcpy(sig_body + sig_body_off, hashed_subs, hashed_subs_len);
-    sig_body_off += hashed_subs_len;
-    sig_body[sig_body_off++] = (unhashed_subs_len >> 8) & 0xFF;
-    sig_body[sig_body_off++] = unhashed_subs_len & 0xFF;
-    std::memcpy(sig_body + sig_body_off, unhashed_subs, unhashed_subs_len);
-    sig_body_off += unhashed_subs_len;
+    if (out_size < 6 + hashed_subs_len + 2 + unhashed_subs_len + 2) return 0;
+
+    size_t off = 0;
+    out[off++] = 0x04;
+    out[off++] = kSigTypeGenericCert;
+    out[off++] = sig_algo;
+    out[off++] = kHashAlgoSha256;
+    out[off++] = (hashed_subs_len >> 8) & 0xFF;
+    out[off++] = hashed_subs_len & 0xFF;
+    std::memcpy(out + off, hashed_subs, hashed_subs_len);
+    off += hashed_subs_len;
+    out[off++] = (unhashed_subs_len >> 8) & 0xFF;
+    out[off++] = unhashed_subs_len & 0xFF;
+    std::memcpy(out + off, unhashed_subs, unhashed_subs_len);
+    off += unhashed_subs_len;
 
     // Left 16 bits of signed hash: recompute the hash to obtain them.
     {
@@ -370,19 +423,38 @@ bool gpgBuildSignedKeyArmored(const gpg_recv_key_t& key,
         mbedtls_sha256_finish(&ctx, hash);
         mbedtls_sha256_free(&ctx);
 
-        sig_body[sig_body_off++] = hash[0];
-        sig_body[sig_body_off++] = hash[1];
+        if (off + 2 > out_size) return 0;
+        out[off++] = hash[0];
+        out[off++] = hash[1];
     }
 
     // Signature MPIs (R, S).
-    size_t mpi_off = writeMpi(key.my_signature,       32,
-                              sig_body + sig_body_off, sizeof(sig_body) - sig_body_off);
-    if (mpi_off == 0) return false;
-    sig_body_off += mpi_off;
-    mpi_off = writeMpi(key.my_signature + 32, 32,
-                       sig_body + sig_body_off, sizeof(sig_body) - sig_body_off);
-    if (mpi_off == 0) return false;
-    sig_body_off += mpi_off;
+    size_t mpi_off = writeMpi(key.my_signature, 32, out + off, out_size - off);
+    if (mpi_off == 0) return 0;
+    off += mpi_off;
+    mpi_off = writeMpi(key.my_signature + 32, 32, out + off, out_size - off);
+    if (mpi_off == 0) return 0;
+    off += mpi_off;
+
+    return off;
+}
+
+bool gpgBuildSignedKeyArmored(const gpg_recv_key_t& key,
+                              char* out, size_t out_size,
+                              size_t* out_len)
+{
+    if (!out || !out_len || out_size < 256) return false;
+    if (key.sig_len != 64) return false;
+
+    uint8_t pk_body[128];
+    const size_t pk_body_len = buildPubkeyBody(key, pk_body, sizeof(pk_body));
+    if (pk_body_len == 0) return false;
+
+    const size_t uid_len = strnlen(key.user_id, sizeof(key.user_id));
+
+    uint8_t sig_body[256];
+    const size_t sig_body_off = buildCertSigPacket(key, sig_body, sizeof(sig_body));
+    if (sig_body_off == 0) return false;
 
     // Assemble three packets in one buffer.
     uint8_t binary[1024];
@@ -406,48 +478,126 @@ bool gpgBuildSignedKeyArmored(const gpg_recv_key_t& key,
     std::memcpy(binary + binary_off, sig_body, sig_body_off);
     binary_off += sig_body_off;
 
-    // ASCII armor.
-    static constexpr const char* kBegin = "-----BEGIN PGP PUBLIC KEY BLOCK-----\r\n\r\n";
-    static constexpr const char* kEnd   = "-----END PGP PUBLIC KEY BLOCK-----\r\n";
-    const size_t begin_len = std::strlen(kBegin);
-    const size_t end_len   = std::strlen(kEnd);
+    return armorBinaryBlock(binary, binary_off, out, out_size, out_len);
+}
 
-    if (begin_len + end_len + (binary_off * 2) + 16 > out_size) return false;
+bool gpgBuildPublicKeyArmored(const gpg_recv_key_t& key,
+                              char* out, size_t out_size,
+                              size_t* out_len)
+{
+    if (!out || !out_len || out_size < 256) return false;
 
-    size_t off = 0;
-    std::memcpy(out + off, kBegin, begin_len);
-    off += begin_len;
+    uint8_t pk_body[128];
+    const size_t pk_body_len = buildPubkeyBody(key, pk_body, sizeof(pk_body));
+    if (pk_body_len == 0) return false;
 
-    size_t body_written = armorBase64(binary, binary_off, out + off, out_size - off);
-    if (body_written == 0) return false;
-    off += body_written;
+    const size_t uid_len = strnlen(key.user_id, sizeof(key.user_id));
 
-    // CRC24 line: "=" + 4 base64 chars + CRLF.
-    uint8_t crc_bytes[3];
-    uint32_t crc = crc24(binary, binary_off);
-    crc_bytes[0] = (crc >> 16) & 0xFF;
-    crc_bytes[1] = (crc >> 8)  & 0xFF;
-    crc_bytes[2] = crc & 0xFF;
+    uint8_t binary[512];
+    size_t  binary_off = 0;
 
-    if (off + 8 > out_size) return false;
-    out[off++] = '=';
-    size_t crc_len = 0;
-    if (mbedtls_base64_encode(reinterpret_cast<unsigned char*>(out + off),
-                              out_size - off, &crc_len,
-                              crc_bytes, sizeof(crc_bytes)) != 0) {
+    // Public Key Packet (Tag 6, new format).
+    binary[binary_off++] = 0xC6;
+    binary_off += writeNewFormatLength(binary + binary_off, pk_body_len);
+    std::memcpy(binary + binary_off, pk_body, pk_body_len);
+    binary_off += pk_body_len;
+
+    // User ID Packet (Tag 13, new format).
+    binary[binary_off++] = 0xCD;
+    binary_off += writeNewFormatLength(binary + binary_off, uid_len);
+    std::memcpy(binary + binary_off, key.user_id, uid_len);
+    binary_off += uid_len;
+
+    return armorBinaryBlock(binary, binary_off, out, out_size, out_len);
+}
+
+bool gpgBuildOwnSignedKeyArmored(char* out, size_t out_size, size_t* out_len)
+{
+    if (!out || !out_len || out_size < 256) return false;
+
+    gpg_status_t status = {};
+    if (!gpg_get_status(&status)) return false;
+
+    auto* se = cdc::hal::getSecureElementInstance();
+    if (!se) return false;
+
+    uint8_t pubkey[64 + 1] = {0};
+    cdc::hal::EccCurve hal_curve = cdc::hal::EccCurve::P256;
+    if (se->eccGetPublicKey(gpg_storage_sig_slot(), pubkey, &hal_curve)
+        != cdc::hal::SeResult::OK) {
         return false;
     }
-    off += crc_len;
-    out[off++] = '\r';
-    out[off++] = '\n';
+    const uint8_t curve = (hal_curve == cdc::hal::EccCurve::ED25519) ? CDC_CURVE_ED25519
+                                                                     : CDC_CURVE_P256;
+    if (curve == CDC_CURVE_P256 && pubkey[0] == 0x04) {
+        std::memmove(pubkey, pubkey + 1, 64);
+    }
 
-    if (off + end_len > out_size) return false;
-    std::memcpy(out + off, kEnd, end_len);
-    off += end_len;
+    // Reuse the received-key body builder by describing our own key as one.
+    gpg_recv_key_t self = {};
+    self.curve = curve;
+    self.pubkey_len = (curve == CDC_CURVE_ED25519) ? 32 : 64;
+    std::memcpy(self.pubkey, pubkey, self.pubkey_len);
+    self.created_at = status.created_at;
+    std::memcpy(self.fingerprint_v4, status.fingerprint, 20);
+    std::strncpy(self.user_id, status.user_id, sizeof(self.user_id) - 1);
 
-    if (off < out_size) out[off] = '\0';
-    *out_len = off;
-    return true;
+    uint8_t pk_body[128];
+    const size_t pk_body_len = buildPubkeyBody(self, pk_body, sizeof(pk_body));
+    if (pk_body_len == 0) return false;
+    const size_t uid_len = strnlen(self.user_id, sizeof(self.user_id));
+
+    constexpr size_t kBinaryCap = 3072;
+    auto binary = ::cdc::core::psramAlloc<uint8_t>(kBinaryCap);
+    if (!binary) return false;
+    size_t binary_off = 0;
+
+    // Public Key Packet (Tag 6, new format).
+    binary[binary_off++] = 0xC6;
+    binary_off += writeNewFormatLength(binary.get() + binary_off, pk_body_len);
+    std::memcpy(binary.get() + binary_off, pk_body, pk_body_len);
+    binary_off += pk_body_len;
+
+    // User ID Packet (Tag 13, new format).
+    binary[binary_off++] = 0xCD;
+    binary_off += writeNewFormatLength(binary.get() + binary_off, uid_len);
+    std::memcpy(binary.get() + binary_off, self.user_id, uid_len);
+    binary_off += uid_len;
+
+    // Self-signature (Tag 2): certify our own UID with our own SIG key, so the
+    // exported block is a valid stand-alone OpenPGP key. Without it gpg reports
+    // the UID as unsigned and the key as unusable. The signature creation time
+    // is the key creation time, for a deterministic export.
+    uint8_t self_sig[64];
+    if (gpgCrossSign(self, self.created_at, self_sig)) {
+        self.sig_len = 64;
+        self.sig_created_at = self.created_at;
+        std::memcpy(self.my_signature, self_sig, sizeof(self_sig));
+        uint8_t sig_body[256];
+        const size_t sig_body_off = buildCertSigPacket(self, sig_body, sizeof(sig_body));
+        if (sig_body_off > 0 && binary_off + 1 + 5 + sig_body_off <= kBinaryCap) {
+            binary[binary_off++] = 0xC2;
+            binary_off += writeNewFormatLength(binary.get() + binary_off, sig_body_off);
+            std::memcpy(binary.get() + binary_off, sig_body, sig_body_off);
+            binary_off += sig_body_off;
+        }
+    }
+
+    // One Signature Packet (Tag 2, new format) per stored third-party cert.
+    auto& store = GpgSelfCertStore::instance();
+    const uint8_t n = store.count();
+    for (uint8_t i = 0; i < n; ++i) {
+        gpg_self_cert_t cert;
+        if (!store.getCert(i, &cert)) continue;
+        if (cert.sig_pkt_len == 0 || cert.sig_pkt_len > kGpgSelfCertSigMax) continue;
+        if (binary_off + 1 + 5 + cert.sig_pkt_len > kBinaryCap) break;
+        binary[binary_off++] = 0xC2;
+        binary_off += writeNewFormatLength(binary.get() + binary_off, cert.sig_pkt_len);
+        std::memcpy(binary.get() + binary_off, cert.sig_pkt, cert.sig_pkt_len);
+        binary_off += cert.sig_pkt_len;
+    }
+
+    return armorBinaryBlock(binary.get(), binary_off, out, out_size, out_len);
 }
 
 } // namespace cdc::mod_gpg

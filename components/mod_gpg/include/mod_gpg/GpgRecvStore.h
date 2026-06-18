@@ -11,10 +11,14 @@ constexpr uint8_t kGpgRecvFlagVerified = 0x01;
  * \brief One GPG public key received from another badge.
  *
  * Persisted as a single NVS blob per key. The on-wire BLE payload supplies
- * `curve`, `pubkey`, `pubkey_len`, `fingerprint_v4` and `user_id`; the badge
- * computes `fingerprint_v5` locally and fills `received_at` from the RTC.
- * `my_signature` / `sig_len` / `flags` start out as zeros and are filled by
- * `setSignature()` after a cross-sign action.
+ * `curve`, `pubkey`, `pubkey_len`, `created_at`, `fingerprint_v4` and
+ * `user_id`; the badge computes `fingerprint_v5` locally and fills
+ * `received_at` from the RTC. `created_at` is the originator's key-creation
+ * time and must reproduce `fingerprint_v4` (validated on receive) so the
+ * certification binds to the peer's real OpenPGP key. `my_signature` /
+ * `sig_len` / `sig_created_at` / `flags` start out as zeros and are filled by
+ * `setSignature()` after a cross-sign action; `sig_created_at` is the
+ * signature creation time embedded into both the signed hash and the export.
  */
 #pragma pack(push, 1)
 struct gpg_recv_key_t {
@@ -22,17 +26,19 @@ struct gpg_recv_key_t {
     char     user_id[64];
     uint8_t  pubkey[64];
     uint8_t  pubkey_len;
+    uint32_t created_at;
     uint8_t  fingerprint_v4[20];
     uint8_t  fingerprint_v5[32];
     uint32_t received_at;
     uint8_t  my_signature[64];
     uint8_t  sig_len;
+    uint32_t sig_created_at;
     uint8_t  flags;
 };
 #pragma pack(pop)
 
 static_assert(sizeof(gpg_recv_key_t) ==
-              (1 + 64 + 64 + 1 + 20 + 32 + 4 + 64 + 1 + 1),
+              (1 + 64 + 64 + 1 + 4 + 20 + 32 + 4 + 64 + 1 + 4 + 1),
               "gpg_recv_key_t layout drift");
 
 /**
@@ -82,9 +88,10 @@ public:
     /// Remove one key by sorted index. No-op if `index` is out of range.
     bool deleteKey(uint8_t index);
 
-    /// Attach a cross-signature and flag bits to an existing entry.
+    /// Attach a cross-signature, its creation time and flag bits to an entry.
     bool setSignature(uint8_t index,
                       const uint8_t* sig, uint8_t sig_len,
+                      uint32_t sig_created_at,
                       uint8_t flags);
 
 private:

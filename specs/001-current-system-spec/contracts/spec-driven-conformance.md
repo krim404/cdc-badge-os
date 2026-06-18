@@ -19,10 +19,14 @@ tasks are measured against.
 
 ## C3 — Test contract
 - **Contract**: every Tier-1 host Test Item builds and passes under `[env:native]` in CI without
-  flashing; every Tier-2 HIL Test Item has a written procedure with explicit pass criteria.
-- **Check**: CI runs the native test stage green; HIL plans exist for all FRs not coverable on host.
-- **Non-blocking rule**: failing/absent HIL coverage does not block builds (constitution keeps
-  firmware hardware-verified), but uncovered FRs must be listed, never silently dropped.
+  flashing. On-device Test Items verify the installed release on a real badge (flashed once, states
+  reached at runtime): automatic ones (`A-*`) are driven over the serial console by `tools/ondevice/`;
+  semi-automatic ones (`S-*`) have a written operator procedure with explicit pass criteria and run
+  last.
+- **Check**: CI runs the native test stage green; on-device tests exist for FRs not coverable on host.
+- **Non-blocking rule**: both on-device categories are **optional** — they do not run in CI and do not
+  block builds (constitution keeps firmware hardware-verified) — but uncovered FRs must be listed,
+  never silently dropped.
 
 ## C4 — Documentation reconciliation
 - **Contract**: no unresolved Category-A doc-vs-code defect (D1–D4) remains once the transition

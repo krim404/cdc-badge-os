@@ -1,5 +1,5 @@
 # Name,   Type, SubType, Offset,   Size,    Flags
 nvs,      data, nvs,     0x9000,   0x47000,
 app0,     app,  factory, 0x50000,  0xDA0000,
-plugins,  data, fat,     0xDF0000, 0x200000,
+vfat,     data, fat,     0xDF0000, 0x200000,
 coredump, data, coredump,0xFF0000, 0x10000,

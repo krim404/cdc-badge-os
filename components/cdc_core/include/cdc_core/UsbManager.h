@@ -69,6 +69,25 @@ public:
     bool needsReplug() const { return needsReplug_; }
 
     /**
+     * \brief Registers the single USB Mass Storage LUN and re-enumerates.
+     * \param owner Owning module name.
+     * \return `true` on success; `false` if the USB endpoint budget is exhausted.
+     */
+    bool registerMassStorage(const char* owner);
+
+    /**
+     * \brief Unregisters the MSC LUN and re-enumerates (drive disappears).
+     * \param owner Owning module name.
+     */
+    void unregisterMassStorage(const char* owner);
+
+    /**
+     * \brief Reports whether the MSC LUN is currently active.
+     * \return `true` when the MSC interface is part of the descriptor.
+     */
+    bool massStorageActive() const { return mscActive_; }
+
+    /**
      * \brief Reports whether the HID interface budget is exhausted.
      * \return `true` when active HID interfaces reached MAX_ACTIVE_HID.
      */
@@ -95,11 +114,23 @@ private:
 
     uint8_t activeHidCount() const;
     bool canActivate(UsbHidInterface type) const;
+
+    // Endpoints currently consumed by CDC plus active HID/CCID and (if active) MSC.
+    uint8_t endpointsInUse() const;
+    static uint8_t interfaceEndpoints(const UsbInterfaceSpec& def);
+
     static constexpr uint8_t MAX_ACTIVE_HID = 2;
+    // Mirrors CFG_TUD_ENDPOINT_MAX in include/tusb_config.h. CDC always uses 3
+    // endpoints (notif/out/in); MSC needs 1 bulk IN + 1 bulk OUT.
+    static constexpr uint8_t MAX_ENDPOINTS = 8;
+    static constexpr uint8_t CDC_ENDPOINTS = 3;
+    static constexpr uint8_t MSC_ENDPOINTS = 2;
 
     ServiceState state_ = ServiceState::STOPPED;
     uint8_t activeMask_ = 0;
     bool needsReplug_ = false;
+    bool mscActive_ = false;
+    const char* mscOwner_ = nullptr;
     InterfaceEntry entries_[3] = {};
 };
 

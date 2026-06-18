@@ -8,6 +8,7 @@
 #include "mod_fido2/fido2.h"
 #include "mod_fido2/fido2_storage.h"
 #include "mod_fido2/fido2_common.h"
+#include "mod_fido2/LargeBlobStore.h"
 #include "mod_fido2/ctaphid.h"
 #include "mod_fido2/u2f.h"
 #include "cdc_log.h"
@@ -576,20 +577,30 @@ static void encode_info_aaguid(cbor_writer_t *w) {
 /** \brief Encodes the supported authenticator options, keys sorted by length. */
 static void encode_info_options(cbor_writer_t *w) {
     cbor_encode_uint(w, CTAP2_INFO_OPTIONS);
-    cbor_encode_map(w, 7);
-    cbor_encode_text(w, "rk");              // 2 chars
+    cbor_encode_map(w, 12);
+    cbor_encode_text(w, "rk");               // 2 chars
     cbor_encode_bool(w, true);
-    cbor_encode_text(w, "up");              // 2 chars
+    cbor_encode_text(w, "up");               // 2 chars
     cbor_encode_bool(w, true);
-    cbor_encode_text(w, "uv");              // 2 chars
+    cbor_encode_text(w, "uv");               // 2 chars
     cbor_encode_bool(w, false);
-    cbor_encode_text(w, "plat");            // 4 chars
+    cbor_encode_text(w, "plat");             // 4 chars
     cbor_encode_bool(w, false);
-    cbor_encode_text(w, "credMgmt");        // 8 chars
+    cbor_encode_text(w, "alwaysUv");         // 8 chars
+    cbor_encode_bool(w, fido2_storage_get_always_uv());
+    cbor_encode_text(w, "credMgmt");         // 8 chars
     cbor_encode_bool(w, true);
-    cbor_encode_text(w, "clientPin");       // 9 chars
+    cbor_encode_text(w, "authnrCfg");        // 9 chars
     cbor_encode_bool(w, true);
-    cbor_encode_text(w, "pinUvAuthToken");  // 14 chars
+    cbor_encode_text(w, "clientPin");        // 9 chars
+    cbor_encode_bool(w, true);
+    cbor_encode_text(w, "largeBlobs");       // 10 chars
+    cbor_encode_bool(w, true);
+    cbor_encode_text(w, "pinUvAuthToken");   // 14 chars
+    cbor_encode_bool(w, true);
+    cbor_encode_text(w, "setMinPINLength");  // 15 chars
+    cbor_encode_bool(w, true);
+    cbor_encode_text(w, "makeCredUvNotRqd"); // 16 chars
     cbor_encode_bool(w, true);
 }
 
@@ -643,6 +654,22 @@ static void encode_info_algorithms(cbor_writer_t *w) {
     cbor_encode_text(w, "public-key");
 }
 
+/** \brief Encodes the maxSerializedLargeBlobArray entry. */
+static void encode_info_max_large_blob(cbor_writer_t *w) {
+    cbor_encode_uint(w, CTAP2_INFO_MAX_SERIALIZED_LARGE_BLOB_ARRAY);
+    cbor_encode_uint(w, cdc::mod_fido2::kLargeBlobMaxArray);
+}
+
+/** \brief Encodes the current minPINLength policy floor. */
+static void encode_info_min_pin_length(cbor_writer_t *w) {
+    cbor_encode_uint(w, CTAP2_INFO_MIN_PIN_LENGTH);
+    uint8_t floor = fido2_storage_get_min_pin_len();
+    if (floor < cdc::core::PinManager::BADGE_PIN_MIN) {
+        floor = cdc::core::PinManager::BADGE_PIN_MIN;
+    }
+    cbor_encode_uint(w, floor);
+}
+
 #if CTAP2_DEBUG
 /** \brief Hex-dumps a getInfo response buffer to the debug log. */
 static void dump_get_info_response(const uint8_t *response, uint16_t len) {
@@ -668,8 +695,8 @@ uint8_t ctap2_get_info(uint8_t *response, uint16_t *response_len) {
     cbor_writer_t w;
     cbor_writer_init(&w, response + 1, *response_len - 1);
 
-    // Response is a map of 10 entries (CTAP 2.1 getInfo)
-    cbor_encode_map(&w, 10);
+    // Response is a map of 12 entries (CTAP 2.1 getInfo)
+    cbor_encode_map(&w, 12);
     encode_info_versions(&w);
     encode_info_extensions(&w);
     encode_info_aaguid(&w);
@@ -680,6 +707,8 @@ uint8_t ctap2_get_info(uint8_t *response, uint16_t *response_len) {
     encode_info_max_cred_id_length(&w);
     encode_info_transports(&w);
     encode_info_algorithms(&w);
+    encode_info_max_large_blob(&w);   // 0x0B
+    encode_info_min_pin_length(&w);   // 0x0D
 
     if (cbor_writer_error(&w)) {
         response[0] = CTAP2_ERR_OTHER;
@@ -1268,6 +1297,14 @@ uint8_t ctap2_make_credential(const uint8_t *params, uint16_t params_len,
         response[0] = status;
         *response_len = 1;
         return status;
+    }
+
+    // alwaysUv (authenticatorConfig): require a verified pinUvAuthParam for
+    // every makeCredential when the policy flag is set.
+    if (fido2_storage_get_always_uv() && p.pin_uv_auth_param_len == 0) {
+        response[0] = CTAP2_ERR_PIN_REQUIRED;
+        *response_len = 1;
+        return CTAP2_ERR_PIN_REQUIRED;
     }
 
     // Step 4: Handle browser probe requests
@@ -1864,6 +1901,14 @@ uint8_t ctap2_get_assertion(const uint8_t *params, uint16_t params_len,
         response[0] = status;
         *response_len = 1;
         return status;
+    }
+
+    // alwaysUv (authenticatorConfig): require user verification for every
+    // getAssertion when the policy flag is set.
+    if (fido2_storage_get_always_uv() && !uv_verified) {
+        response[0] = CTAP2_ERR_PIN_REQUIRED;
+        *response_len = 1;
+        return CTAP2_ERR_PIN_REQUIRED;
     }
 
     // Step 4: Find matching credentials
@@ -3507,6 +3552,313 @@ uint8_t ctap2_selection(uint8_t *response, uint16_t *response_len) {
 }
 
 /**
+ * \brief Verifies a pinUvAuthToken HMAC over an arbitrary message.
+ * \param msg Message that was authenticated by the platform.
+ * \param msg_len Length of \p msg.
+ * \param protocol pinUvAuth protocol version (1 or 2).
+ * \param param Provided pinUvAuthParam.
+ * \param param_len Length of \p param.
+ * \param required_perm Permission bit the token must carry.
+ * \return `CTAP2_OK` when valid, otherwise a CTAP2 error.
+ */
+static uint8_t verify_token_over_message(const uint8_t *msg, size_t msg_len,
+                                         uint8_t protocol, const uint8_t *param,
+                                         size_t param_len, uint8_t required_perm) {
+    if (!g_client_pin.pin_token_valid) {
+        return CTAP2_ERR_PIN_AUTH_INVALID;
+    }
+    // token_permissions == 0 denotes a legacy token that carries all permissions.
+    if (required_perm && g_client_pin.token_permissions != 0 &&
+        !(g_client_pin.token_permissions & required_perm)) {
+        return CTAP2_ERR_PIN_AUTH_INVALID;
+    }
+    uint8_t expected[32];
+    mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+                    g_client_pin.pin_token, PIN_TOKEN_SIZE,
+                    msg, msg_len, expected);
+    size_t compare_len = (protocol == 2) ? 32 : 16;
+    if (param_len < compare_len || memcmp(param, expected, compare_len) != 0) {
+        return CTAP2_ERR_PIN_AUTH_INVALID;
+    }
+    return CTAP2_OK;
+}
+
+// In-progress largeBlobs write session (small) plus its PSRAM accumulation
+// buffer and a separate per-fragment CBOR scratch buffer.
+static cdc::mod_fido2::LargeBlobWriteSession g_large_blob_session;
+static uint8_t EXT_RAM_BSS_ATTR g_large_blob_buf[cdc::mod_fido2::kLargeBlobMaxArray];
+static uint8_t EXT_RAM_BSS_ATTR g_large_blob_chunk[cdc::mod_fido2::kLargeBlobMaxArray];
+
+/** \brief Maps a LargeBlobWriteSession result to a CTAP status. */
+static uint8_t lb_status(cdc::mod_fido2::LbResult r) {
+    switch (r) {
+        case cdc::mod_fido2::LbResult::Ok:          return CTAP2_OK;
+        case cdc::mod_fido2::LbResult::StorageFull: return CTAP2_ERR_LARGE_BLOB_STORAGE_FULL;
+        case cdc::mod_fido2::LbResult::BadLength:   return CTAP1_ERR_INVALID_LENGTH;
+        case cdc::mod_fido2::LbResult::BadSeq:      return CTAP1_ERR_INVALID_SEQ;
+    }
+    return CTAP2_ERR_OTHER;
+}
+
+/**
+ * \brief Handles CTAP2 `authenticatorLargeBlobs` (`0x0C`).
+ */
+uint8_t ctap2_large_blobs(const uint8_t *params, uint16_t params_len,
+                          uint8_t *response, uint16_t *response_len) {
+    cbor_reader_t r;
+    cbor_reader_init(&r, params, params_len);
+    int n = cbor_read_map(&r);
+    if (n < 0) {
+        response[0] = CTAP2_ERR_INVALID_CBOR; *response_len = 1; return CTAP2_ERR_INVALID_CBOR;
+    }
+
+    bool has_get = false, has_set = false, has_offset = false, has_length = false;
+    uint64_t get_len = 0, total_len = 0, offset = 0, pin_proto = 0;
+    size_t set_len = 0;
+    uint8_t pin_auth[64];
+    size_t pin_auth_len = 0;
+
+    for (int i = 0; i < n; i++) {
+        uint64_t key = 0;
+        if (!cbor_read_uint(&r, &key)) {
+            response[0] = CTAP2_ERR_INVALID_CBOR; *response_len = 1; return CTAP2_ERR_INVALID_CBOR;
+        }
+        switch (key) {
+            case CTAP2_LB_GET:
+                cbor_read_uint(&r, &get_len); has_get = true; break;
+            case CTAP2_LB_SET: {
+                size_t l = 0;
+                cbor_read_bytes(&r, g_large_blob_chunk, sizeof(g_large_blob_chunk), &l);
+                set_len = l; has_set = true; break;
+            }
+            case CTAP2_LB_OFFSET:
+                cbor_read_uint(&r, &offset); has_offset = true; break;
+            case CTAP2_LB_LENGTH:
+                cbor_read_uint(&r, &total_len); has_length = true; break;
+            case CTAP2_LB_PIN_UV_AUTH_PARAM: {
+                size_t l = 0;
+                cbor_read_bytes(&r, pin_auth, sizeof(pin_auth), &l);
+                pin_auth_len = l; break;
+            }
+            case CTAP2_LB_PIN_UV_AUTH_PROTOCOL:
+                cbor_read_uint(&r, &pin_proto); break;
+            default:
+                cbor_skip_item(&r); break;
+        }
+    }
+
+    // Exactly one of get/set must be present, and offset is mandatory.
+    if (has_get == has_set || !has_offset) {
+        response[0] = CTAP1_ERR_INVALID_PARAMETER; *response_len = 1; return CTAP1_ERR_INVALID_PARAMETER;
+    }
+
+    if (has_get) {
+        uint16_t stored_len = 0;
+        if (!fido2_storage_largeblob_get(g_large_blob_buf, sizeof(g_large_blob_buf), &stored_len)) {
+            response[0] = CTAP2_ERR_OTHER; *response_len = 1; return CTAP2_ERR_OTHER;
+        }
+        if (offset > stored_len) {
+            response[0] = CTAP1_ERR_INVALID_LENGTH; *response_len = 1; return CTAP1_ERR_INVALID_LENGTH;
+        }
+        uint16_t avail = stored_len - static_cast<uint16_t>(offset);
+        uint16_t chunk = (get_len < avail) ? static_cast<uint16_t>(get_len) : avail;
+        cbor_writer_t w;
+        cbor_writer_init(&w, response + 1, *response_len - 1);
+        cbor_encode_map(&w, 1);
+        cbor_encode_uint(&w, CTAP2_LB_RESP_CONFIG);
+        cbor_encode_bytes(&w, g_large_blob_buf + offset, chunk);
+        if (cbor_writer_error(&w)) {
+            response[0] = CTAP2_ERR_OTHER; *response_len = 1; return CTAP2_ERR_OTHER;
+        }
+        response[0] = CTAP2_OK;
+        *response_len = 1 + cbor_writer_length(&w);
+        return CTAP2_OK;
+    }
+
+    // --- set path ---
+    if (offset == 0) {
+        if (!has_length) {
+            response[0] = CTAP1_ERR_INVALID_PARAMETER; *response_len = 1; return CTAP1_ERR_INVALID_PARAMETER;
+        }
+        uint8_t st = lb_status(g_large_blob_session.begin(g_large_blob_buf, sizeof(g_large_blob_buf), total_len));
+        if (st != CTAP2_OK) {
+            g_large_blob_session.reset();
+            response[0] = st; *response_len = 1; return st;
+        }
+    } else if (!g_large_blob_session.active() || offset != g_large_blob_session.nextOffset()) {
+        response[0] = CTAP1_ERR_INVALID_SEQ; *response_len = 1; return CTAP1_ERR_INVALID_SEQ;
+    }
+
+    // A write requires pinUvAuth with the largeBlobWrite permission when a PIN is set.
+    if (pin_storage_fido2_available()) {
+        uint8_t msg[32 + 1 + 1 + 4 + 32];
+        memset(msg, 0xff, 32);
+        msg[32] = CTAP2_CMD_LARGE_BLOBS;  // 0x0c
+        msg[33] = 0x00;
+        msg[34] = static_cast<uint8_t>(offset & 0xff);
+        msg[35] = static_cast<uint8_t>((offset >> 8) & 0xff);
+        msg[36] = static_cast<uint8_t>((offset >> 16) & 0xff);
+        msg[37] = static_cast<uint8_t>((offset >> 24) & 0xff);
+        sha256(g_large_blob_chunk, set_len, msg + 38);
+        uint8_t st = verify_token_over_message(msg, sizeof(msg), static_cast<uint8_t>(pin_proto),
+                                               pin_auth, pin_auth_len, PIN_PERM_LARGE_BLOB_WRITE);
+        if (st != CTAP2_OK) {
+            g_large_blob_session.reset();
+            response[0] = st; *response_len = 1; return st;
+        }
+    }
+
+    uint8_t st = lb_status(g_large_blob_session.append(static_cast<uint32_t>(offset),
+                                                       g_large_blob_chunk,
+                                                       static_cast<uint16_t>(set_len)));
+    if (st != CTAP2_OK) {
+        g_large_blob_session.reset();
+        response[0] = st; *response_len = 1; return st;
+    }
+
+    if (g_large_blob_session.complete()) {
+        const uint8_t *blob = g_large_blob_session.data();
+        uint16_t blob_len = g_large_blob_session.length();
+        uint8_t sum[32];
+        sha256(blob, blob_len - 16, sum);
+        if (memcmp(sum, blob + blob_len - 16, 16) != 0) {
+            g_large_blob_session.reset();
+            response[0] = CTAP2_ERR_INTEGRITY_FAILURE; *response_len = 1; return CTAP2_ERR_INTEGRITY_FAILURE;
+        }
+        bool ok = fido2_storage_largeblob_set(blob, blob_len);
+        g_large_blob_session.reset();
+        if (!ok) {
+            response[0] = CTAP2_ERR_OTHER; *response_len = 1; return CTAP2_ERR_OTHER;
+        }
+    }
+
+    response[0] = CTAP2_OK;
+    *response_len = 1;
+    return CTAP2_OK;
+}
+
+/**
+ * \brief Handles CTAP2 `authenticatorConfig` (`0x0D`).
+ *
+ * Supports `toggleAlwaysUv` and `setMinPINLength`; declines
+ * `enableEnterpriseAttestation` and `vendorPrototype`.
+ */
+uint8_t ctap2_config(const uint8_t *params, uint16_t params_len,
+                     uint8_t *response, uint16_t *response_len) {
+    cbor_reader_t r;
+    cbor_reader_init(&r, params, params_len);
+    int n = cbor_read_map(&r);
+    if (n < 0) {
+        response[0] = CTAP2_ERR_INVALID_CBOR; *response_len = 1; return CTAP2_ERR_INVALID_CBOR;
+    }
+
+    uint64_t subcmd = 0, pin_proto = 0;
+    bool has_sub = false;
+    const uint8_t *sub_params = nullptr;
+    size_t sub_params_len = 0;
+    uint8_t pin_auth[64];
+    size_t pin_auth_len = 0;
+
+    for (int i = 0; i < n; i++) {
+        uint64_t key = 0;
+        if (!cbor_read_uint(&r, &key)) {
+            response[0] = CTAP2_ERR_INVALID_CBOR; *response_len = 1; return CTAP2_ERR_INVALID_CBOR;
+        }
+        switch (key) {
+            case CTAP2_CONFIG_SUBCOMMAND:
+                cbor_read_uint(&r, &subcmd); has_sub = true; break;
+            case CTAP2_CONFIG_SUBCOMMAND_PARAMS: {
+                size_t start = r.offset;
+                cbor_skip_item(&r);
+                sub_params = params + start;
+                sub_params_len = r.offset - start;
+                break;
+            }
+            case CTAP2_CONFIG_PIN_UV_AUTH_PROTOCOL:
+                cbor_read_uint(&r, &pin_proto); break;
+            case CTAP2_CONFIG_PIN_UV_AUTH_PARAM: {
+                size_t l = 0;
+                cbor_read_bytes(&r, pin_auth, sizeof(pin_auth), &l);
+                pin_auth_len = l; break;
+            }
+            default:
+                cbor_skip_item(&r); break;
+        }
+    }
+
+    if (!has_sub) {
+        response[0] = CTAP2_ERR_MISSING_PARAMETER; *response_len = 1; return CTAP2_ERR_MISSING_PARAMETER;
+    }
+    if (subcmd == CTAP2_CONFIG_SUB_ENABLE_EP || subcmd == CTAP2_CONFIG_SUB_VENDOR_PROTOTYPE) {
+        response[0] = CTAP2_ERR_UNSUPPORTED_OPTION; *response_len = 1; return CTAP2_ERR_UNSUPPORTED_OPTION;
+    }
+    if (subcmd != CTAP2_CONFIG_SUB_TOGGLE_ALWAYS_UV &&
+        subcmd != CTAP2_CONFIG_SUB_SET_MIN_PIN_LENGTH) {
+        response[0] = CTAP1_ERR_INVALID_PARAMETER; *response_len = 1; return CTAP1_ERR_INVALID_PARAMETER;
+    }
+
+    // pinUvAuth message: 0xff*32 || 0x0d || subCommand || subCommandParams.
+    if (pin_storage_fido2_available()) {
+        if (sub_params_len > 256) {
+            response[0] = CTAP1_ERR_INVALID_LENGTH; *response_len = 1; return CTAP1_ERR_INVALID_LENGTH;
+        }
+        uint8_t msg[32 + 1 + 1 + 256];
+        memset(msg, 0xff, 32);
+        msg[32] = CTAP2_CMD_CONFIG;  // 0x0d
+        msg[33] = static_cast<uint8_t>(subcmd);
+        if (sub_params_len) memcpy(msg + 34, sub_params, sub_params_len);
+        uint8_t st = verify_token_over_message(msg, 34 + sub_params_len, static_cast<uint8_t>(pin_proto),
+                                               pin_auth, pin_auth_len, PIN_PERM_AUTHN_CONFIG);
+        if (st != CTAP2_OK) {
+            response[0] = st; *response_len = 1; return st;
+        }
+    }
+
+    if (subcmd == CTAP2_CONFIG_SUB_TOGGLE_ALWAYS_UV) {
+        bool cur = fido2_storage_get_always_uv();
+        if (!fido2_storage_set_always_uv(!cur)) {
+            response[0] = CTAP2_ERR_OTHER; *response_len = 1; return CTAP2_ERR_OTHER;
+        }
+        response[0] = CTAP2_OK; *response_len = 1; return CTAP2_OK;
+    }
+
+    // setMinPINLength: parse newMinPINLength; the RP-ID list and forceChangePin
+    // are accepted (covered by the auth) but not acted upon.
+    uint64_t new_min = 0;
+    bool has_new_min = false;
+    if (sub_params && sub_params_len) {
+        cbor_reader_t sr;
+        cbor_reader_init(&sr, sub_params, sub_params_len);
+        int sn = cbor_read_map(&sr);
+        for (int i = 0; i < sn; i++) {
+            uint64_t k = 0;
+            if (!cbor_read_uint(&sr, &k)) break;
+            if (k == CTAP2_CONFIG_PARAM_NEW_MIN_PIN_LEN) {
+                cbor_read_uint(&sr, &new_min); has_new_min = true;
+            } else {
+                cbor_skip_item(&sr);
+            }
+        }
+    }
+    if (!has_new_min) {
+        response[0] = CTAP1_ERR_INVALID_PARAMETER; *response_len = 1; return CTAP1_ERR_INVALID_PARAMETER;
+    }
+    uint8_t current = fido2_storage_get_min_pin_len();
+    if (current < cdc::core::PinManager::BADGE_PIN_MIN) {
+        current = cdc::core::PinManager::BADGE_PIN_MIN;
+    }
+    // The floor may only increase and cannot exceed the badge PIN maximum.
+    if (new_min < current || new_min > cdc::core::PinManager::BADGE_PIN_MAX) {
+        response[0] = CTAP1_ERR_INVALID_PARAMETER; *response_len = 1; return CTAP1_ERR_INVALID_PARAMETER;
+    }
+    if (!fido2_storage_set_min_pin_len(static_cast<uint8_t>(new_min))) {
+        response[0] = CTAP2_ERR_OTHER; *response_len = 1; return CTAP2_ERR_OTHER;
+    }
+    pin_storage_set_min_pin_floor(static_cast<uint8_t>(new_min));
+    response[0] = CTAP2_OK; *response_len = 1; return CTAP2_OK;
+}
+
+/**
  * \brief Initializes CTAP2 runtime state.
  * \return `true` on success.
  */
@@ -3549,6 +3901,8 @@ uint8_t ctap2_process_command(const uint8_t *cmd, uint16_t cmd_len,
         case CTAP2_CMD_GET_NEXT_ASSERTION: cmd_name = "getNextAssertion";  break;
         case CTAP2_CMD_CRED_MANAGEMENT:    cmd_name = "credMgmt";          break;
         case CTAP2_CMD_SELECTION:          cmd_name = "selection";         break;
+        case CTAP2_CMD_LARGE_BLOBS:        cmd_name = "largeBlobs";        break;
+        case CTAP2_CMD_CONFIG:             cmd_name = "config";            break;
     }
     LOG_I(TAG, "CMD 0x%02X (%s) %d bytes", command, cmd_name, params_len);
 
@@ -3590,10 +3944,11 @@ uint8_t ctap2_process_command(const uint8_t *cmd, uint16_t cmd_len,
             break;
 
         case CTAP2_CMD_LARGE_BLOBS:
+            status = ctap2_large_blobs(params, params_len, response, response_len);
+            break;
+
         case CTAP2_CMD_CONFIG:
-            response[0] = CTAP2_ERR_UNSUPPORTED_OPTION;
-            *response_len = 1;
-            status = CTAP2_ERR_UNSUPPORTED_OPTION;
+            status = ctap2_config(params, params_len, response, response_len);
             break;
 
         default:

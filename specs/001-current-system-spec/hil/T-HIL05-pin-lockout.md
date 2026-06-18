@@ -22,9 +22,7 @@ serial `AUTH` gate shares the same lockout state as the lock screen. Maps to Suc
 - A stopwatch (or the badge's own countdown) to time the 60-second window.
 
 ### Build profile
-- Any beta build is acceptable. To check the FR-003 "no debug bypass" claim, the ideal is to confirm
-  on both a `DEBUG_MODE=1` and a `DEBUG_MODE=0` image — but reflashing solely to verify this is
-  optional (see Notes). Default single-build run uses the currently flashed image.
+- Runs against the installed release as-is; no reflash.
 - Badge PIN known (dev: `0000`). Have a deliberately **wrong** PIN ready (e.g. `9999`).
 - Serial-AUTH portion requires the secure-serial gate active (`FEATURE_SECURE_SERIAL=1`); if the
   flashed image has it off, the serial-AUTH steps are not applicable — record as not-exercised.
@@ -72,11 +70,9 @@ serial `AUTH` gate shares the same lockout state as the lock screen. Maps to Suc
 
 ## Notes
 
-- **Flash conservation**: the core lockout/recovery test (steps 1–7) requires **no flashing** and is
-  fully self-recovering by design. Verifying the "identical in debug and release / no debug bypass"
-  half of FR-003 across two build profiles requires up to two flashes — treat that as
-  optional/secondary and, if performed, use the serial `AUTH <pin>` then `BOOTLOADER` path and batch
-  it with other plans to conserve flashes.
+- **No flashing**: the whole plan runs against the installed release and is fully self-recovering by
+  design. The `A-LOCK` automatic test in `tools/ondevice/` covers the serial-AUTH lockout and the
+  60 s recovery unattended.
 - **Not destructive**: no secrets are erased. This is the safe counterpart to T-HIL04; do NOT confuse
   a wrong **badge** PIN (recoverable lockout) with a **duress** PIN (full wipe).
 - The lockout timer is 60 s; budget roughly 2 minutes per full lock/recover cycle. The cold-boot

@@ -21,13 +21,6 @@ display and a 12-button keypad.
 > codes, password-manager export, GPG private subkeys, TOTP seeds) somewhere
 > off-badge.
 
-> ## 🔵 Bluetooth LE - under test
->
-> The Bluetooth LE features - badge-to-badge message transfer (the generic
-> `cdc_msg` framework), vCard exchange, the beacon, and BLE keyboard/HID - are
-> implemented but still under active testing. Expect rough edges and possible
-> behaviour changes.
-
 ## Documentation
 
 The full documentation (introduction, flashing, a feature-by-feature user guide,

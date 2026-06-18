@@ -64,7 +64,7 @@ Pages: `dev/index.md`, `dev/architecture.md`, `dev/build-system.md`.
 | cdc_msg MessageTransfer = headless badge-to-badge BLE MIME transfer, ephemeral pairing | components/cdc_msg/include/cdc_msg/MessageTransfer.h:20-33 | VERIFIED |
 | cdc_msg MessageHandlerRegistry = MIME -> DeliverFn, fixed-size | components/cdc_msg/include/cdc_msg/MessageHandlerRegistry.h:24-30,21-22 | VERIFIED |
 | plugin_manager PluginManager = discover/load/run/unload WASM, foreground/background/autoload | components/plugin_manager/include/plugin_manager/PluginManager.h:3-12,45 | VERIFIED |
-| plugins partition mounted at /plugins, label "plugins" | components/plugin_manager/src/PluginStorage.cpp:20-21 | VERIFIED |
+| plugins partition mounted at /vfat, label "plugins" | components/plugin_manager/src/PluginStorage.cpp | VERIFIED |
 | host_api.h canonical here; SDK in sibling repo (upstream codeberg) | CLAUDE.md + git remote -v (upstream ssh://git@codeberg.org/Krim/cdc-badge-os.git) | VERIFIED |
 
 ## GAPs / discrepancies

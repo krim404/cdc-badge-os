@@ -7,9 +7,9 @@ sidebar:
 
 The badge has a single Bluetooth Low Energy (BLE) controller that several
 features share: the **BLE keyboard** (auto-type), badge-to-badge **transfer**
-(the beacon, used by [vCard exchange](/guide/vcard/)), and an experimental
-**BLE serial** console. They all run on top of the same controller, so turning
-Bluetooth on or off affects all of them at once.
+(the beacon, used by [vCard exchange](/guide/vcard/)), and the **BLE serial**
+console. They all run on top of the same controller, so turning Bluetooth on or
+off affects all of them at once.
 
 You reach everything from **Tools -> Bluetooth**.
 
@@ -96,6 +96,12 @@ items:
   as badges come and go, and shows **Searching for badges...** while none are in
   range.
 
+Most transfers confirm the numeric-comparison code on every send. Some, such as
+a back-and-forth messenger, remember the pairing for the current session: you
+confirm the code once, and further sends to the same badge go through without a
+prompt. This trust lasts only until the badge reboots or Bluetooth is turned
+off.
+
 See [vCard exchange](/guide/vcard/) for the full send/receive flow, and the
 developer page [cdc_msg message-transfer protocol](/dev/proto/message-transfer/)
 for the wire details.
@@ -111,9 +117,4 @@ dBm), and the badge's advertised name.
 - **BLE keyboard** for [auto-type](/guide/auto-type/) — pair via **Pair device**.
 - **Badge-to-badge transfer** (the beacon) — used by
   [vCard exchange](/guide/vcard/).
-- **BLE serial** console (experimental).
-
-:::caution[Work in progress]
-Badge-to-badge transfer (and the BLE vCard exchange built on it) and the BLE
-serial console are work in progress and have not been verified on hardware.
-:::
+- **BLE serial** console.

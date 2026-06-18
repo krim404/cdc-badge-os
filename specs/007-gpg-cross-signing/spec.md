@@ -7,17 +7,19 @@
 **Status**: Draft (derived from baseline `001-current-system-spec`)
 
 **Input**: Per-capability decomposition of the CDC Badge OS baseline. This spec owns the GPG
-cross-signing capability: receiving a peer badge's OpenPGP public key over BLE, producing an
-RFC 4880 certification signature with the on-chip SIG key, and exporting the resulting armored
-public-key block over serial.
+cross-signing capability: exchanging OpenPGP public keys between badges over BLE, producing an
+RFC 4880 certification signature with the on-chip SIG key, returning that certification to the
+key's owner over BLE, collecting third-party certifications on the own key, and exporting the
+armored own public-key block (with collected certifications) for `gpg --import`.
 
-> **⚠ PROVISIONAL (WIP, NOT HARDWARE-VERIFIED)**: This capability is normative but **Provisional**.
-> Per the baseline Clarifications (Session 2026-06-14), the GPG cross-sign send path (FR-044) is
-> documented as work-in-progress: the on-device "Send Key" action is a placeholder, the BLE send
-> path exists but is not UI-driven, and the behaviour is **not yet verified on hardware**. Hardware
-> acceptance (SC-002; HIL plan T-HIL03) is **non-blocking** until verified on hardware, and this
-> capability MUST stay flagged WIP until then. Statements below describe the design as built; treat
-> them as provisional until a hardware run confirms them.
+> **⚠ PROVISIONAL (NOT YET HARDWARE-VERIFIED)**: This capability is normative but **Provisional**.
+> The cross-sign flow is bidirectional and fully UI- and serial-driven: **Send Key** transfers the
+> own public key, **Cross-Sign** certifies a received key, **Send Signature** returns the
+> certification to its owner, **My Certifications** lists certifications collected on the own key,
+> and **Export Public** emits the own key with those certifications attached. The signing curve is
+> read from the on-card SIG key. Statements below describe the design as built; the end-to-end
+> acceptance (SC-002; HIL plan T-HIL03) is **not yet verified on hardware** and against a standard
+> GPG toolchain, and this capability MUST stay flagged Provisional until that verification runs.
 
 > **Source of truth**: This spec lifts requirement FR-044 faithfully from the baseline
 > (`specs/001-current-system-spec/spec.md`); the FR number is preserved as a cross-reference. Code
@@ -67,41 +69,46 @@ certification signature is produced by the SIG ECC slot and attached to the stor
    builds an RFC 4880 certification preimage and signs it with the on-chip SIG key (ECC slot 1),
    recording the certification signature and setting the verified flag.
 2. **Given** a peer key on a P-256 curve, **When** it is cross-signed, **Then** the certification
-   signature reflects the actual curve. [NEEDS CLARIFICATION: cross-sign signatures always label the
-   curve as EdDSA from the status snapshot, so P-256 signatures may be mislabeled and are unverified
-   on hardware. (baseline B13)]
+   signature reflects the actual curve. The signing algorithm (EdDSA or ECDSA) is selected from the
+   on-card SIG key's curve, read from the secure element via `gpg_get_status()`.
 
 ---
 
-### User Story 3 - Export the certified public-key block (Priority: P2)
+### User Story 3 - Return the certification and export the own key (Priority: P2)
 
-The holder exports the certified peer key as an armored OpenPGP public-key block over serial so it
-can be published or re-imported on a host.
+The holder returns a produced certification to the key's owner over BLE, and exports the own public
+key (with all collected certifications) so the web of trust can be rebuilt on a host.
 
-**Why this priority**: Without an export path the certification stays trapped on the device; export
-is what makes the cross-signature usable off-badge.
+**Why this priority**: Without a return path and an own-key export the certification stays trapped
+on the signer; returning it and re-exporting is what makes the cross-signature usable off-badge.
 
-**Independent Test (Provisional)**: After cross-signing a peer key, run the export command and
-confirm a well-formed armored public-key block is emitted over serial.
+**Independent Test (Provisional)**: After cross-signing a peer key, run `GPG EXPORT_SIGNED <i>` and
+confirm a well-formed armored block is emitted; run `GPG SEND_SIG <i>` to return it; import a
+returned certification and confirm `GPG EXPORT` emits the own key carrying it.
 
 **Acceptance Scenarios**:
 
 1. **Given** a cross-signed peer key, **When** the holder runs `GPG EXPORT_SIGNED <i>`, **Then** the
    device emits an armored OpenPGP public-key block containing the certification signature over
    serial.
-2. **Given** the on-device "Send Key" action, **When** the holder invokes it, **Then** [NEEDS
-   CLARIFICATION: the on-device "Send Key" action is a placeholder; the BLE send path exists but is
-   not UI-driven. Confirm intended scope. (baseline B14, FR-044)]
+2. **Given** a cross-signed peer key, **When** the holder invokes **Send Signature** (or
+   `GPG SEND_SIG <i>`), **Then** the certification is transferred to the key's owner over BLE; the
+   owner accepts it only if it targets the owner's own key and stores it under My Certifications.
+3. **Given** one or more collected certifications on the own key, **When** the holder runs
+   `GPG EXPORT` (or **Export Public**), **Then** the device emits the armored own public key with
+   every collected certification packet attached.
 
 ---
 
 ### Edge Cases
 
-- **Curve mislabeling (B13)**: cross-sign signatures always label the curve as EdDSA from the status
-  snapshot, so P-256 signatures may be mislabeled; this is unverified on hardware.
-- **Send path WIP (B14)**: the on-device "Send Key" action is a placeholder; the BLE send path is
-  not UI-driven and the end-to-end flow is not hardware-verified.
-- **Store capacity**: the received-peer-key store holds at most 128 keys (NVS-backed).
+- **Fingerprint mismatch**: a received public-key payload is rejected unless its v4 fingerprint
+  recomputes from the transmitted curve, public key and creation time, so a certification cannot
+  bind to a key the badge cannot reproduce.
+- **Wrong target**: a returned certification is rejected unless it targets the receiver's own SIG
+  key fingerprint.
+- **Store capacity**: the received-peer-key store holds at most 128 keys; the self-cert store holds
+  at most 16 certifications (both NVS-backed).
 - **No SIG key present**: cross-signing requires an on-chip SIG key (owned by spec 006); without a
   generated OpenPGP key set there is nothing to certify with.
 
@@ -111,22 +118,27 @@ confirm a well-formed armored public-key block is emitted over serial.
 
 ### Functional Requirements
 
-- **FR-044** *(Provisional / WIP)*: The device MUST support receiving a peer badge's public key over
-  BLE and producing an RFC 4880 certification signature (cross-signing), exportable as an armored
-  public-key block over serial. [NEEDS CLARIFICATION: the on-device "Send Key" action is a
-  placeholder; the BLE send path exists but is not UI-driven. Confirm intended scope. (baseline B14)]
-  [NEEDS CLARIFICATION: cross-sign signatures always label the curve as EdDSA from the status
-  snapshot, so P-256 signatures may be mislabeled and are unverified on hardware. (baseline B13)]
+- **FR-044** *(Provisional)*: The device MUST support exchanging a peer badge's public key over BLE
+  (with a fingerprint-validating wire record), producing an RFC 4880 certification signature
+  (cross-signing) with the on-card SIG key, returning that certification to the key's owner over
+  BLE, collecting third-party certifications on the own key, and exporting the armored own public-key
+  block with the collected certifications attached. The signing algorithm is selected from the
+  on-card SIG key's curve.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Received Peer Key (cross-signing)** — a record of another badge's OpenPGP public key: peer curve,
-  public key, v4 fingerprint, user-id, receive timestamp, optional certification signature, and a
-  verified flag. NVS-backed, ≤ 128 keys.
+  public key, key creation time, v4/v5 fingerprints, user-id, receive timestamp, optional
+  certification signature, signature creation time, and a verified flag. NVS-backed, ≤ 128 keys.
 - **Certification Signature** — an RFC 4880 certification (cross-)signature produced over the peer
   key's certification preimage using the on-chip SIG key (ECC slot 1, owned by spec 006).
-- **Armored Public-Key Block** — the OpenPGP-armored export of a certified peer key emitted over the
-  serial console (`GPG EXPORT_SIGNED <i>`).
+- **Certification Return Record** — a transport record carrying a produced certification back to the
+  certified key's owner: target fingerprint, issuer fingerprint, issuer user-id, and the verbatim
+  signature packet. MIME `application/pgp-signature`.
+- **Self-Certification** — a third-party certification on the own key, persisted (issuer
+  fingerprint, issuer user-id, receive timestamp, signature packet). NVS-backed, ≤ 16.
+- **Armored Public-Key Block** — the OpenPGP-armored export of either a certified peer key
+  (`GPG EXPORT_SIGNED <i>`) or the own key with its collected certifications (`GPG EXPORT`).
 
 ## Success Criteria *(mandatory)*
 

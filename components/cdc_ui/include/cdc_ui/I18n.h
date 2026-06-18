@@ -65,8 +65,9 @@ struct OverlayLanguage {
 
 class I18n {
 public:
-    /// Directory on the plugins FAT holding the per-language files.
-    static constexpr const char* OVERLAY_DIR = "/plugins/i18n";
+    /// Directory on the plugins FAT holding the per-language files (inside the
+    /// hidden system folder so the partition root stays a user area).
+    static constexpr const char* OVERLAY_DIR = "/vfat/system/i18n";
 
     /// Singleton accessor.
     static I18n& instance();

@@ -28,14 +28,15 @@ partial overlay simply leaves untranslated strings in English.
 
 ### Where the files live
 
-Overlay files are stored on the `plugins` FAT partition under `/plugins/i18n/`.
+Overlay files are stored on the `plugins` FAT partition under `/vfat/system/i18n/`.
 The active language's file is parsed into PSRAM at load time. German umlauts in
 the file are written as real UTF-8 (`ä ö ü Ä Ö Ü ß`); the loader converts them
 to the badge's internal CP437 encoding while parsing.
 
 :::note
-The same `plugins` partition holds installed plugins. Language files live in the
-`i18n/` subdirectory and do not interfere with `<id>.wasm` plugin files.
+The same `plugins` partition holds installed plugins. Both live under the
+`system/` subfolder: language files in `system/i18n/` and plugins as
+`system/<id>.wasm`, so they do not interfere with each other.
 :::
 
 ## The on-device picker
@@ -43,7 +44,7 @@ The same `plugins` partition holds installed plugins. Language files live in the
 Open **Main menu → Settings → Language**. The picker is built dynamically:
 
 - the first entry is always **English** (built in);
-- after it comes one entry per `lang_<code>.json` file found in `/plugins/i18n/`.
+- after it comes one entry per `lang_<code>.json` file found in `/vfat/system/i18n/`.
 
 Each overlay entry is labelled with that file's own display name, read from its
 `core.lang_name` value (the endonym). For example `lang_de.json` sets
@@ -63,7 +64,7 @@ file:
 2. Include `core.lang_name` set to the language's own display name, for example
    `"core.lang_name": "Français"`. Without it the picker shows the bare code.
 3. Translate the keys you want. Any key you omit falls back to English.
-4. Place the file in `/plugins/i18n/` on the badge.
+4. Place the file in `/vfat/system/i18n/` on the badge.
 
 You can write the file onto the badge over the serial console with the upload
 tool (`upload.py --lang-overlay`), or seed it into the initial plugins image at

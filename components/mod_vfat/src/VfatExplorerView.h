@@ -25,7 +25,9 @@ public:
     static VfatExplorerView& instance();
 
     /// Reset to the partition root. Call before pushing the view.
-    void openRoot();
+    /// \param showSystem When true, the hidden system folder (`.system`) is
+    ///        shown (System Files view); when false it is hidden (user Files view).
+    void openRoot(bool showSystem = false);
 
     // IView
     void onEnter(void* context) override;
@@ -38,6 +40,10 @@ public:
     cdc::ui::InputResult onKey(char key) override;
     const char* getName() const override { return "VfatExplorer"; }
     const char* getFooterHint() const override { return footer_; }
+
+    /// Open a local image by path (relative to the current directory) in the
+    /// image viewer. Registered as the cdc::ui image opener for Markdown images.
+    void openLocalImage(const char* path);
 
     // Context-menu actions on the stashed selection / current directory.
     void openSelected();
@@ -61,15 +67,19 @@ private:
     static void onSelectCb(uint16_t index, void* userData);
     static void onMenuCb(uint16_t index, void* userData);
     static void onT9SaveCb(const char* text);
+    /// Persist a toggled Markdown task-list checkbox back to its file (UTF-8).
+    static void onMdCheckSaveCb(void* userData, const char* cp437Source, size_t len);
 
     cdc::ui::ListView              list_;
     std::string                    cwd_;       // relative to root ("" = root)
+    bool                           showSystem_ = false;  // show hidden .system folder
     std::vector<FsEntry>           entries_;
     std::vector<cdc::ui::ListItem> items_;
     std::vector<std::string>       labels_;
     uint16_t                       menuSel_ = 0xFFFF;
     T9Mode                         t9Mode_  = T9Mode::Edit;
     std::string                    editPath_;  // file being edited in T9
+    std::string                    mdViewPath_; // Markdown file open in the viewer (checkbox save)
     std::string                    newName_;   // pending new file name (Add)
     std::string                    delTarget_; // entry awaiting delete confirm
     bool                           delIsDir_ = false;

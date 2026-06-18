@@ -15,6 +15,7 @@
 #include <mbedtls/md.h>
 #include <mbedtls/platform_util.h>
 #include <esp_random.h>
+#include <esp_attr.h>
 #include <string.h>
 
 static const char* TAG = "GPGStorage";
@@ -441,6 +442,197 @@ bool gpg_storage_delete_aes_key(void) {
     if (!se) return false;
     uint16_t slot = resolve_slot(RMEM_SLOT_AES_KEY);
     return se->rmemErase(slot) == cdc::hal::SeResult::OK;
+}
+
+/** \brief Magic marker for encrypted RSA private-key records. */
+static constexpr uint8_t RSA_KEY_MAGIC[MAGIC_SIZE] = {'R', 'S', 'A', '1'};
+
+static constexpr uint16_t RSA_SLOTS_PER_ROLE = 2;
+static constexpr uint8_t  RSA_ROLE_COUNT = 3;
+static constexpr size_t   RSA_REC_HEADER = 2;  // u16 LE record-body length prefix
+static constexpr size_t   RSA_ENVELOPE = MAGIC_SIZE + NONCE_SIZE + TAG_SIZE;
+static constexpr size_t   RSA_SLOT_CAP = cdc::hal::ISecureElement::RMEM_SLOT_SIZE;
+
+static uint16_t s_rsa_rmem_start = 0;
+static uint16_t s_rsa_rmem_end = 0;
+
+// Single record scratch shared by the (single-threaded) RSA save/load path.
+EXT_RAM_BSS_ATTR static uint8_t s_rsa_record[RSA_REC_HEADER + GPG_RSA_BLOB_MAX + RSA_ENVELOPE];
+
+void gpg_storage_set_rsa_slot_range(uint16_t start, uint16_t end) {
+    s_rsa_rmem_start = start;
+    s_rsa_rmem_end = end;
+}
+
+/**
+ * \brief Resolves the two consecutive R-Memory slots for an RSA key role.
+ * \param role 0 = SIG, 1 = DEC, 2 = AUT.
+ * \param slot0 First slot output.
+ * \param slot1 Second slot output (RSA-4096 spills into it).
+ * \return `true` if the range is configured and holds both slots.
+ */
+static bool rsa_role_slots(uint8_t role, uint16_t* slot0, uint16_t* slot1) {
+    if (role >= RSA_ROLE_COUNT || s_rsa_rmem_start == 0) return false;
+    uint16_t base = static_cast<uint16_t>(s_rsa_rmem_start + role * RSA_SLOTS_PER_ROLE);
+    if (base + 1 > s_rsa_rmem_end) return false;
+    *slot0 = base;
+    *slot1 = static_cast<uint16_t>(base + 1);
+    return true;
+}
+
+bool gpg_storage_save_rsa_key(uint8_t role, const uint8_t* blob, size_t blob_len, const char* pin) {
+    if (!blob || blob_len == 0 || blob_len > GPG_RSA_BLOB_MAX) return false;
+    uint16_t slot0 = 0, slot1 = 0;
+    if (!rsa_role_slots(role, &slot0, &slot1)) return false;
+    auto* se = get_se();
+    if (!se) return false;
+
+    uint8_t pin_hash[32];
+    bool have_pin = (pin && pin[0] != '\0');
+    if (have_pin && !pin_to_hash(pin, pin_hash)) {
+        mbedtls_platform_zeroize(pin_hash, sizeof(pin_hash));
+        return false;
+    }
+    uint8_t enc_key[32];
+    bool ok = derive_storage_key(slot0, have_pin ? pin_hash : nullptr, enc_key);
+    mbedtls_platform_zeroize(pin_hash, sizeof(pin_hash));
+    if (!ok) {
+        secureWipe(enc_key);
+        return false;
+    }
+
+    const size_t rec_body = RSA_ENVELOPE + blob_len;  // magic + nonce + ct + tag
+    const size_t total = RSA_REC_HEADER + rec_body;
+    s_rsa_record[0] = static_cast<uint8_t>(rec_body & 0xFF);
+    s_rsa_record[1] = static_cast<uint8_t>((rec_body >> 8) & 0xFF);
+    uint8_t* p_magic = s_rsa_record + RSA_REC_HEADER;
+    uint8_t* p_nonce = p_magic + MAGIC_SIZE;
+    uint8_t* p_ct    = p_nonce + NONCE_SIZE;
+    uint8_t* p_tag   = p_ct + blob_len;
+    memcpy(p_magic, RSA_KEY_MAGIC, MAGIC_SIZE);
+    if (!se->getRandomStrict(p_nonce, NONCE_SIZE)) {
+        secureWipe(enc_key);
+        return false;
+    }
+    uint8_t aad[6];
+    build_aad(slot0, RSA_KEY_MAGIC, aad);
+    bool enc_ok = cdc::core::aesGcm256Seal(enc_key, p_nonce, NONCE_SIZE, aad, sizeof(aad),
+                                           blob, blob_len, p_ct, p_tag);
+    secureWipe(enc_key);
+    if (!enc_ok) {
+        mbedtls_platform_zeroize(s_rsa_record, total);
+        return false;
+    }
+
+    const size_t c0 = (total > RSA_SLOT_CAP) ? RSA_SLOT_CAP : total;
+    se->rmemErase(slot0);
+    se->rmemErase(slot1);
+    bool wrote = se->rmemWrite(slot0, s_rsa_record, static_cast<uint16_t>(c0)) == cdc::hal::SeResult::OK;
+    if (wrote && total > c0) {
+        wrote = se->rmemWrite(slot1, s_rsa_record + c0,
+                              static_cast<uint16_t>(total - c0)) == cdc::hal::SeResult::OK;
+    }
+    mbedtls_platform_zeroize(s_rsa_record, total);
+    if (!wrote) {
+        LOG_E(TAG, "RSA key write failed (role %u)", role);
+        return false;
+    }
+    LOG_I(TAG, "Saved RSA key (role %u, %zu bytes, slots %u/%u)", role, blob_len, slot0, slot1);
+    return true;
+}
+
+bool gpg_storage_load_rsa_key(uint8_t role, uint8_t* blob_out, size_t blob_cap,
+                              size_t* blob_len_out, const char* pin) {
+    if (!blob_out || !blob_len_out) return false;
+    uint16_t slot0 = 0, slot1 = 0;
+    if (!rsa_role_slots(role, &slot0, &slot1)) return false;
+    auto* se = get_se();
+    if (!se) return false;
+
+    uint16_t l0 = 0;
+    if (se->rmemRead(slot0, s_rsa_record, sizeof(s_rsa_record), &l0) != cdc::hal::SeResult::OK ||
+        l0 < RSA_REC_HEADER + RSA_ENVELOPE) {
+        return false;
+    }
+    const size_t rec_body = static_cast<size_t>(s_rsa_record[0]) |
+                            (static_cast<size_t>(s_rsa_record[1]) << 8);
+    const size_t total = RSA_REC_HEADER + rec_body;
+    if (rec_body < RSA_ENVELOPE || total > sizeof(s_rsa_record)) {
+        return false;
+    }
+    size_t have = l0;
+    if (total > l0) {
+        uint16_t l1 = 0;
+        if (se->rmemRead(slot1, s_rsa_record + l0,
+                         static_cast<uint16_t>(sizeof(s_rsa_record) - l0), &l1) != cdc::hal::SeResult::OK) {
+            return false;
+        }
+        have = static_cast<size_t>(l0) + l1;
+    }
+    if (have < total) return false;
+    if (memcmp(s_rsa_record + RSA_REC_HEADER, RSA_KEY_MAGIC, MAGIC_SIZE) != 0) {
+        return false;
+    }
+    const size_t blob_len = rec_body - RSA_ENVELOPE;
+    if (blob_len == 0 || blob_len > GPG_RSA_BLOB_MAX || blob_len > blob_cap) {
+        return false;
+    }
+
+    uint8_t pin_hash[32];
+    bool have_pin = (pin && pin[0] != '\0');
+    if (have_pin && !pin_to_hash(pin, pin_hash)) {
+        mbedtls_platform_zeroize(pin_hash, sizeof(pin_hash));
+        mbedtls_platform_zeroize(s_rsa_record, total);
+        return false;
+    }
+    uint8_t dec_key[32];
+    bool ok = derive_storage_key(slot0, have_pin ? pin_hash : nullptr, dec_key);
+    mbedtls_platform_zeroize(pin_hash, sizeof(pin_hash));
+    if (!ok) {
+        secureWipe(dec_key);
+        mbedtls_platform_zeroize(s_rsa_record, total);
+        return false;
+    }
+
+    const uint8_t* p_nonce = s_rsa_record + RSA_REC_HEADER + MAGIC_SIZE;
+    const uint8_t* p_ct    = p_nonce + NONCE_SIZE;
+    const uint8_t* p_tag   = p_ct + blob_len;
+    uint8_t aad[6];
+    build_aad(slot0, RSA_KEY_MAGIC, aad);
+    bool dec_ok = cdc::core::aesGcm256Open(dec_key, p_nonce, NONCE_SIZE, aad, sizeof(aad),
+                                           p_ct, blob_len, p_tag, blob_out);
+    secureWipe(dec_key);
+    mbedtls_platform_zeroize(s_rsa_record, total);
+    if (!dec_ok) {
+        mbedtls_platform_zeroize(blob_out, blob_len);
+        return false;
+    }
+    *blob_len_out = blob_len;
+    return true;
+}
+
+bool gpg_storage_has_rsa_key(uint8_t role) {
+    uint16_t slot0 = 0, slot1 = 0;
+    if (!rsa_role_slots(role, &slot0, &slot1)) return false;
+    auto* se = get_se();
+    if (!se) return false;
+    uint8_t buf[RSA_REC_HEADER + MAGIC_SIZE];
+    uint16_t buf_len = 0;
+    if (se->rmemRead(slot0, buf, sizeof(buf), &buf_len) != cdc::hal::SeResult::OK ||
+        buf_len < sizeof(buf)) {
+        return false;
+    }
+    return memcmp(buf + RSA_REC_HEADER, RSA_KEY_MAGIC, MAGIC_SIZE) == 0;
+}
+
+bool gpg_storage_delete_rsa_key(uint8_t role) {
+    uint16_t slot0 = 0, slot1 = 0;
+    if (!rsa_role_slots(role, &slot0, &slot1)) return false;
+    auto* se = get_se();
+    if (!se) return false;
+    bool a = se->rmemErase(slot0) == cdc::hal::SeResult::OK;
+    bool b = se->rmemErase(slot1) == cdc::hal::SeResult::OK;
+    return a && b;
 }
 
 void gpg_storage_set_session_pin(const char* pin) {

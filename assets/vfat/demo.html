@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Browser demo</title>
+  <meta name="description" content="A local HTML page for the badge text browser.">
+</head>
+<body>
+  <nav><a href="https://example.com/menu">Menu (dropped)</a></nav>
+  <article>
+    <h1>Browser demo</h1>
+    <p>This local file shows how the badge text browser renders HTML: navigation,
+       scripts and styling are stripped and the readable article body is kept and
+       wrapped to the screen width.</p>
+
+    <h2>Headings</h2>
+    <p>Headings map to Markdown sizes, so this section title is shown larger than
+       the body text, exactly like a remote page would be rendered.</p>
+
+    <h2>Links</h2>
+    <p>In-page links are numbered. Select one with 4 / 6 and open it with Y:
+       visit <a href="https://example.com/">Example</a> or the
+       <a href="https://example.org/about">about page</a> to follow a link over
+       Wi-Fi.</p>
+
+    <h2>Form</h2>
+    <p>Forms are interactive too. Select the checkbox and the submit control with
+       4 / 6; Y toggles the checkbox and activates submit.</p>
+    <form method="post" action="https://example.com/submit">
+      <input type="hidden" name="source" value="badge-demo">
+      <input type="checkbox" name="agree" value="yes"> I agree to the terms
+      <input type="submit" name="action" value="Send">
+    </form>
+  </article>
+  <footer><a href="https://example.com/privacy">Privacy (dropped)</a></footer>
+</body>
+</html>

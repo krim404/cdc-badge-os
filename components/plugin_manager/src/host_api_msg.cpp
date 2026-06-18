@@ -236,22 +236,24 @@ int host_msg_consume(uint8_t* buf, size_t buf_size, char* mime_out, size_t mime_
     return static_cast<int>(n);
 }
 
-int host_msg_send_interactive(const char* mime_type, const uint8_t* data, size_t len) {
+int host_msg_send_interactive(const char* mime_type, const uint8_t* data, size_t len,
+                              uint32_t flags) {
     if (!msg_allowed()) return HOST_ERR_NO_CAPABILITY;
     if (!mime_type || !data || len == 0 || len > HOST_MSG_PAYLOAD_MAX) return HOST_ERR_INVALID_ARG;
     bool ok = msg::MessageTransfer::instance().beginInteractiveSend(
-        mime_type, data, static_cast<uint32_t>(len));
+        mime_type, data, static_cast<uint32_t>(len), (flags & HOST_MSG_FLAG_PERSIST) != 0);
     return ok ? HOST_OK : HOST_ERR_BUSY;
 }
 
 int host_msg_send(const uint8_t addr[6], uint8_t addr_type, const char* mime_type,
-                  const uint8_t* data, size_t len) {
+                  const uint8_t* data, size_t len, uint32_t flags) {
     if (!msg_allowed()) return HOST_ERR_NO_CAPABILITY;
     if (!addr || !mime_type || !data || len == 0 || len > HOST_MSG_PAYLOAD_MAX) {
         return HOST_ERR_INVALID_ARG;
     }
     bool ok = msg::MessageTransfer::instance().sendTo(
-        addr, addr_type, mime_type, data, static_cast<uint32_t>(len));
+        addr, addr_type, mime_type, data, static_cast<uint32_t>(len),
+        (flags & HOST_MSG_FLAG_PERSIST) != 0);
     return ok ? HOST_OK : HOST_ERR_BUSY;
 }
 

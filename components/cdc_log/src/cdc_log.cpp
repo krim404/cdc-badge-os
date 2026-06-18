@@ -3,6 +3,7 @@
  * \brief Logging and console I/O implementation with optional hook transports.
  */
 #include "cdc_log.h"
+#include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -361,8 +362,21 @@ void console_printf(const char* fmt, ...) {
     char buf[256];
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int len = vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
+    if (len > 0 && static_cast<size_t>(len) >= sizeof(buf)) {
+        char* heap = static_cast<char*>(malloc(static_cast<size_t>(len) + 1));
+        if (heap) {
+            vsnprintf(heap, static_cast<size_t>(len) + 1, fmt, args_copy);
+            console_print(heap);
+            free(heap);
+            va_end(args_copy);
+            return;
+        }
+    }
+    va_end(args_copy);
     console_print(buf);
 }
 

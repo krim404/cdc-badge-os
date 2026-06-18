@@ -19,7 +19,8 @@ behaves. Read each entry below before using it.
 ## Entries
 
 The menu is built from a fixed top group, then any module-provided entries (for
-example the vFAT explorer), then a fixed bottom group. The fixed entries are:
+example the **System Files** explorer), then a fixed bottom group. The fixed
+entries are:
 
 | Entry | What it does |
 | --- | --- |
@@ -33,8 +34,9 @@ example the vFAT explorer), then a fixed bottom group. The fixed entries are:
 | **Bootloader** | Reboots the badge into USB download mode for flashing. It shows a "bootloader mode" lock screen, detaches USB so the host re-enumerates, and triggers a hard reset with the ROM download-boot bit set. |
 
 :::note[Module-provided entries]
-Modules can add their own rows between the top and bottom groups. The vFAT file
-explorer appears here when the `mod_vfat` module is enabled - see
+Modules can add their own rows between the top and bottom groups. The **System
+Files** explorer (the full file view, including the `system/` folder) appears
+here when the `mod_vfat` module is enabled - see
 [File storage & NVS tools](/power/storage-tools/).
 :::
 

@@ -86,9 +86,8 @@ each successful assertion. Maps to Success Criterion SC-003.
 - **credProtect (FR-016, open item B2)**: `credProtect` levels are parsed/stored/reported but NOT
   enforced at assertion time. Do not treat non-enforcement as a failure of this plan; record it
   as an observation against B2.
-- **Flash conservation**: this plan performs **no flashing**. Run all steps against one flashed
-  image. If a reflash is unavoidable, use the serial `AUTH <pin>` then `BOOTLOADER` path (auto-
-  reboots into new FW, no manual RESET).
+- **No flashing**: this plan runs against the installed release. Run all steps against the one
+  flashed image.
 - **ClientPIN lockout caution**: do not enter a wrong ClientPIN repeatedly. ClientPIN shares the
   badge-PIN lockout (FR-002/FR-017); too many wrong entries trigger the 60-second lockout. One
   deliberate wrong entry in step 6 is sufficient.

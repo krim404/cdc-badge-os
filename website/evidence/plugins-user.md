@@ -15,7 +15,7 @@ overview, install, manage, capabilities.
 | Plugins live on a FAT-FS partition named `plugins` | partitions.csv:4 (`plugins, data, fat`) | VERIFIED |
 | Plugins partition size = 0x200000 = 2 MB at offset 0xDF0000 | partitions.csv:4 | VERIFIED |
 | Partition auto-formats on first boot if empty | components/plugin_manager/include/plugin_manager/PluginStorage.h:21-25 (`Auto-formats if empty`) | VERIFIED |
-| VFS base path is `/plugins` | components/plugin_manager/include/plugin_manager/PluginStorage.h:33-35 | VERIFIED |
+| VFS mount path is `/vfat`; plugin files under `system/` | components/plugin_manager/include/plugin_manager/PluginStorage.h | VERIFIED |
 | A plugin is recognised by `<id>.wasm` + `<id>.meta` both present | components/plugin_manager/include/plugin_manager/PluginStorage.h:38-41 | VERIFIED |
 | Loader prefers `<id>.aot` over `<id>.wasm` if present | components/plugin_manager/include/plugin_manager/PluginStorage.h:44-47 | VERIFIED |
 | Optional translation overlay file is `<id>.lang` | components/plugin_manager/include/plugin_manager/PluginStorage.h:64-67 | VERIFIED |
@@ -57,7 +57,7 @@ overview, install, manage, capabilities.
 | Plugin file capability families (host_* prefixes) | components/plugin_manager/include/plugin_manager/host_api.h (host_nvs_/host_fs_/host_http_/host_wifi_/host_ble_/host_socket_/host_se_/host_rmem_/host_aes_/host_base32_/host_base64_/host_gpio_/host_adc_/host_pwm_/host_i2c_/host_pixel_/host_ui_/host_view_/host_display_/host_msg_/host_event_/host_i18n_/host_lockscreen_/host_power_/host_log_) | VERIFIED |
 | Capability flags: wifi/ble/http/socket/ui_exclusive/display_lowlevel/sao/grove/pixel_strip/background/usb_cdc/prevent_sleep/vfat/autoload | components/plugin_manager/include/plugin_manager/PluginManifest.h:21-64 | VERIFIED |
 | Resource requests: rmem, ecc, ble_service_uuids, message_types, gpio_pins, pwm_pins, adc_pins, i2c_bus, nvs_namespace | components/plugin_manager/include/plugin_manager/PluginManifest.h:53-63 | VERIFIED |
-| vfat confines plugin file access to /plugins/data/<id>/ | components/plugin_manager/include/plugin_manager/PluginManifest.h:39-44 | VERIFIED |
+| vfat confines plugin file access to /vfat/data/<id>/ | components/plugin_manager/include/plugin_manager/PluginManifest.h:39-44 | VERIFIED |
 | GPIO/PWM/ADC pins validated against a shared allow/block policy | components/plugin_manager/src/CapabilityChecker.cpp:75-106; PluginGpioPolicy.h | VERIFIED |
 | GPIO hard-blocked pins | components/plugin_manager/include/plugin_manager/PluginGpioPolicy.h:19-41 (0,1,8,10-13,17-21,26-37,39,41,42,45-48) | VERIFIED |
 | GPIO whitelist | components/plugin_manager/include/plugin_manager/PluginGpioPolicy.h:43-58 (2,3,4,5,6,7,9,14,15,16,38,40,43,44) | VERIFIED |

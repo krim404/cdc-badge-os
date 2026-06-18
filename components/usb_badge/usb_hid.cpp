@@ -37,6 +37,10 @@ static size_t s_hid_count = 0;
 static uint8_t s_config_descriptor[256];
 static uint16_t s_config_descriptor_len = 0;
 
+// When true, an MSC (mass-storage) interface is appended after the HID/CCID
+// interfaces. Toggled by usb_hid_set_msc(); the backing LUN lives in usb_msc.cpp.
+static bool s_msc_active = false;
+
 /**
  * \brief Dynamic module interface names generated during configuration apply.
  */
@@ -96,6 +100,11 @@ static void build_config_descriptor(void) {
             total_len += TUD_CCID_TOTAL_LEN;
             has_ccid = true;
         }
+    }
+
+    if (s_msc_active) {
+        itf_count++;
+        total_len += TUD_MSC_DESC_LEN;
     }
 
     // A per-interface VID/PID hint (e.g. mod_otphid's OnlyKey IDs) overrides the
@@ -173,6 +182,17 @@ static void build_config_descriptor(void) {
         }
     }
 
+    if (s_msc_active) {
+        uint8_t desc[] = {
+            TUD_MSC_DESCRIPTOR(next_itf, STR_MSC, next_out, next_in, 64),
+        };
+        memcpy(p, desc, sizeof(desc));
+        p += sizeof(desc);
+        next_out++;
+        next_in++;
+        next_itf++;
+    }
+
     s_config_descriptor_len = static_cast<uint16_t>(p - s_config_descriptor);
 }
 
@@ -206,6 +226,7 @@ static const char* s_fixed_strings[] = {
     "BadgeV1",                    // 2: Product
     s_serial_number,              // 3: Serial (derived from MAC)
     "CDC Serial",                 // 4: CDC Interface
+    "vFAT Storage",               // 5: MSC Interface
 };
 static constexpr size_t FIXED_STRING_COUNT = sizeof(s_fixed_strings) / sizeof(s_fixed_strings[0]);
 
@@ -384,6 +405,23 @@ extern "C" bool usb_hid_apply_config(const UsbInterfaceDef* defs, size_t count, 
     }
 
     return true;
+}
+
+/**
+ * \brief Adds or removes the MSC interface and re-enumerates the device.
+ * \param active `true` to expose the mass-storage interface, `false` to remove it.
+ */
+extern "C" void usb_hid_set_msc(bool active) {
+    if (s_msc_active == active) return;
+    s_msc_active = active;
+
+    build_config_descriptor();
+
+    if (tud_inited()) {
+        tud_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(20));
+        tud_connect();
+    }
 }
 
 /**

@@ -116,7 +116,7 @@ These map one-to-one to `PluginCapabilities` (`PluginManifest.h:22-51`,
 | `background` | Keep ticking after the user leaves the view; not a boot flag (`PluginManifest.h:31-36`) |
 | `usb_cdc` | Write to the USB-CDC stream |
 | `prevent_sleep` | Hold a sleep inhibitor while loaded |
-| `vfat` | Sandboxed file access in `/plugins/data/<id>/` (`PluginManifest.h:39-44`) |
+| `vfat` | Sandboxed file access in `/vfat/data/<id>/` (`PluginManifest.h:39-44`) |
 | `autoload` | Start the plugin as a resident background instance at boot (`PluginManifest.h:45-51`) |
 
 `background` and `autoload` are orthogonal: `autoload` governs loading at boot,
@@ -152,7 +152,7 @@ There are two enforcement points.
    (`host_api_socket.cpp:51,115`), vFAT (`host_api_fs.cpp:49`), low-level
    display (`host_api_display.cpp:28,51`), pixel strip
    (`host_api_pixel_strip.cpp:45,112`), USB CDC (`host_api_usb.cpp:15,24`) and
-   message transfer (`host_api_msg.cpp:170,240`).
+   message transfer (`host_api_msg.cpp:170,241`).
 
 :::note[HTTP and WiFi gating]
 The HTTP and WiFi host functions do not perform a per-call

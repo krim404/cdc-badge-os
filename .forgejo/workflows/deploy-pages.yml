@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  firmware:
     runs-on: codeberg-medium
 
     steps:
@@ -14,7 +14,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -35,6 +34,27 @@ jobs:
           python tools/build_lang_image.py \
             --lang-dir assets/i18n \
             --output build/plugins_initial.bin
+
+      - name: Stage firmware artifacts
+        run: |
+          mkdir -p fw
+          cp .pio/build/cdc_badge_usb/bootloader.bin fw/
+          cp .pio/build/cdc_badge_usb/partitions.bin fw/
+          cp .pio/build/cdc_badge_usb/firmware.bin   fw/
+          cp build/plugins_initial.bin               fw/
+
+      - name: Upload firmware artifact
+        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: firmware
+          path: fw/
+
+  doxygen:
+    runs-on: codeberg-small
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Install Doxygen 1.16.1
         run: |
@@ -60,6 +80,19 @@ jobs:
       - name: Build Doxygen documentation
         run: doxygen Doxyfile
 
+      - name: Upload doxygen artifact
+        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: doxygen
+          path: doxygen_output/html/
+
+  website:
+    runs-on: codeberg-small
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -70,6 +103,38 @@ jobs:
           npm --prefix website ci
           SITE_BASE=/cdc-badge-os/ SITE_URL=https://krim.codeberg.page npm --prefix website run build
           SITE_BASE=/cdc-badge-os/ npm --prefix website run check:links
+
+      - name: Upload website artifact
+        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: website
+          path: website/dist/
+
+  deploy:
+    runs-on: codeberg-small
+    needs: [firmware, doxygen, website]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download firmware artifact
+        uses: https://code.forgejo.org/forgejo/download-artifact@v4
+        with:
+          name: firmware
+          path: fw
+
+      - name: Download doxygen artifact
+        uses: https://code.forgejo.org/forgejo/download-artifact@v4
+        with:
+          name: doxygen
+          path: doxygen
+
+      - name: Download website artifact
+        uses: https://code.forgejo.org/forgejo/download-artifact@v4
+        with:
+          name: website
+          path: site
 
       - name: Resolve version tag
         id: version
@@ -86,18 +151,18 @@ jobs:
           set -euo pipefail
           # Documentation site (Astro Starlight) at the root
           mkdir -p _site
-          cp -r website/dist/. _site/
+          cp -r site/. _site/
           # Doxygen code reference under /api/
           mkdir -p _site/api
-          cp -r doxygen_output/html/* _site/api/
+          cp -r doxygen/. _site/api/
           # Web flasher + firmware binaries + manifests under /flasher/
           mkdir -p _site/flasher
           cp web-flasher/index.html _site/flasher/
           if [ -f web-flasher/badge.jpg ]; then cp web-flasher/badge.jpg _site/flasher/; fi
-          cp .pio/build/cdc_badge_usb/bootloader.bin _site/flasher/bootloader.bin
-          cp .pio/build/cdc_badge_usb/partitions.bin _site/flasher/partitions.bin
-          cp .pio/build/cdc_badge_usb/firmware.bin   _site/flasher/firmware.bin
-          cp build/plugins_initial.bin               _site/flasher/plugins_initial.bin
+          cp fw/bootloader.bin _site/flasher/bootloader.bin
+          cp fw/partitions.bin _site/flasher/partitions.bin
+          cp fw/firmware.bin   _site/flasher/firmware.bin
+          cp fw/plugins_initial.bin _site/flasher/plugins_initial.bin
 
           cat > _site/flasher/manifest.json <<MANIFEST
           {

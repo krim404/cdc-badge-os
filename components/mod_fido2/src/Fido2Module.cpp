@@ -6,12 +6,19 @@
 #include "mod_fido2/Fido2Ui.h"
 #include "mod_fido2/fido2.h"
 #include "mod_fido2/fido2_storage.h"
+#include "cdc_core/pin_storage_c.h"
 #include "mod_fido2/ctaphid.h"
+#include "mod_fido2/u2f.h"
 #include "usb_badge/usb_hid.h"
+#include "serial_cmd/ICommandRegistry.h"
+#include "serial_cmd/SubCommand.h"
+#include "serial_cmd/Console.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <esp_attr.h>
 #include <string.h>
+#include <stdio.h>
 
 static const char* TAG = "FIDO2";
 
@@ -110,6 +117,137 @@ Fido2Module& Fido2Module::instance() {
     return inst;
 }
 
+// ============================================================================
+// ATTEST serial commands: export the attestation public key for CA signing,
+// import the resulting CA-signed certificate, and revert to self-signed.
+// ============================================================================
+
+static constexpr const char* ATTEST_CMD_MODULE = "fido2";
+static bool s_attestCommandsRegistered = false;
+
+EXT_RAM_BSS_ATTR static char s_attestHex[U2F_MAX_ATT_CERT_SIZE * 2 + 8];
+static size_t s_attestHexPos = 0;
+static bool s_attestInputMode = false;
+
+/** \brief Decodes one hex nibble, or -1 for non-hex characters. */
+static int attestHexNibble(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/** \brief Decodes the accumulated hex paste into DER and imports it. */
+static void attestFinishImport() {
+    using cdc::serial::Console;
+    s_attestInputMode = false;
+    cdc::serial::getCommandRegistry().setLineInterceptor(nullptr);
+
+    EXT_RAM_BSS_ATTR static uint8_t der[U2F_MAX_ATT_CERT_SIZE];
+    size_t der_len = 0;
+    int hi = -1;
+    for (size_t i = 0; i < s_attestHexPos; ++i) {
+        int v = attestHexNibble(s_attestHex[i]);
+        if (v < 0) continue;  // skip whitespace / newlines
+        if (hi < 0) {
+            hi = v;
+        } else {
+            if (der_len >= sizeof(der)) {
+                Console::printf("ERROR: certificate too large\r\n");
+                return;
+            }
+            der[der_len++] = static_cast<uint8_t>((hi << 4) | v);
+            hi = -1;
+        }
+    }
+    if (hi >= 0) {
+        Console::printf("ERROR: odd number of hex digits\r\n");
+        return;
+    }
+    if (der_len == 0) {
+        Console::printf("ERROR: no certificate data\r\n");
+        return;
+    }
+    Console::printf(u2f_import_attestation_cert(der, der_len)
+                        ? "OK: attestation certificate imported\r\n"
+                        : "ERROR: invalid certificate or key mismatch\r\n");
+}
+
+/** \brief Line interceptor accumulating the hex DER paste for ATTEST IMPORT. */
+static bool attestLineInterceptor(const char* line) {
+    if (!s_attestInputMode) return false;
+    if (line && strcmp(line, "---") == 0) {
+        attestFinishImport();
+        return true;
+    }
+    if (line && strcmp(line, "ABORT") == 0) {
+        s_attestInputMode = false;
+        s_attestHexPos = 0;
+        cdc::serial::getCommandRegistry().setLineInterceptor(nullptr);
+        cdc::serial::Console::printf("Aborted\r\n");
+        return true;
+    }
+    if (line) {
+        for (const char* p = line; *p; ++p) {
+            if (s_attestHexPos < sizeof(s_attestHex)) s_attestHex[s_attestHexPos++] = *p;
+        }
+    }
+    return true;
+}
+
+/** \brief Serial command: print the attestation public key as hex. */
+static void cmd_attest_export(const char* args) {
+    (void)args;
+    uint8_t pub[65];
+    if (!u2f_get_attestation_pubkey(pub)) {
+        cdc::serial::Console::printf("ERROR: attestation key unavailable\r\n");
+        return;
+    }
+    char hex[131];
+    for (size_t i = 0; i < 65; ++i) snprintf(hex + i * 2, 3, "%02X", pub[i]);
+    cdc::serial::Console::printf("OK: attestation public key (P-256, uncompressed)\r\n");
+    cdc::serial::Console::printf("%s\r\n", hex);
+}
+
+/** \brief Serial command: begin a hex DER paste of a CA-signed certificate. */
+static void cmd_attest_import(const char* args) {
+    (void)args;
+    s_attestHexPos = 0;
+    s_attestInputMode = true;
+    cdc::serial::getCommandRegistry().setLineInterceptor(attestLineInterceptor);
+    cdc::serial::Console::printf(
+        "Paste the CA-signed certificate as hex (DER), end with '---' on a new "
+        "line (or 'ABORT'):\r\n");
+}
+
+/** \brief Serial command: drop the imported cert, revert to self-signed. */
+static void cmd_attest_clear(const char* args) {
+    (void)args;
+    cdc::serial::Console::printf(u2f_clear_attestation_cert()
+                                     ? "OK: reverted to self-signed attestation\r\n"
+                                     : "ERROR\r\n");
+}
+
+static const cdc::serial::SubCommand kAttestSubs[] = {
+    {"EXPORT", "", "Print the attestation public key (hex) for CA signing", cmd_attest_export},
+    {"IMPORT", "", "Import a CA-signed attestation certificate (hex DER paste)", cmd_attest_import},
+    {"CLEAR",  "", "Remove the imported certificate (revert to self-signed)",  cmd_attest_clear},
+    {nullptr, nullptr, nullptr, nullptr},
+};
+
+static void cmd_attest(const char* args) {
+    cdc::serial::dispatchSubCommand("ATTEST", args, kAttestSubs);
+}
+
+/** \brief Registers the ATTEST serial command group (idempotent). */
+static void registerAttestCommands() {
+    if (s_attestCommandsRegistered) return;
+    s_attestCommandsRegistered = true;
+    cdc::serial::getCommandRegistry().registerCommand(
+        {"ATTEST", "Attestation cert: EXPORT/IMPORT/CLEAR", cmd_attest,
+         ATTEST_CMD_MODULE, true, kAttestSubs});
+}
+
 /**
  * \brief Initializes FIDO2 module resources and slot mapping.
  * \return `true` if initialization succeeded.
@@ -128,6 +266,7 @@ bool Fido2Module::init() {
 
     fido2_ui_init();
     core::ModuleRegistry::instance().registerModule(this);
+    registerAttestCommands();
 
     if (slotRange_.hasEcc && slotRange_.hasRmem) {
         uint16_t eccCount = static_cast<uint16_t>(slotRange_.eccEnd - slotRange_.eccStart + 1);
@@ -191,6 +330,9 @@ bool Fido2Module::start() {
         }
     }
     fido2_set_user_presence_callback(fido2_ui_user_presence_callback);
+
+    // Re-apply the persisted CTAP2 setMinPINLength floor to the badge PIN policy.
+    pin_storage_set_min_pin_floor(fido2_storage_get_min_pin_len());
 
     static bool sleepHandlerRegistered = false;
     if (!sleepHandlerRegistered) {

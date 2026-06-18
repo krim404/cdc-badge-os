@@ -60,6 +60,48 @@ bool gpg_storage_has_aes_key(void);
 /** \brief Deletes the symmetric AES key record. */
 bool gpg_storage_delete_aes_key(void);
 
+/** \brief Maximum serialized RSA private-key blob (RSA-4096 n_bits||e||p||q). */
+#define GPG_RSA_BLOB_MAX 560
+
+/**
+ * \brief Sets the dedicated R-Memory range used for RSA private-key blobs.
+ *
+ * Distinct from the primary GPG range; carved as `mod_gpg_rsa` in the slot map.
+ * Each of the three roles occupies two consecutive slots so an RSA-4096 blob
+ * can span them.
+ * \param start First absolute R-Memory slot of the RSA pool.
+ * \param end Last absolute R-Memory slot of the RSA pool.
+ */
+void gpg_storage_set_rsa_slot_range(uint16_t start, uint16_t end);
+
+/**
+ * \brief Saves an encrypted RSA private-key blob for a key role.
+ * \param role 0 = SIG, 1 = DEC, 2 = AUT.
+ * \param blob Serialized RSA private material.
+ * \param blob_len Blob length (<= GPG_RSA_BLOB_MAX).
+ * \param pin Session PIN; `nullptr` falls back to chip-bound key.
+ * \return `true` on success.
+ */
+bool gpg_storage_save_rsa_key(uint8_t role, const uint8_t* blob, size_t blob_len, const char* pin);
+
+/**
+ * \brief Loads and decrypts the RSA private-key blob for a key role.
+ * \param role 0 = SIG, 1 = DEC, 2 = AUT.
+ * \param blob_out Output buffer (>= GPG_RSA_BLOB_MAX bytes).
+ * \param blob_cap Capacity of `blob_out`.
+ * \param blob_len_out Receives the decrypted blob length.
+ * \param pin Session PIN; `nullptr` falls back to chip-bound key.
+ * \return `true` on success.
+ */
+bool gpg_storage_load_rsa_key(uint8_t role, uint8_t* blob_out, size_t blob_cap,
+                              size_t* blob_len_out, const char* pin);
+
+/** \brief Returns `true` if an RSA private-key blob exists for the role. */
+bool gpg_storage_has_rsa_key(uint8_t role);
+
+/** \brief Deletes the RSA private-key blob for the role (both slots). */
+bool gpg_storage_delete_rsa_key(uint8_t role);
+
 /**
  * \brief Returns current session key if session is active.
  * \param key_out 32-byte output buffer.

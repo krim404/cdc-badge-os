@@ -13,7 +13,7 @@ phone over a HID keyboard connection (see [Auto-type](/guide/auto-type/)).
 ## Where entries are stored
 
 Entries live in the TROPIC01 secure element's R-memory, one entry per slot. The
-vault is assigned R-memory slots 132 through 500, so it can hold up to **369
+vault is assigned R-memory slots 137 through 500, so it can hold up to **364
 entries**.
 
 Each write goes through the secure element's headered R-memory API: a metadata
@@ -113,7 +113,9 @@ The vault is also scriptable over the serial console:
 | `PASSWORD DEL <slot>` | Delete an entry. |
 
 :::note
-Inside a serial field, use `\ ` (backslash space) to include spaces.
+Within these `PASSWORD ADD` / `EDIT` fields, use `\ ` (backslash space) to embed
+a literal space in a value (for example a multi-word title or notes). The escape
+applies to these vault fields, not to every serial command.
 :::
 
 ## Backup

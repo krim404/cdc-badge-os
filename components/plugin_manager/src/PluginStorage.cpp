@@ -6,6 +6,9 @@
 #include "esp_vfs.h"
 #include "esp_vfs_fat.h"
 #include "esp_partition.h"
+#include "wear_levelling.h"
+#include "ff.h"
+#include "usb_badge/usb_msc_bounds.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -17,11 +20,54 @@
 namespace cdc::plugin_manager {
 
 static const char* TAG = "PLG_STO";
-static const char* PARTITION_LABEL = "plugins";
-static const char* MOUNT_POINT = "/plugins";
+static const char* PARTITION_LABEL = "vfat";
+static const char* MOUNT_POINT = "/vfat";
+// System files (plugins, i18n) live in a "system" subfolder so the partition
+// root is a safe, browsable user area.
+static const char* SYSTEM_DIR = "/vfat/system";
 
 static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
 static bool s_mounted = false;
+static bool s_host_active = false;
+static bool s_remount_pending = false;
+
+// FAT volume label shown to a USB host (uppercase per FAT label convention).
+static const char* VOLUME_LABEL = "CDCBADGE";
+
+// esp_vfs_fat assigns the FatFs drive number internally; locate ours by the
+// presence of the system folder. Returns the drive index, or -1 if not found.
+static int vfat_drive()
+{
+    FILINFO fno;
+    char path[32];
+    for (int d = 0; d < FF_VOLUMES; ++d) {
+        snprintf(path, sizeof(path), "%d:/system", d);
+        if (f_stat(path, &fno) == FR_OK) return d;
+    }
+    return -1;
+}
+
+// Set the FAT volume label so the host shows the drive as CDCBADGE instead of
+// the fatfsgen default. Idempotent; skipped while a host holds the volume.
+static void ensure_volume_label()
+{
+    if (!s_mounted || s_host_active) return;
+    const int drive = vfat_drive();
+    if (drive < 0) return;
+    char drv[16];
+    snprintf(drv, sizeof(drv), "%d:", drive);
+    char cur[16] = {0};
+    if (f_getlabel(drv, cur, nullptr) == FR_OK && std::strcmp(cur, VOLUME_LABEL) == 0) {
+        return;  // already correct
+    }
+    char lbl[24];
+    snprintf(lbl, sizeof(lbl), "%d:%s", drive, VOLUME_LABEL);
+    if (f_setlabel(lbl) == FR_OK) {
+        LOG_I(TAG, "set vfat volume label to %s", VOLUME_LABEL);
+    } else {
+        LOG_W(TAG, "f_setlabel failed");
+    }
+}
 
 bool PluginStorage::mount()
 {
@@ -44,6 +90,9 @@ bool PluginStorage::mount()
 
     LOG_I(TAG, "mounted %s on %s", PARTITION_LABEL, MOUNT_POINT);
     s_mounted = true;
+    mkdir(SYSTEM_DIR, 0777);  // ensure the hidden system folder exists
+    ensure_volume_label();
+    protectSystemDir();
     return true;
 }
 
@@ -70,10 +119,9 @@ std::vector<std::string> PluginStorage::listPluginIds()
     std::vector<std::string> ids;
     if (!s_mounted) return ids;
 
-    DIR* dir = opendir(MOUNT_POINT);
+    DIR* dir = opendir(SYSTEM_DIR);
     if (!dir) {
-        LOG_W(TAG, "opendir failed");
-        return ids;
+        return ids;  // not yet created (fresh format) -> no plugins
     }
 
     while (struct dirent* ent = readdir(dir)) {
@@ -114,27 +162,27 @@ std::string PluginStorage::binaryPath(const std::string& id)
 
 std::string PluginStorage::wasmPath(const std::string& id)
 {
-    return std::string(MOUNT_POINT) + "/" + id + ".wasm";
+    return std::string(SYSTEM_DIR) + "/" + id + ".wasm";
 }
 
 std::string PluginStorage::aotPath(const std::string& id)
 {
-    return std::string(MOUNT_POINT) + "/" + id + ".aot";
+    return std::string(SYSTEM_DIR) + "/" + id + ".aot";
 }
 
 std::string PluginStorage::metaPath(const std::string& id)
 {
-    return std::string(MOUNT_POINT) + "/" + id + ".meta";
+    return std::string(SYSTEM_DIR) + "/" + id + ".meta";
 }
 
 std::string PluginStorage::langPath(const std::string& id)
 {
-    return std::string(MOUNT_POINT) + "/" + id + ".lang";
+    return std::string(SYSTEM_DIR) + "/" + id + ".lang";
 }
 
 std::string PluginStorage::disabledPath(const std::string& id)
 {
-    return std::string(MOUNT_POINT) + "/" + id + ".disabled";
+    return std::string(SYSTEM_DIR) + "/" + id + ".disabled";
 }
 
 bool PluginStorage::isDisabled(const std::string& id)
@@ -162,6 +210,98 @@ bool PluginStorage::stats(uint64_t& free_bytes, uint64_t& total_bytes)
 {
     if (!s_mounted) return false;
     return esp_vfs_fat_info(MOUNT_POINT, &total_bytes, &free_bytes) == ESP_OK;
+}
+
+uint16_t PluginStorage::blockSize()
+{
+    if (!s_mounted) return 0;
+    return static_cast<uint16_t>(wl_sector_size(s_wl_handle));
+}
+
+uint64_t PluginStorage::blockTotalBytes()
+{
+    if (!s_mounted) return 0;
+    return wl_size(s_wl_handle);
+}
+
+bool PluginStorage::blockRead(uint32_t lba, uint32_t offset, void* buf, uint32_t len)
+{
+    if (!s_mounted || !buf) return false;
+    const uint16_t bs = static_cast<uint16_t>(wl_sector_size(s_wl_handle));
+    if (!usb_msc_range_ok(wl_size(s_wl_handle), bs, lba, offset, len, false)) return false;
+    const uint64_t addr = static_cast<uint64_t>(lba) * bs + offset;
+    return wl_read(s_wl_handle, static_cast<size_t>(addr), buf, len) == ESP_OK;
+}
+
+bool PluginStorage::blockWrite(uint32_t lba, uint32_t offset, const void* buf, uint32_t len)
+{
+    if (!s_mounted || !buf) return false;
+    const uint16_t bs = static_cast<uint16_t>(wl_sector_size(s_wl_handle));
+    // Wear-levelling writes are erase-then-write at sector granularity, so the
+    // MSC layer must hand us whole, sector-aligned blocks.
+    if (!usb_msc_range_ok(wl_size(s_wl_handle), bs, lba, offset, len, true)) return false;
+    const uint64_t addr = static_cast<uint64_t>(lba) * bs;
+    if (wl_erase_range(s_wl_handle, static_cast<size_t>(addr), len) != ESP_OK) return false;
+    return wl_write(s_wl_handle, static_cast<size_t>(addr), buf, len) == ESP_OK;
+}
+
+void PluginStorage::setHostActive(bool active)
+{
+    if (active == s_host_active) return;
+    const bool wasActive = s_host_active;
+    s_host_active = active;
+    LOG_I(TAG, "MSC host %s", active ? "attached" : "detached");
+    // Defer the remount out of the USB callback context; remountIfPending()
+    // performs it on a safe task so host-written files become visible.
+    if (usb_msc_should_remount(wasActive, active)) {
+        s_remount_pending = true;
+    }
+}
+
+bool PluginStorage::hostActive()
+{
+    return s_host_active;
+}
+
+void PluginStorage::remountIfPending()
+{
+    if (!s_remount_pending || s_host_active || !s_mounted) return;
+    s_remount_pending = false;
+    unmount();
+    mount();
+    LOG_I(TAG, "remounted %s after MSC host detach", MOUNT_POINT);
+}
+
+void PluginStorage::protectSystemDir()
+{
+    if (!s_mounted || s_host_active) return;
+
+    static constexpr BYTE kAttr = AM_RDO | AM_HID | AM_SYS;
+    static constexpr BYTE kMask = AM_RDO | AM_HID | AM_SYS;
+
+    const int drive = vfat_drive();
+    if (drive < 0) {
+        LOG_W(TAG, "protectSystemDir: system folder not found for chmod");
+        return;
+    }
+    // Hide the directory itself but leave it writable (badge writes into it when
+    // no host is attached); read-only is applied to the files below.
+    char dirPath[32];
+    snprintf(dirPath, sizeof(dirPath), "%d:/system", drive);
+    f_chmod(dirPath, AM_HID | AM_SYS, AM_RDO | AM_HID | AM_SYS);
+
+    // Mark each system file read-only + hidden + system so a host file manager
+    // hides them and refuses to modify or delete them (advisory only).
+    DIR* dir = opendir(SYSTEM_DIR);
+    if (!dir) return;
+    char filePath[280];  // "N:/system/" + up to a 255-char FAT long name
+    while (struct dirent* ent = readdir(dir)) {
+        if (ent->d_name[0] == '.') continue;
+        snprintf(filePath, sizeof(filePath), "%d:/system/%s", drive, ent->d_name);
+        f_chmod(filePath, kAttr, kMask);
+    }
+    closedir(dir);
+    LOG_I(TAG, "protectSystemDir: marked system folder on drive %d", drive);
 }
 
 }  // namespace cdc::plugin_manager

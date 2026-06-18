@@ -46,7 +46,7 @@ python tools/upload.py --stop --pin 0000           # stop the active plugin
 python tools/upload.py --delete hello --pin 0000   # delete a plugin
 ```
 
-The tool can also write a UI language overlay to `/plugins/i18n/` and reload it (`--lang-overlay lang_<code>.json`), and stream an arbitrary file onto the partition (`--put <file> [--dir <dir>] [--name <n>]`). These use the VFAT serial shell rather than the plugin upload path.
+The tool can also write a UI language overlay to `/vfat/system/i18n/` and reload it (`--lang-overlay lang_<code>.json`), and stream an arbitrary file onto the partition (`--put <file> [--dir <dir>] [--name <n>]`). These use the VFAT serial shell rather than the plugin upload path.
 
 :::caution
 Each upload writes through the badge's serial console. Avoid running the serial monitor at the same time, since both contend for the same USB-CDC port.

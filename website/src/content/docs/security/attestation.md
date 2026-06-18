@@ -1,6 +1,6 @@
 ---
 title: FIDO2 attestation key & AAGUID
-description: What the badge attests, its AAGUID, the self-signed per-device attestation certificate, and where the attestation key lives.
+description: What the badge attests, its AAGUID, the self-signed per-device attestation certificate, importing a CA-signed certificate, and where the attestation key lives.
 sidebar:
   order: 2
 ---
@@ -34,18 +34,22 @@ The badge produces **packed attestation** with a certificate (`x5c`):
 - The signature is ECDSA over the P-256 curve, computed over
   `authenticatorData || clientDataHash`.
 
-The certificate in `x5c` is **self-signed**: its issuer equals its subject, and
-it is signed by the very same attestation key whose public key it carries. There
-is **no CA chain and no batch certificate** embedded in the firmware.
+The certificate in `x5c` is **self-signed by default**: its issuer equals its
+subject, and it is signed by the very same attestation key whose public key it
+carries. No CA chain or batch certificate is embedded in the firmware.
 
-:::caution[Not CA-backed, and per-device]
-Because each badge generates its own attestation key on first use, the
-attestation certificate is unique per device and self-signed. This is **not**
-privacy-preserving batch attestation (where many devices share one key and
-certificate to avoid being individually trackable). A relying party that records
-the attestation certificate can distinguish one badge from another. Relying
-parties that demand a known vendor CA root will not be able to chain-validate
-this certificate.
+A **CA-signed certificate can be imported per device** (see below). When present
+it replaces the self-signed certificate in `x5c`, so the attestation chains to
+your own CA while the attestation key stays in the secure element.
+
+:::caution[Self-signed and per-device by default]
+Unless a CA-signed certificate is imported, each badge generates its own
+attestation key on first use and the certificate is unique per device and
+self-signed. This is **not** privacy-preserving batch attestation (where many
+devices share one key and certificate to avoid being individually trackable). A
+relying party that records the attestation certificate can distinguish one badge
+from another, and a party that demands a known vendor CA root cannot
+chain-validate a self-signed certificate.
 :::
 
 ### Certificate contents
@@ -61,6 +65,24 @@ The self-signed certificate is built in firmware with these fixed fields:
 | keyUsage | digitalSignature |
 | Validity | 2024-01-01 to 2049-12-31 |
 | Serial number | Random (8 bytes from the secure element TRNG) |
+
+## Importing a CA-signed certificate
+
+The attestation key stays in the secure element; to make attestation CA-backed
+you sign the device's attestation public key with your own CA and import the
+resulting certificate. The PIN-gated `ATTEST` serial command group drives this:
+
+| Command | Action |
+| --- | --- |
+| `ATTEST EXPORT` | Print the attestation public key (P-256, uncompressed, hex) so your CA can issue a certificate for it. |
+| `ATTEST IMPORT` | Paste the CA-signed certificate as hex (DER), ending with `---` on a new line (or `ABORT`). |
+| `ATTEST CLEAR` | Remove the imported certificate and revert to the self-signed one. |
+
+On import the badge parses the DER certificate and verifies that its public key
+matches the attestation key in slot 0; a mismatch is rejected. The validated
+certificate is stored in NVS (namespace `attest`) and used in `x5c` for every
+later registration. If slot 0 is later regenerated the stored certificate no
+longer matches and the badge falls back to the self-signed certificate.
 
 ## Where the attestation key lives
 
@@ -103,8 +125,8 @@ registrations carry the same self-signed, per-device attestation identity.
 | --- | --- |
 | AAGUID | Fixed, value quoted above (from source) |
 | Attestation format | `packed` with `x5c` (basic attestation) |
-| Certificate trust | Self-signed, per-device |
-| CA / batch chain | None |
+| Certificate trust | Self-signed per-device, or CA-signed when a certificate is imported |
+| CA / batch chain | None by default; per-device CA certificate import supported |
 | Key storage | TROPIC01 ECC slot 0, generated on-chip, non-exportable |
 | Key curve | P-256 |
 | Signature | ECDSA-SHA256 over authData \|\| clientDataHash |

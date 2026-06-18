@@ -12,6 +12,9 @@
 #include "cdc_views/ContextMenuView.h"
 #include "cdc_views/ConfirmView.h"
 #include "cdc_views/InfoView.h"
+#include "cdc_views/MarkdownView.h"
+#include "cdc_views/ImageView.h"
+#include "cdc_views/HtmlViewerHook.h"
 #include "cdc_views/T9InputView.h"
 #include "cdc_views/ToastView.h"
 #include "cdc_views/KeyCodes.h"
@@ -61,9 +64,19 @@ bool isViewable(const std::string& name)
     if (e.empty()) return true;
     static const char* kText[] = {"txt", "json", "md", "csv", "log", "cfg",
                                   "ini", "text", "nfo", "yaml", "yml", "xml",
-                                  "html", "htm", "meta", "lang", nullptr};
+                                  "html", "htm", "meta", "lang", "markdown", nullptr};
     for (int i = 0; kText[i]; ++i) if (e == kText[i]) return true;
     return false;
+}
+
+/// Maximum image source read into RAM before decoding.
+constexpr size_t kImageMaxBytes = 512 * 1024;
+
+/// Files with an image extension open in the image viewer.
+bool isImage(const std::string& name)
+{
+    std::string e = extOf(name);
+    return e == "png" || e == "jpg" || e == "jpeg";
 }
 
 /// Viewable text files are editable, except read-only plugin metadata (.meta).
@@ -79,8 +92,9 @@ VfatExplorerView& VfatExplorerView::instance()
     return inst;
 }
 
-void VfatExplorerView::openRoot()
+void VfatExplorerView::openRoot(bool showSystem)
 {
+    showSystem_ = showSystem;
     cwd_.clear();
     rebuild();
 }
@@ -111,7 +125,17 @@ std::string VfatExplorerView::relOf(const std::string& name) const
 void VfatExplorerView::rebuild()
 {
     bool truncated = false;
-    fs::list(cwd_, entries_, truncated);
+    fs::list(cwd_, entries_, truncated, showSystem_);
+
+    // Hide the system folder from the user view (root only); the System Files
+    // view (showSystem_) keeps it. Filtered from entries_ so list indices stay
+    // aligned with the displayed items.
+    if (!showSystem_ && cwd_.empty()) {
+        for (auto it = entries_.begin(); it != entries_.end();) {
+            if (it->name == "system") it = entries_.erase(it);
+            else ++it;
+        }
+    }
 
     labels_.clear();
     items_.clear();
@@ -164,17 +188,80 @@ void VfatExplorerView::openEntry(uint16_t index)
     if (index >= entries_.size()) return;
     const FsEntry& e = entries_[index];
     if (e.is_dir) { descend(e.name); return; }
+
+    if (isImage(e.name)) {
+        std::string raw;
+        if (!fs::readText(relOf(e.name), raw, kImageMaxBytes)) {
+            cdc::ui::showToastError(cdc::ui::tr("core.failed"), 1500);
+            return;
+        }
+        std::string title = cdc::core::cp437::fromUtf8(e.name.c_str());
+        std::snprintf(t9Title_, sizeof(t9Title_), "%s", title.c_str());
+        cdc::ui::showImage(t9Title_, reinterpret_cast<const uint8_t*>(raw.data()), raw.size());
+        return;
+    }
+
+    // HTML files open in the browser's reader when that module is present.
+    {
+        const std::string he = extOf(e.name);
+        if (he == "html" || he == "htm") {
+            if (auto fn = cdc::ui::htmlViewer()) {
+                std::string content;
+                if (!fs::readText(relOf(e.name), content, 256u * 1024u)) {
+                    cdc::ui::showToastError(cdc::ui::tr("core.failed"), 1500);
+                    return;
+                }
+                fn(e.name.c_str(), content.c_str(), content.size());
+                return;
+            }
+            // No HTML viewer registered: fall through to the plain-text view.
+        }
+    }
+
     if (!isViewable(e.name)) return;
 
+    const std::string ext = extOf(e.name);
+    const bool isMd = (ext == "md" || ext == "markdown");
+    const size_t cap = isMd ? static_cast<size_t>(cdc::ui::MarkdownView::MAX_SOURCE)
+                            : static_cast<size_t>(cdc::ui::InfoView::MAX_TEXT_LEN) * 2;
+
     std::string content;
-    if (!fs::readText(relOf(e.name), content, cdc::ui::InfoView::MAX_TEXT_LEN * 2)) {
+    if (!fs::readText(relOf(e.name), content, cap)) {
         cdc::ui::showToastError(cdc::ui::tr("core.failed"), 1500);
         return;
     }
     std::string title = cdc::core::cp437::fromUtf8(e.name.c_str());
     std::string body  = cdc::core::cp437::fromUtf8(content.c_str());
     std::snprintf(t9Title_, sizeof(t9Title_), "%s", title.c_str());
-    cdc::ui::showInfo(t9Title_, body.c_str());
+    if (isMd) {
+        mdViewPath_ = relOf(e.name);
+        auto* mv = cdc::ui::showMarkdown(t9Title_, body.c_str(), body.size());
+        // Editable Markdown persists task-list checkbox toggles back to the file.
+        if (mv && isEditable(e.name)) mv->setCheckSave(&onMdCheckSaveCb, this);
+    } else {
+        cdc::ui::showInfo(t9Title_, body.c_str());
+    }
+}
+
+void VfatExplorerView::onMdCheckSaveCb(void* userData, const char* cp437Source, size_t /*len*/)
+{
+    auto* self = static_cast<VfatExplorerView*>(userData);
+    if (!self || self->mdViewPath_.empty() || !cp437Source) return;
+    std::string utf8 = cdc::core::cp437::toUtf8(cp437Source);
+    fs::writeText(self->mdViewPath_, utf8.data(), utf8.size());
+}
+
+void VfatExplorerView::openLocalImage(const char* path)
+{
+    if (!path || !path[0]) return;
+    std::string raw;
+    if (!fs::readText(relOf(path), raw, kImageMaxBytes)) {
+        cdc::ui::showToastError(cdc::ui::tr("core.failed"), 1500);
+        return;
+    }
+    std::string title = cdc::core::cp437::fromUtf8(path);
+    std::snprintf(t9Title_, sizeof(t9Title_), "%s", title.c_str());
+    cdc::ui::showImage(t9Title_, reinterpret_cast<const uint8_t*>(raw.data()), raw.size());
 }
 
 void VfatExplorerView::openSelected()

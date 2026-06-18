@@ -25,7 +25,7 @@ void registerPluginSerialCommands();
  * `abs_path` (absolute, inside the partition); the VFAT serial shell resolves
  * it against its working directory.
  *
- * \param abs_path Absolute destination path, e.g. "/plugins/data/notes.txt".
+ * \param abs_path Absolute destination path, e.g. "/vfat/data/notes.txt".
  * \param size Total payload size in bytes (must be > 0).
  * \param crc Expected CRC32 of the whole payload.
  * \return true if the receiver was armed (READY sent), false on error.

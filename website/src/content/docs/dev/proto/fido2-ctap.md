@@ -28,7 +28,7 @@ carries CTAP2 commands.
 
 ## authenticatorGetInfo
 
-The `getInfo` response is a 10-entry map:
+The `getInfo` response is a 12-entry map:
 
 | Key | Field | Value |
 | --- | --- | --- |
@@ -42,8 +42,12 @@ The `getInfo` response is a 10-entry map:
 | 0x08 | maxCredentialIdLength | 64 |
 | 0x09 | transports | `["usb"]` |
 | 0x0A | algorithms | ES256, EdDSA |
+| 0x0B | maxSerializedLargeBlobArray | 1024 |
+| 0x0D | minPINLength | current floor (default 4) |
 
 ### Options
+
+Keys are emitted in CTAP canonical order (by length, then bytewise).
 
 | Option | Value | Meaning |
 | --- | --- | --- |
@@ -51,9 +55,14 @@ The `getInfo` response is a 10-entry map:
 | `up` | true | User presence supported |
 | `uv` | false | No built-in user verification (e.g. biometric) |
 | `plat` | false | Removable authenticator |
+| `alwaysUv` | current state | Whether every operation requires user verification |
 | `credMgmt` | true | Credential management supported |
+| `authnrCfg` | true | authenticatorConfig supported |
 | `clientPin` | true | ClientPIN supported |
+| `largeBlobs` | true | authenticatorLargeBlobs supported |
 | `pinUvAuthToken` | true | pinUvAuthToken supported |
+| `setMinPINLength` | true | setMinPINLength supported |
+| `makeCredUvNotRqd` | true | makeCredential allowed without user verification |
 
 ## Supported CTAP2 commands
 
@@ -67,15 +76,13 @@ The `getInfo` response is a 10-entry map:
 | getNextAssertion | 0x08 | Implemented |
 | credentialManagement | 0x0A | Implemented |
 | selection | 0x0B | Implemented (user presence only) |
-| largeBlobs | 0x0C | **Returns `CTAP2_ERR_UNSUPPORTED_OPTION`** |
-| authenticatorConfig | 0x0D | **Returns `CTAP2_ERR_UNSUPPORTED_OPTION`** |
+| largeBlobs | 0x0C | Implemented |
+| authenticatorConfig | 0x0D | Implemented (toggleAlwaysUv, setMinPINLength) |
 | bioEnrollment | 0x09 | **Not dispatched** (`CTAP1_ERR_INVALID_COMMAND`) |
 
-:::caution[Advertised but not implemented]
-The badge reports version `FIDO_2_1`, but several CTAP 2.1 features are absent:
-LargeBlobs and AuthenticatorConfig are explicitly rejected with
-`CTAP2_ERR_UNSUPPORTED_OPTION`, and BioEnrollment is not handled at all. Do not
-rely on these.
+:::caution[bioEnrollment is not implemented]
+The badge reports version `FIDO_2_1` but has no biometric sensor, so
+BioEnrollment (0x09) is not handled. Do not rely on it.
 :::
 
 ## COSE algorithms and curves
@@ -119,19 +126,21 @@ available and `CTAP2_ERR_PIN_BLOCKED` after the retry counter reaches zero.
 
 ### pinUvAuthToken permissions
 
-The permission bits are defined (`mc`, `ga`, `cm`, `be`, `lbw`, `acfg`), but
-only the credential-bound paths consume them:
+The permission bits are defined (`mc`, `ga`, `cm`, `be`, `lbw`, `acfg`). The
+credential-bound paths consume `mc`/`ga`/`cm`; `lbw` is required for
+authenticatorLargeBlobs writes and `acfg` for authenticatorConfig.
 
-:::caution[Permission constants without consumers]
-`be` (bioEnrollment), `lbw` (largeBlobWrite) and `acfg` (authnConfig) exist as
-constants only; no command implements those features, so granting those
-permissions has no effect.
+:::caution[bioEnrollment permission has no consumer]
+`be` (bioEnrollment) exists as a constant only; the badge has no biometric
+sensor, so granting that permission has no effect.
 :::
 
 ## makeCredential behaviour
 
 - `up` must be true (false yields `CTAP2_ERR_INVALID_OPTION`); `uv=true` is
   rejected with `CTAP2_ERR_UNSUPPORTED_OPTION` (no internal UV).
+- When `alwaysUv` is enabled (see authenticatorConfig), a request without a
+  verified `pinUvAuthParam` is rejected with `CTAP2_ERR_PIN_REQUIRED`.
 - User presence is always requested on the device before a key is created.
 - An existing credential for the same RP-ID + user handle is overwritten.
 - `appidExclude` matching an existing credential yields
@@ -157,6 +166,8 @@ advisory metadata, not an access control.
   (discoverable flow), with `getNextAssertion` iterating the rest.
 - authData flags: `UP` (0x01) is set when user presence was requested; `UV`
   (0x04) is set when a pinUvAuth token was verified for the request.
+- When `alwaysUv` is enabled, an assertion without a verified pinUvAuth token is
+  rejected with `CTAP2_ERR_PIN_REQUIRED`.
 - ECDSA assertions are DER-encoded; EdDSA assertions are raw 64-byte
   signatures, both produced by the secure element.
 
@@ -179,6 +190,50 @@ The per-subcommand `pinUvAuthParam` HMAC is not re-verified; access is gated onl
 by overall pinUvAuthToken validity. `updateUserInformation` (0x07) is not
 implemented and falls through to `CTAP2_ERR_UNSUPPORTED_OPTION`.
 :::
+
+## Large blobs (0x0C)
+
+The badge implements `authenticatorLargeBlobs` as a single serialized large-blob
+array.
+
+- The array is stored in NVS, capped at **1024 bytes**
+  (`maxSerializedLargeBlobArray`). An unset store reads back as the canonical
+  empty array (`0x80` followed by the left 16 bytes of `SHA-256(0x80)`).
+- `get` returns a fragment from `offset` (no PIN required).
+- `set` writes fragments in order: the first fragment (offset 0) carries the
+  total `length`; out-of-order offsets yield `CTAP1_ERR_INVALID_SEQ`, a total
+  above the cap yields `CTAP2_ERR_LARGE_BLOB_STORAGE_FULL`. When a PIN is set,
+  each write must carry a `pinUvAuthParam` with the `lbw` permission over
+  `0xff x 32 || 0x0c || 0x00 || offset (LE32) || SHA-256(fragment)`.
+- On the final fragment the trailing 16-byte truncated SHA-256 checksum is
+  verified; a mismatch yields `CTAP2_ERR_INTEGRITY_FAILURE` and the write is
+  discarded.
+
+## authenticatorConfig (0x0D)
+
+Supported subcommands:
+
+| Subcommand | Code | Status |
+| --- | --- | --- |
+| toggleAlwaysUv | 0x02 | Implemented |
+| setMinPINLength | 0x03 | Implemented |
+| enableEnterpriseAttestation | 0x01 | **`CTAP2_ERR_UNSUPPORTED_OPTION`** |
+| vendorPrototype | 0xFF | **`CTAP2_ERR_UNSUPPORTED_OPTION`** |
+
+When a PIN is set, the command requires a `pinUvAuthParam` with the `acfg`
+permission over `0xff x 32 || 0x0d || subCommand || subCommandParams`.
+
+- **toggleAlwaysUv** flips a persistent flag. While set, every makeCredential and
+  getAssertion without a verified pinUvAuth token is rejected with
+  `CTAP2_ERR_PIN_REQUIRED`. The current value is reported as the `alwaysUv`
+  getInfo option.
+- **setMinPINLength** raises the minimum badge-PIN length floor (reported as the
+  `minPINLength` getInfo value). The new value must be between the current floor
+  and 8 (the badge PIN maximum); a lower or larger value yields
+  `CTAP1_ERR_INVALID_PARAMETER`. The floor is enforced on the next on-device PIN
+  change and persists across reboots. The `minPinLengthRPIDs` list and
+  `forceChangePin` flag are accepted (covered by the auth) but not acted upon;
+  the `minPinLength` makeCredential extension is not reported to RPs.
 
 ## Attestation format
 

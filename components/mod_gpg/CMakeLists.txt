@@ -4,7 +4,9 @@ idf_component_register(
     SRCS
         "src/GpgModule.cpp"
         "src/GpgRecvStore.cpp"
-        "src/ble_gpg_xsig.cpp"
+        "src/GpgSelfCertStore.cpp"
+        "src/GpgKeyPayload.cpp"
+        "src/GpgCertPayload.cpp"
         "src/ccid/ccid_driver.cpp"
         "src/gpg.cpp"
         "src/GpgStorage.cpp"
@@ -13,7 +15,9 @@ idf_component_register(
         "src/openpgp/ccid.cpp"
         "src/openpgp/ecdh.cpp"
         "src/openpgp/fingerprint.cpp"
+        "src/openpgp/kdf.cpp"
         "src/openpgp/openpgp.cpp"
+        "src/openpgp/rsa.cpp"
         "src/openpgp/tlv.cpp"
         "src/openpgp/xsig.cpp"
     INCLUDE_DIRS
@@ -25,6 +29,7 @@ idf_component_register(
         cdc_views
         cdc_os_ui
         cdc_hal
+        cdc_msg
         usb_badge
         serial_cmd
         cdc_log

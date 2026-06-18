@@ -58,6 +58,7 @@ idf_component_register(
         serial_cmd
         wamr_runtime
         fatfs
+        wear_levelling
         nvs_flash
         json
         esp_timer

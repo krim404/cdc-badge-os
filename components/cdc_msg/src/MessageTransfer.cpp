@@ -7,10 +7,12 @@
 #include "cdc_msg/MessageProfile.h"
 
 #include "cdc_core/EventBus.h"
+#include "cdc_core/Raii.h"
 #include "cdc_log.h"
 
 #include "esp_rom_crc.h"
 #include "esp_timer.h"
+#include "nvs.h"
 
 #include <cstring>
 
@@ -35,6 +37,12 @@ constexpr uint32_t kDoneGraceMs = 700;
 constexpr uint32_t kProgressStepBytes = 512;
 /// Stack frame buffer for outgoing OFFER/CHUNK writes (caps the MTU-derived size).
 constexpr uint16_t kFrameBufLen = 260;
+
+/// NVS namespace + key for the session-pairing cleanup ledger (addresses only).
+constexpr const char* kNsMsg     = "msg";
+constexpr const char* kKeyPeers  = "speers";
+/// Ledger entry size on disk: 6-byte address + 1-byte address type.
+constexpr size_t kLedgerEntryLen = 7;
 
 uint32_t nowMs()
 {
@@ -112,6 +120,8 @@ void MessageTransfer::stop()
     // Abort any in-flight transfer so PSRAM buffers are freed and links closed.
     if (recv_.state != RecvState::Idle) teardownRecv(false, Reason::Disconnected);
     if (send_.state != SendState::Idle) teardownSend(false, Reason::Disconnected);
+    // Session-persistent pairings never outlive the service; drop their bonds.
+    forgetAllSessionPeers();
     removeListeners();
     auto* b = ble();
     if (b && serviceRegistered_) {
@@ -260,7 +270,7 @@ void MessageTransfer::setBeaconEnabled(bool enabled)
 // =========================================================================
 
 bool MessageTransfer::sendTo(const uint8_t addr[6], uint8_t addrType, const char* mime,
-                             const uint8_t* data, uint32_t len)
+                             const uint8_t* data, uint32_t len, bool persistent)
 {
     if (!addr || !data || !validMime(mime) || len == 0 || len > kMaxPayloadBytes) return false;
 
@@ -279,6 +289,7 @@ bool MessageTransfer::sendTo(const uint8_t addr[6], uint8_t addrType, const char
     send_.mime[sizeof(send_.mime) - 1] = '\0';
     std::memcpy(send_.addr, addr, 6);
     send_.addrType = addrType;
+    send_.persistent = persistent;
     send_.completeWritten = false;
     send_.peerAddrValid = false;
     send_.connectedFlag = send_.discoveredFlag = send_.acceptedFlag = false;
@@ -294,7 +305,8 @@ bool MessageTransfer::sendTo(const uint8_t addr[6], uint8_t addrType, const char
     return true;
 }
 
-bool MessageTransfer::beginInteractiveSend(const char* mime, const uint8_t* data, uint32_t len)
+bool MessageTransfer::beginInteractiveSend(const char* mime, const uint8_t* data, uint32_t len,
+                                           bool persistent)
 {
     if (!data || !validMime(mime) || len == 0 || len > kMaxPayloadBytes) return false;
 
@@ -311,6 +323,7 @@ bool MessageTransfer::beginInteractiveSend(const char* mime, const uint8_t* data
     send_.crc = crc32(send_.buf.get(), len);
     std::strncpy(send_.mime, mime, sizeof(send_.mime) - 1);
     send_.mime[sizeof(send_.mime) - 1] = '\0';
+    send_.persistent = persistent;
     send_.completeWritten = false;
     send_.peerAddrValid = false;
     send_.conn = 0xFFFF;
@@ -516,7 +529,9 @@ int MessageTransfer::onControlWrite(uint16_t conn, const uint8_t* data, uint16_t
     const uint8_t  ver = data[1];
     const uint32_t totalLen = rdU32(&data[2]);
     const uint8_t  mimeLen = data[6];
-    const uint8_t  nameLen = data[7];
+    const uint8_t  nameByte = data[7];
+    const uint8_t  nameLen = nameByte & kOfferNameLenMask;
+    const bool     persistReq = (nameByte & kOfferFlagPersist) != 0;
 
     if (ver != kProtocolVersion || mimeLen == 0 || mimeLen > kMaxMimeLen ||
         nameLen > kMaxNameLen ||
@@ -549,7 +564,7 @@ int MessageTransfer::onControlWrite(uint16_t conn, const uint8_t* data, uint16_t
         return 0;
     }
 
-    enqueueOffer(conn, mime, totalLen, name);
+    enqueueOffer(conn, mime, totalLen, name, persistReq);
     return 0;
 }
 
@@ -735,6 +750,7 @@ void MessageTransfer::onEncChange(uint16_t conn, int status)
                 send_.peerAddrType = t;
                 send_.peerAddrValid = true;
                 recordBond(conn, a, t);
+                if (send_.persistent) rememberSessionPeer(a, t);
             }
             send_.encOk = true;
         } else {
@@ -762,6 +778,7 @@ void MessageTransfer::onEncChange(uint16_t conn, int status)
                 recv_.peerAddrType = t;
                 recv_.peerAddrValid = true;
                 recordBond(conn, a, t);
+                if (recv_.persistent) rememberSessionPeer(a, t);
             }
             recv_.state = RecvState::Receiving;
             recv_.stateStartMs = nowMs();
@@ -807,7 +824,7 @@ void MessageTransfer::notifyStatusU32(uint16_t conn, StatusOp op, uint32_t value
 // =========================================================================
 
 void MessageTransfer::enqueueOffer(uint16_t conn, const char* mime, uint32_t totalLen,
-                                   const char* name)
+                                   const char* name, bool persist)
 {
     int slot = -1;
     for (size_t i = 0; i < queue_.size(); ++i) {
@@ -829,6 +846,7 @@ void MessageTransfer::enqueueOffer(uint16_t conn, const char* mime, uint32_t tot
     q.peerName[sizeof(q.peerName) - 1] = '\0';
     q.descKey = registry_.descKey(mime);
     q.totalLen = totalLen;
+    q.persist = persist;
     q.enqueuedMs = nowMs();
 
     if (recv_.state != RecvState::Idle) {
@@ -907,7 +925,17 @@ void MessageTransfer::promoteNextOffer(uint32_t now)
         q.used = false;
         return;
     }
-    if (now < quietUntilMs_ || !tryConsumePromptBudget(now)) {
+
+    // A persistent offer from a peer already trusted this session skips the
+    // consent prompt (and the global prompt budget): the pairing was verified
+    // once and the bond is reused, so there is no new human decision to make.
+    bool autoAccept = false;
+    if (q.persist && ble()) {
+        uint8_t a[6]; uint8_t t = 0;
+        if (ble()->getPeerIdAddr(q.conn, a, &t) && isSessionPeer(a, t)) autoAccept = true;
+    }
+
+    if (!autoAccept && (now < quietUntilMs_ || !tryConsumePromptBudget(now))) {
         notifyStatus(q.conn, StatusOp::Busy);  // address-independent throttle
         q.used = false;
         return;
@@ -920,6 +948,7 @@ void MessageTransfer::promoteNextOffer(uint32_t now)
     recv_.peerName[sizeof(recv_.peerName) - 1] = '\0';
     recv_.descKey = q.descKey;
     recv_.totalLen = q.totalLen;
+    recv_.persistent = q.persist;
     recv_.received = 0;
     recv_.lastProgress = 0;
     recv_.completeReceived = false;
@@ -927,11 +956,16 @@ void MessageTransfer::promoteNextOffer(uint32_t now)
     recv_.encOk = false;
     recv_.failFlag = false;
     recv_.failReason = Reason::None;
-    recv_.state = RecvState::AwaitingConsent;
     recv_.stateStartMs = now;
     q.used = false;
 
-    cdc::core::EventBus::instance().publish(cdc::core::EventType::BLE_CONSENT_REQUEST);
+    if (autoAccept) {
+        notifyStatus(recv_.conn, StatusOp::Accept);
+        recv_.state = RecvState::AwaitingEncrypt;
+    } else {
+        recv_.state = RecvState::AwaitingConsent;
+        cdc::core::EventBus::instance().publish(cdc::core::EventType::BLE_CONSENT_REQUEST);
+    }
 }
 
 void MessageTransfer::tickRecv(uint32_t now)
@@ -1030,6 +1064,7 @@ void MessageTransfer::resetRecv()
     recv_.lastProgress = 0;
     recv_.expectedCrc = 0;
     recv_.completeReceived = false;
+    recv_.persistent = false;
     recv_.peerAddrValid = false;
     recv_.encOk = false;
     recv_.failFlag = false;
@@ -1154,7 +1189,7 @@ void MessageTransfer::tickSend(uint32_t now)
                 frame[1] = kProtocolVersion;
                 wrU32(&frame[2], send_.totalLen);
                 frame[6] = mimeLen;
-                frame[7] = nameLen;
+                frame[7] = nameLen | (send_.persistent ? kOfferFlagPersist : 0);
                 std::memcpy(&frame[kOfferHeaderLen], send_.mime, mimeLen);
                 if (nameLen > 0) {
                     std::memcpy(&frame[kOfferHeaderLen + mimeLen], bname, nameLen);
@@ -1256,6 +1291,7 @@ void MessageTransfer::resetSend()
     send_.ctrlHandle = send_.statusHandle = send_.statusCccd = send_.dataHandle = 0;
     send_.peerAddrValid = false;
     send_.completeWritten = false;
+    send_.persistent = false;
     send_.reason = Reason::None;
     send_.connectedFlag = send_.discoveredFlag = send_.acceptedFlag = false;
     send_.queuedFlag = send_.encOk = send_.doneFlag = send_.failFlag = false;
@@ -1295,11 +1331,104 @@ void MessageTransfer::forgetBondForConn(uint16_t conn)
 {
     for (auto& bnd : bonded_) {
         if (bnd.used && bnd.conn == conn) {
-            if (ble()) ble()->forgetBond(bnd.addr, bnd.addrType);
+            // Keep the LTK for a session-persistent peer so the next reconnect
+            // re-encrypts silently; otherwise the pairing is ephemeral.
+            if (!isSessionPeer(bnd.addr, bnd.addrType) && ble()) {
+                ble()->forgetBond(bnd.addr, bnd.addrType);
+            }
             bnd.used = false;
             return;
         }
     }
+}
+
+// =========================================================================
+// Session-persistent pairings (runtime-only trust; NVS ledger is cleanup-only)
+// =========================================================================
+
+bool MessageTransfer::isSessionPeer(const uint8_t addr[6], uint8_t addrType) const
+{
+    for (const auto& p : sessionPeers_) {
+        if (p.used && p.addrType == addrType && std::memcmp(p.addr, addr, 6) == 0) return true;
+    }
+    return false;
+}
+
+void MessageTransfer::rememberSessionPeer(const uint8_t addr[6], uint8_t addrType)
+{
+    if (isSessionPeer(addr, addrType)) return;
+    for (auto& p : sessionPeers_) {
+        if (!p.used) {
+            p.used = true;
+            std::memcpy(p.addr, addr, 6);
+            p.addrType = addrType;
+            ledgerDirty_ = true;  // flushed to NVS by tick() (host-task safe)
+            LOG_I(TAG, "Session pairing remembered");
+            return;
+        }
+    }
+    LOG_W(TAG, "session-peer table full; pairing not remembered");
+}
+
+void MessageTransfer::forgetAllSessionPeers()
+{
+    auto* b = ble();
+    bool any = false;
+    for (auto& p : sessionPeers_) {
+        if (p.used) {
+            if (b) b->forgetBond(p.addr, p.addrType);
+            p.used = false;
+            any = true;
+        }
+    }
+    if (any) {
+        persistSessionLedger();  // writes empty -> erases the ledger key
+        ledgerDirty_ = false;
+    }
+}
+
+void MessageTransfer::persistSessionLedger()
+{
+    cdc::core::NvsScope nvs(kNsMsg, NVS_READWRITE);
+    if (!nvs) return;
+    uint8_t blob[1 + cdc::hal::IBluetoothController::MAX_BONDED_DEVICES * kLedgerEntryLen];
+    uint8_t count = 0;
+    for (const auto& p : sessionPeers_) {
+        if (!p.used) continue;
+        std::memcpy(&blob[1 + count * kLedgerEntryLen], p.addr, 6);
+        blob[1 + count * kLedgerEntryLen + 6] = p.addrType;
+        ++count;
+    }
+    if (count == 0) {
+        nvs_erase_key(nvs, kKeyPeers);
+    } else {
+        blob[0] = count;
+        nvs_set_blob(nvs, kKeyPeers, blob, 1 + count * kLedgerEntryLen);
+    }
+    nvs.commit();
+}
+
+void MessageTransfer::cleanupStaleSessionBonds()
+{
+    cdc::core::NvsScope nvs(kNsMsg, NVS_READWRITE);
+    if (!nvs) return;
+    uint8_t blob[1 + cdc::hal::IBluetoothController::MAX_BONDED_DEVICES * kLedgerEntryLen] = {};
+    size_t len = sizeof(blob);
+    if (nvs_get_blob(nvs, kKeyPeers, blob, &len) == ESP_OK && len >= 1) {
+        const uint8_t count = blob[0];
+        auto* b = ble();
+        uint8_t cleared = 0;
+        for (uint8_t i = 0; i < count && (1u + static_cast<size_t>(i + 1) * kLedgerEntryLen) <= len;
+             ++i) {
+            const uint8_t* a = &blob[1 + i * kLedgerEntryLen];
+            const uint8_t t = blob[1 + i * kLedgerEntryLen + 6];
+            if (b) b->forgetBond(a, t);
+            ++cleared;
+        }
+        if (cleared > 0) LOG_I(TAG, "Cleared %u stale session pairing(s)", cleared);
+    }
+    nvs_erase_key(nvs, kKeyPeers);
+    nvs.commit();
 }
 
 void MessageTransfer::storeResult(bool ok, bool wasSend, Reason reason, const char* mime,
@@ -1336,6 +1465,23 @@ void MessageTransfer::tick(uint32_t /*nowMsArg*/)
             b->enable();
         }
     }
+
+    // Boot janitor: once BLE is up, drop any session bonds left in the shared
+    // NVS store by a previous run so runtime trust never survives a reboot.
+    if (!sessionBondsCleaned_) {
+        auto* b = ble();
+        if (b && b->isEnabled()) {
+            cleanupStaleSessionBonds();
+            sessionBondsCleaned_ = true;
+        }
+    }
+
+    // Flush a remembered pairing to the cleanup ledger off the host task.
+    if (ledgerDirty_) {
+        ledgerDirty_ = false;
+        persistSessionLedger();
+    }
+
     beacon_.reconcile();
 
     tickRecv(now);

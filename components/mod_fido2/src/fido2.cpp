@@ -8,6 +8,7 @@
 #include "mod_fido2/ctap2.h"
 #include "mod_fido2/ctaphid.h"
 #include "mod_fido2/u2f.h"
+#include "cdc_core/pin_storage_c.h"
 #include "cdc_log.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -271,6 +272,10 @@ bool fido2_factory_reset(void) {
             fido2_storage_delete_credential(slot);
         }
     }
+
+    // Drop CTAP2.1 large-blob storage and config flags, and revert the PIN floor.
+    fido2_storage_config_reset();
+    pin_storage_set_min_pin_floor(0);
 
     LOG_I(TAG, "Factory reset complete");
     return true;

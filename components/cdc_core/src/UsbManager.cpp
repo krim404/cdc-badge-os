@@ -64,6 +64,29 @@ bool UsbManager::canActivate(UsbHidInterface type) const {
 }
 
 /**
+ * \brief Endpoints consumed by one interface spec.
+ * \param def Interface definition.
+ * \return Endpoint count (HID: 1, or 2 with an OUT endpoint; CCID: 2).
+ */
+uint8_t UsbManager::interfaceEndpoints(const UsbInterfaceSpec& def) {
+    if (def.cls == UsbInterfaceClass::Ccid) return 2;
+    return def.hasOut ? 2 : 1;
+}
+
+/**
+ * \brief Total endpoints in use (CDC + active HID/CCID + MSC).
+ * \return Endpoint count.
+ */
+uint8_t UsbManager::endpointsInUse() const {
+    uint8_t n = CDC_ENDPOINTS;
+    for (const auto& entry : entries_) {
+        if (entry.active) n += interfaceEndpoints(entry.def);
+    }
+    if (mscActive_) n += MSC_ENDPOINTS;
+    return n;
+}
+
+/**
  * \brief Registers a HID interface request from a module.
  * \param type HID interface slot.
  * \param moduleName Owning module name.
@@ -86,6 +109,12 @@ bool UsbManager::registerInterface(UsbHidInterface type, const char* moduleName,
 
     if (!canActivate(type)) {
         LOG_W(TAG, "HID interface limit reached (max %d)", MAX_ACTIVE_HID);
+        return false;
+    }
+
+    if (endpointsInUse() + interfaceEndpoints(def) > MAX_ENDPOINTS) {
+        LOG_W(TAG, "USB endpoint budget exhausted (have %d/%d, +%d)",
+              endpointsInUse(), MAX_ENDPOINTS, interfaceEndpoints(def));
         return false;
     }
 
@@ -148,6 +177,45 @@ bool UsbManager::applyConfiguration() {
         needsReplug_ = true;
     }
     return ok;
+}
+
+/**
+ * \brief Registers the single USB Mass Storage LUN and re-enumerates.
+ * \param owner Owning module name.
+ * \return `true` on success; `false` if the endpoint budget is exhausted.
+ */
+bool UsbManager::registerMassStorage(const char* owner) {
+    if (mscActive_) {
+        if (mscOwner_ && owner && strcmp(mscOwner_, owner) == 0) return true;
+        LOG_W(TAG, "MSC already owned by %s", mscOwner_ ? mscOwner_ : "?");
+        return false;
+    }
+    if (endpointsInUse() + MSC_ENDPOINTS > MAX_ENDPOINTS) {
+        LOG_W(TAG, "USB endpoint budget exhausted for MSC (have %d/%d)",
+              endpointsInUse(), MAX_ENDPOINTS);
+        return false;
+    }
+    mscActive_ = true;
+    mscOwner_ = owner;
+    LOG_I(TAG, "Registered MSC for %s", owner ? owner : "?");
+    usb_hid_set_msc(true);
+    return true;
+}
+
+/**
+ * \brief Unregisters the MSC LUN and re-enumerates.
+ * \param owner Owning module name.
+ */
+void UsbManager::unregisterMassStorage(const char* owner) {
+    if (!mscActive_) return;
+    if (mscOwner_ && owner && strcmp(mscOwner_, owner) != 0) {
+        LOG_W(TAG, "MSC owned by %s, not %s", mscOwner_, owner ? owner : "?");
+        return;
+    }
+    mscActive_ = false;
+    mscOwner_ = nullptr;
+    LOG_I(TAG, "Unregistered MSC");
+    usb_hid_set_msc(false);
 }
 
 } // namespace cdc::core

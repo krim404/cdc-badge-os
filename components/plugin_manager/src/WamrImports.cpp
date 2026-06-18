@@ -82,6 +82,9 @@ static int32_t w_host_ui_push_info(wasm_exec_env_t, const char* title, const cha
 static int32_t w_host_ui_push_confirm(wasm_exec_env_t, const char* text, uint32_t icon, uint32_t action_id)
 { return host_ui_push_confirm(text, icon, action_id); }
 
+static int32_t w_host_browser_open(wasm_exec_env_t, const char* url)
+{ return host_browser_open(url); }
+
 namespace {
 int translate_and_call(wasm_exec_env_t exec_env, const char* title, const ui_item_t* items,
                        uint32_t count, uint32_t sel, uint32_t menu, bool replace)
@@ -416,6 +419,13 @@ static int32_t w_host_fs_list(wasm_exec_env_t, char* out, uint32_t out_size)
 }
 
 static int32_t w_host_fs_view(wasm_exec_env_t, const char* name) { return host_fs_view(name); }
+static int32_t w_host_fs_view_image(wasm_exec_env_t, const char* name) { return host_fs_view_image(name); }
+static int32_t w_host_fs_view_markdown(wasm_exec_env_t, const char* name) { return host_fs_view_markdown(name); }
+
+static int32_t w_host_ui_view_image(wasm_exec_env_t env, const uint8_t* data, uint32_t len)
+{ if (!wbuf_ok(env, data, len)) return HOST_ERR_INVALID_ARG; return host_ui_view_image(data, len); }
+static int32_t w_host_ui_view_markdown(wasm_exec_env_t env, const uint8_t* data, uint32_t len)
+{ if (!wbuf_ok(env, data, len)) return HOST_ERR_INVALID_ARG; return host_ui_view_markdown(data, len); }
 
 // -- Crypto -----------------------------------------------------------------
 
@@ -613,14 +623,14 @@ static int32_t w_host_msg_consume(wasm_exec_env_t, uint8_t* buf, uint32_t buf_si
                                   char* mime_out, uint32_t mime_size)
 { return host_msg_consume(buf, buf_size, mime_out, mime_size); }
 static int32_t w_host_msg_send_interactive(wasm_exec_env_t, const char* mime,
-                                           const uint8_t* data, uint32_t len)
-{ return host_msg_send_interactive(mime, data, len); }
+                                           const uint8_t* data, uint32_t len, uint32_t flags)
+{ return host_msg_send_interactive(mime, data, len, flags); }
 static int32_t w_host_msg_send(wasm_exec_env_t exec_env, const uint8_t* addr, uint32_t addr_type,
-                               const char* mime, const uint8_t* data, uint32_t len)
+                               const char* mime, const uint8_t* data, uint32_t len, uint32_t flags)
 {
     // addr is a bare '*' (WAMR validates only 1 byte) -> re-validate all 6 bytes.
     if (!wbuf_ok(exec_env, addr, 6)) return HOST_ERR_INVALID_ARG;
-    return host_msg_send(addr, static_cast<uint8_t>(addr_type), mime, data, len);
+    return host_msg_send(addr, static_cast<uint8_t>(addr_type), mime, data, len, flags);
 }
 
 static int32_t w_host_ui_acquire_exclusive(wasm_exec_env_t)  { return host_ui_acquire_exclusive(); }
@@ -909,6 +919,7 @@ static const NativeSymbol s_symbols[] = {
     W("host_ui_push_message",    w_host_ui_push_message,    "($ii)i"),
     W("host_ui_push_info",       w_host_ui_push_info,       "($$)i"),
     W("host_ui_push_confirm",    w_host_ui_push_confirm,    "($ii)i"),
+    W("host_browser_open",       w_host_browser_open,       "($)i"),
     W("host_ui_push_list",       w_host_ui_push_list,       "($*~ii)i"),
     W("host_ui_replace_list",    w_host_ui_replace_list,    "($*~ii)i"),
     W("host_ui_set_view_footer", w_host_ui_set_view_footer, "($)i"),
@@ -977,6 +988,10 @@ static const NativeSymbol s_symbols[] = {
     W("host_fs_size",            w_host_fs_size,            "($)i"),
     W("host_fs_list",            w_host_fs_list,            "(*~)i"),
     W("host_fs_view",            w_host_fs_view,            "($)i"),
+    W("host_fs_view_image",      w_host_fs_view_image,      "($)i"),
+    W("host_fs_view_markdown",   w_host_fs_view_markdown,   "($)i"),
+    W("host_ui_view_image",      w_host_ui_view_image,      "(*~)i"),
+    W("host_ui_view_markdown",   w_host_ui_view_markdown,   "(*~)i"),
 
     W("host_random",             w_host_random,             "(*~)i"),
     W("host_sha256",             w_host_sha256,             "(*~*)i"),
@@ -1042,8 +1057,8 @@ static const NativeSymbol s_symbols[] = {
     W("host_msg_register_handler",   w_host_msg_register_handler,   "($i)i"),
     W("host_msg_unregister_handler", w_host_msg_unregister_handler, "($)i"),
     W("host_msg_consume",            w_host_msg_consume,            "(*~*~)i"),
-    W("host_msg_send_interactive",   w_host_msg_send_interactive,   "($*~)i"),
-    W("host_msg_send",               w_host_msg_send,               "(*i$*~)i"),
+    W("host_msg_send_interactive",   w_host_msg_send_interactive,   "($*~i)i"),
+    W("host_msg_send",               w_host_msg_send,               "(*i$*~i)i"),
 
     W("host_ui_acquire_exclusive", w_host_ui_acquire_exclusive, "()i"),
     W("host_ui_release_exclusive", w_host_ui_release_exclusive, "()i"),

@@ -14,5 +14,5 @@ the language system, the on-device file and NVS tools, and the Python helpers in
 - [Serial console](/power/serial-console/) - the USB CDC command shell.
 - [Expert menu](/power/expert-menu/) - hardware info, module control, backup, duress PIN, secure-element cache maintenance and bootloader entry.
 - [Languages](/power/languages/) - how the English fallback and the on-device language overlays work, and how to add a language.
-- [File storage & NVS tools](/power/storage-tools/) - the vFAT file explorer and the NVS browser/editor.
+- [File storage & NVS tools](/power/storage-tools/) - the vFAT file explorer (main-menu Files and Expert System Files) and the NVS browser/editor.
 - [Companion tools](/power/companion-tools/) - the host-side scripts in `tools/`.
