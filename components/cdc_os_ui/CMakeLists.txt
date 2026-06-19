@@ -38,4 +38,5 @@ idf_component_register(
         mbedtls
         json
         espressif__tinyusb
+        usb_badge
 )

@@ -94,6 +94,20 @@ public:
      * lock-screen refresh.
      */
     virtual void refresh() = 0;
+
+    /**
+     * Arm the charger IRQ line as a light-sleep wakeup source
+     * Disables the active-mode interrupt; the sleep controller configures the
+     * level-triggered wakeup on the same pin.
+     */
+    virtual void prepareForSleep() = 0;
+
+    /**
+     * Restore charger IRQ handling after sleep wakeup
+     * Refreshes the cached charger status (so USB presence is up to date) and
+     * re-arms the edge-triggered interrupt.
+     */
+    virtual void recoverFromSleep() = 0;
 };
 
 // Factory function to get power manager instance

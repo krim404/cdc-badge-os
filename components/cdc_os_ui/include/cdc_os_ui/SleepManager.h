@@ -79,6 +79,10 @@ private:
     uint32_t lockScreenEnteredMs_ = 0;
     bool inLightSleep_ = false;
 
+    // Last clock string rendered during the light-sleep loop ("HH:MM"); used to
+    // skip e-paper writes on wakeups that do not change the displayed minute.
+    char lastRenderedHHMM_[6] = {0};
+
     // Sleep inhibitors
     const char* inhibitors_[MAX_SLEEP_INHIBITORS] = {};
     uint8_t inhibitorCount_ = 0;

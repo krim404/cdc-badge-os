@@ -114,6 +114,8 @@ public:
     void enterShipMode() override;
     void update() override;
     void refresh() override;
+    void prepareForSleep() override;
+    void recoverFromSleep() override;
     /** \} */
 
 private:
@@ -622,6 +624,30 @@ void BQ25895Power::update() {
  */
 void BQ25895Power::refresh() {
     readChargerStatus();
+}
+
+/**
+ * \brief Disables the charger IRQ before light sleep.
+ *
+ * The sleep controller arms a level-triggered wakeup on the same pin; the
+ * edge-triggered active-mode interrupt is disabled here to mirror the keypad.
+ */
+void BQ25895Power::prepareForSleep() {
+    gpio_intr_disable(CHG_IRQ_PIN);
+}
+
+/**
+ * \brief Restores charger IRQ handling and refreshes status after wakeup.
+ *
+ * Drops any stale IRQ flag, re-reads charger status (so cached USB presence is
+ * current and an expired watchdog gets kicked), and re-arms the edge trigger.
+ */
+void BQ25895Power::recoverFromSleep() {
+    gpio_intr_disable(CHG_IRQ_PIN);
+    charger_irq_pending = false;
+    readChargerStatus();
+    gpio_set_intr_type(CHG_IRQ_PIN, GPIO_INTR_NEGEDGE);
+    gpio_intr_enable(CHG_IRQ_PIN);
 }
 
 /**

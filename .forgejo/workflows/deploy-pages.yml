@@ -25,6 +25,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
 
+      - name: Restore PlatformIO cache
+        id: pio-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-
+
+      - name: Download platform, framework and toolchain
+        run: pio pkg install -e cdc_badge_usb
+
+      - name: Save PlatformIO cache
+        if: steps.pio-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
       - name: Build firmware
         run: pio run
 
@@ -112,13 +131,14 @@ jobs:
 
   deploy:
     runs-on: codeberg-small
-    needs: [firmware, doxygen, website]
+    needs: [doxygen, website]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Download firmware artifact
+        continue-on-error: true
         uses: https://code.forgejo.org/forgejo/download-artifact@v4
         with:
           name: firmware
@@ -147,6 +167,7 @@ jobs:
       - name: Assemble pages content
         env:
           TAG: ${{ steps.version.outputs.version }}
+          PAGES_FLASHER: 'https://${{ forge.repository_owner }}.codeberg.page/cdc-badge-os/flasher'
         run: |
           set -euo pipefail
           # Documentation site (Astro Starlight) at the root
@@ -159,10 +180,21 @@ jobs:
           mkdir -p _site/flasher
           cp web-flasher/index.html _site/flasher/
           if [ -f web-flasher/badge.jpg ]; then cp web-flasher/badge.jpg _site/flasher/; fi
-          cp fw/bootloader.bin _site/flasher/bootloader.bin
-          cp fw/partitions.bin _site/flasher/partitions.bin
-          cp fw/firmware.bin   _site/flasher/firmware.bin
-          cp fw/plugins_initial.bin _site/flasher/plugins_initial.bin
+          # Fresh firmware when the build job produced it, otherwise reuse the
+          # binaries already published on the live Pages site so the flasher
+          # keeps working even when the firmware build failed.
+          if [ -f fw/firmware.bin ]; then
+            cp fw/bootloader.bin _site/flasher/bootloader.bin
+            cp fw/partitions.bin _site/flasher/partitions.bin
+            cp fw/firmware.bin   _site/flasher/firmware.bin
+            cp fw/plugins_initial.bin _site/flasher/plugins_initial.bin
+          else
+            for f in bootloader.bin partitions.bin firmware.bin plugins_initial.bin; do
+              curl --fail --location --retry 3 --retry-delay 5 \
+                --output "_site/flasher/$f" "$PAGES_FLASHER/$f" \
+                || echo "WARNING: could not fetch last-good $f"
+            done
+          fi
 
           cat > _site/flasher/manifest.json <<MANIFEST
           {

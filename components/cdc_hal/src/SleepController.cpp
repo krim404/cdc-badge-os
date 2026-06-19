@@ -11,6 +11,7 @@
 
 #include "cdc_hal/ISleepController.h"
 #include "cdc_hal/IKeypad.h"
+#include "cdc_hal/IPowerManager.h"
 #include "cdc_hal/hw_config.h"
 #include "cdc_log.h"
 #include "esp_sleep.h"
@@ -62,6 +63,7 @@ public:
     void enterLightSleep() override;
     [[noreturn]] void enterDeepSleep() override;
     WakeupSource getWakeupSource() const override;
+    bool wasKeypadWakeup() const override { return lastKeypadWake_; }
     bool wasInDeepSleep() const override { return g_was_in_deep_sleep; }
     void clearDeepSleepFlag() override { g_was_in_deep_sleep = false; }
     void setLightSleepInterval(uint32_t seconds) override;
@@ -83,6 +85,7 @@ private:
 
     core::ServiceState state_ = core::ServiceState::UNINITIALIZED;
     bool lightSleepConfigured_ = false;
+    bool lastKeypadWake_ = false;
     uint32_t lightSleepIntervalS_ = DEFAULT_LIGHT_SLEEP_INTERVAL_S;
 
     // Callback storage
@@ -142,13 +145,14 @@ void Esp32SleepController::enterLightSleep() {
             esp_sleep_enable_timer_wakeup(lightSleepIntervalS_ * 1000000ULL);
         }
 
-        // Configure GPIO wakeup (keypad interrupt) - level triggered
+        // Configure GPIO wakeup (keypad + charger interrupt) - level triggered
         gpio_wakeup_enable(EXP_IRQ_PIN, GPIO_INTR_LOW_LEVEL);
+        gpio_wakeup_enable(CHG_IRQ_PIN, GPIO_INTR_LOW_LEVEL);
         esp_sleep_enable_gpio_wakeup();
 
         lightSleepConfigured_ = true;
-        LOG_I(TAG, "Light sleep configured (GPIO%d + %lus timer)",
-                 EXP_IRQ_PIN, (unsigned long)lightSleepIntervalS_);
+        LOG_I(TAG, "Light sleep configured (GPIO%d+%d + %lus timer)",
+                 EXP_IRQ_PIN, CHG_IRQ_PIN, (unsigned long)lightSleepIntervalS_);
     }
 
     // Invoke pre-sleep callbacks (modules can prepare for sleep)
@@ -161,6 +165,12 @@ void Esp32SleepController::enterLightSleep() {
 
     // Enter light sleep
     esp_light_sleep_start();
+
+    // Capture the keypad IRQ level before recovery reads/clears the expander.
+    // The TCA9535 holds its IRQ line low after a key event until the inputs are
+    // read, so a low level here reliably identifies a keypad wakeup versus a
+    // timer or charger-only interrupt.
+    lastKeypadWake_ = (gpio_get_level(EXP_IRQ_PIN) == 0);
 
     // Reset the task watchdog as soon as we resume: the sleep window can
     // be longer than the TWDT timeout, and any subscribed task (notably the
@@ -258,6 +268,12 @@ void Esp32SleepController::prepareGpioForSleep() {
     if (keypad) {
         keypad->prepareForSleep();
     }
+
+    // Arm the charger IRQ line for the level-triggered USB-plug wakeup
+    auto* power = getPowerManagerInstance();
+    if (power) {
+        power->prepareForSleep();
+    }
 }
 
 /**
@@ -270,6 +286,12 @@ void Esp32SleepController::stabilizeGpioAfterWakeup() {
     auto* keypad = getKeypadInstance();
     if (keypad) {
         keypad->recoverFromSleep();
+    }
+
+    // Refresh charger status (USB presence) and re-arm the charger IRQ
+    auto* power = getPowerManagerInstance();
+    if (power) {
+        power->recoverFromSleep();
     }
 }
 

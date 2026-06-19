@@ -173,9 +173,7 @@ bool usb_cdc_start(void) {
 #ifdef CONFIG_USB_EARLY_DEBUG
         // In early debug mode, we need to re-enumerate after modules loaded
         LOG_I(TAG, "USB re-enumerating with final configuration...");
-        tud_disconnect();
-        vTaskDelay(pdMS_TO_TICKS(50));
-        tud_connect();
+        usb_cdc_reenumerate();
 #endif
         return true;
     }
@@ -187,6 +185,16 @@ bool usb_cdc_start(void) {
 
     LOG_I(TAG, "USB CDC started");
     return true;
+}
+
+/**
+ * \brief Forces a USB re-enumeration by toggling the bus connection.
+ */
+void usb_cdc_reenumerate(void) {
+    if (!g_usb_started || !tud_inited()) return;
+    tud_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(50));
+    tud_connect();
 }
 
 /**

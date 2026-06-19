@@ -5,6 +5,7 @@
 #include "cdc_hal/IPowerManager.h"
 #include "cdc_hal/IDisplay.h"
 #include "cdc_core/EventBus.h"
+#include "usb_badge/usb_cdc.h"
 #include "cdc_log.h"
 #include "esp_timer.h"
 #include <ctime>
@@ -124,6 +125,14 @@ void SleepManager::enterLockScreenSleep() {
     do {
         sleep_->enterLightSleep();
     } while (handleWakeup());
+
+    // We only sleep while USB is absent; if USB is present after the loop it was
+    // plugged in during sleep, so force a re-enumeration to make the host attach
+    // without a manual re-plug. Covers every exit path, including a key-press
+    // wakeup that happens to discover USB.
+    if (power_ && power_->isUsbConnected()) {
+        usb_cdc_reenumerate();
+    }
 }
 
 /**
@@ -141,59 +150,61 @@ bool SleepManager::handleWakeup() {
         display->backlightOff();
     }
 
-    hal::WakeupSource source = sleep_->getWakeupSource();
+    // The charger wakeup callback refreshed the cached status during recovery,
+    // so USB presence is current here even though the main loop did not run.
+    bool usb = power_ && power_->isUsbConnected();
 
-    if (source == hal::WakeupSource::GPIO) {
-        // Key press wakeup - user interaction
+    // Decide whether this wakeup fully wakes the device (exit the loop) or is a
+    // periodic refresh (timer, or a charger interrupt without USB such as the
+    // BQ25895 watchdog) that only updates the clock and re-enters sleep.
+    bool userWake;
+    if (usb) {
+        userWake = true;  // USB plugged in during sleep -> wake fully
+    } else {
+        hal::WakeupSource source = sleep_->getWakeupSource();
+        if (source == hal::WakeupSource::TIMER) {
+            userWake = false;
+        } else if (source == hal::WakeupSource::GPIO) {
+            // Keypad and charger interrupts both report GPIO; only a key press
+            // wakes. A charger-only interrupt without USB re-enters sleep.
+            userWake = sleep_->wasKeypadWakeup();
+        } else {
+            userWake = true;  // unknown source -> treat as user interaction
+        }
+    }
+
+    if (userWake) {
         lockScreen_->removeStatusIcon(StatusIcon::LIGHT_SLEEP);
         lockScreenEnteredMs_ = esp_timer_get_time() / 1000;  // Reset timer
         inLightSleep_ = false;
-
-        // Update status icons (battery, USB, etc.)
         updatePowerStatusIcons();
-
-        // Force display refresh
         lockScreen_->markDirty();
         return false;
-
-    } else if (source == hal::WakeupSource::TIMER) {
-        // Timer wakeup - just update clock, keep icon, go back to sleep
-        time_t now = time(nullptr);
-        struct tm* tm = localtime(&now);
-        if (tm) {
-            char buf[40];
-            snprintf(buf, sizeof(buf), "%02d:%02d", tm->tm_hour, tm->tm_min);
-            lockScreen_->setClock(buf);
-            snprintf(buf, sizeof(buf), "%02d.%02d.%04d", tm->tm_mday, tm->tm_mon + 1, tm->tm_year + 1900);
-            lockScreen_->setDate(buf);
-        }
-
-        // Update power icons
-        updatePowerStatusIcons();
-
-        // Render clock update synchronously so the panel update completes
-        // before the caller re-enters light sleep. The lock screen declares
-        // prefersLightRefresh(), so this stays a pure partial (never promoted
-        // to a flickering full refresh).
-        ViewStack::instance().render(true);
-
-        // Check if USB was connected during sleep
-        if (power_ && power_->isUsbConnected()) {
-            // USB connected - exit light sleep mode
-            lockScreen_->removeStatusIcon(StatusIcon::LIGHT_SLEEP);
-            lockScreenEnteredMs_ = esp_timer_get_time() / 1000;
-            inLightSleep_ = false;
-            return false;
-        }
-        // Timer wakeup without USB: re-enter sleep via the caller's loop.
-        return true;
-    } else {
-        // Unknown wakeup - treat like GPIO
-        lockScreen_->removeStatusIcon(StatusIcon::LIGHT_SLEEP);
-        lockScreenEnteredMs_ = esp_timer_get_time() / 1000;
-        inLightSleep_ = false;
-        return false;
     }
+
+    // Refresh-only wakeup: update the clock, keep the sleep icon, re-enter sleep.
+    char hhmm[6] = {0};
+    time_t now = time(nullptr);
+    struct tm* tm = localtime(&now);
+    if (tm) {
+        char buf[40];
+        snprintf(hhmm, sizeof(hhmm), "%02d:%02d", tm->tm_hour, tm->tm_min);
+        lockScreen_->setClock(hhmm);
+        snprintf(buf, sizeof(buf), "%02d.%02d.%04d", tm->tm_mday, tm->tm_mon + 1, tm->tm_year + 1900);
+        lockScreen_->setDate(buf);
+    }
+
+    updatePowerStatusIcons();
+
+    // Repaint only when the displayed minute changed, so the extra charger
+    // wakeups add no e-paper writes. The lock screen declares
+    // prefersLightRefresh(), so this stays a pure partial refresh.
+    if (strcmp(hhmm, lastRenderedHHMM_) != 0) {
+        strncpy(lastRenderedHHMM_, hhmm, sizeof(lastRenderedHHMM_) - 1);
+        lastRenderedHHMM_[sizeof(lastRenderedHHMM_) - 1] = '\0';
+        ViewStack::instance().render(true);
+    }
+    return true;
 }
 
 /**

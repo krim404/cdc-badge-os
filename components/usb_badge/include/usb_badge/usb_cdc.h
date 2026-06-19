@@ -31,6 +31,14 @@ bool usb_cdc_init(void);
 bool usb_cdc_start(void);
 
 /**
+ * Force a USB re-enumeration (disconnect then reconnect the bus pull-up).
+ * Use to make the host re-attach after the device was unresponsive, e.g. when
+ * USB is plugged in while the badge is in light sleep. No-op if USB is not
+ * running.
+ */
+void usb_cdc_reenumerate(void);
+
+/**
  * Check if USB CDC is ready for I/O
  * @return true if connected and ready
  */

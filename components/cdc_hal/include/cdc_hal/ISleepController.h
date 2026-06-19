@@ -87,6 +87,16 @@ public:
     virtual WakeupSource getWakeupSource() const = 0;
 
     /**
+     * Whether the last light-sleep wakeup was caused by the keypad.
+     *
+     * Both the keypad and the charger interrupt report WakeupSource::GPIO. The
+     * keypad's I/O expander holds its IRQ line low after a key event until the
+     * inputs are read, so this distinguishes a key press from a charger-only
+     * interrupt (e.g. USB plug or charger watchdog).
+     */
+    virtual bool wasKeypadWakeup() const = 0;
+
+    /**
      * Check if device just woke from deep sleep
      * (persistent flag in RTC memory)
      */

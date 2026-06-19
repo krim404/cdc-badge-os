@@ -29,16 +29,16 @@ The badge will not enter (or stay in) light sleep when:
 
 ### Waking from light sleep
 
-Light sleep can wake from two sources:
+Light sleep can wake from three sources:
 
 | Wakeup | What happens |
 |--------|--------------|
 | Key press | The light-sleep indicator is removed, the display refreshes, and the badge returns to the normal lock screen. |
+| USB connected | Plugging in USB wakes the badge immediately and the USB connection is re-enumerated, so the badge appears on the host without unplugging again. |
 | Timer | The badge briefly wakes to refresh the clock, then goes back to sleep. |
 
 The timer wakeup interval is the **Sleep Interval** value in
-[Settings](/guide/settings/). If USB is connected while the badge
-is in light sleep, it leaves light sleep.
+[Settings](/guide/settings/).
 
 ## Deep sleep
 
@@ -113,6 +113,6 @@ you are inside the menus:
 | Mode | Trigger | Wake |
 |------|---------|------|
 | Active | Normal use | — |
-| Light sleep | Lock screen idle for 2 minutes | Any key (timer wakeups refresh the clock and return to sleep) |
+| Light sleep | Lock screen idle for 2 minutes | Any key or USB connect (timer wakeups refresh the clock and return to sleep) |
 | Deep sleep | Hold <kbd>N</kbd> for 5 seconds on the lock screen | Any key (badge resets) |
 | Ship mode | Hold the Flash button 3 s, Expert menu, or `SHIPMODE` | Connect USB or press the power-on button |
