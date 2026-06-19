@@ -142,8 +142,8 @@ Concise here; full registries with IDs, ownership and acceptance in [data-model.
    API canonical + SDK byte-mirror; single BLE controller (`IBluetoothController`); e-paper refresh
    modes; CP437 display pipeline; attestation-signed PIN record.
 
-4. **Risks** — open a tracked register: hardware-unverified WIP (cdc_msg, BLE vCard, GPG cross-sign
-   send path); doc-vs-code drift (D1–D4); `DEBUG_MODE` default-on shipping risk; `credProtect` not
+4. **Risks** — open a tracked register: hardware-unverified (GPG cross-sign send path, BLE serial
+   console; cdc_msg, BLE vCard and BLE HID verified 2026-06-18); doc-vs-code drift (D1–D4); `DEBUG_MODE` default-on shipping risk; `credProtect` not
    enforced (B2); no test coverage today; secure-element unavailable in CI (host-test scope limit);
    flash wear during HIL verification; OpenPGP PW3 terminal-lockout footgun.
 

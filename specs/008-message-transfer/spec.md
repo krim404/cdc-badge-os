@@ -1,4 +1,4 @@
-# Feature Specification: Badge-to-Badge Message Transfer (Provisional / WIP)
+# Feature Specification: Badge-to-Badge Message Transfer
 
 **Feature Branch**: `008-message-transfer`
 
@@ -11,12 +11,9 @@ MIME-typed badge-to-badge transfer framework (`cdc_msg`) over BLE GATT, its hand
 ephemeral numeric-comparison pairing, framing limits and abuse-resistance budgets, and the vCard
 module's use of it.
 
-> **⚠ PROVISIONAL (WIP, NOT HARDWARE-VERIFIED)**: This capability is normative but **Provisional**.
-> Per the baseline Clarifications (Session 2026-06-14), the cdc_msg badge-to-badge messaging
-> framework, including BLE vCard exchange (FR-050..054), is documented as work-in-progress and is
-> **not yet verified on hardware**. Hardware acceptance (SC-005; HIL plan T-HIL03) is **non-blocking**
-> until verified on hardware, and this capability MUST stay flagged WIP until then. Statements below
-> describe the design as built; treat them as provisional until a hardware run confirms them.
+> **Hardware-verified (2026-06-18)**: the cdc_msg badge-to-badge messaging framework end-to-end and
+> BLE vCard exchange (FR-050..054) were verified on hardware (on-device test run; SC-005 / HIL plan
+> T-HIL03). The statements below describe the as-built, hardware-verified behaviour.
 
 > **Source of truth**: This spec lifts requirements FR-050..054 faithfully from the baseline
 > (`specs/001-current-system-spec/spec.md`); FR numbers are preserved as cross-references. Code is
@@ -132,7 +129,7 @@ queue replies Busy.
 - **Code mismatch / decline**: a non-matching numeric-comparison code or a decline on either side
   aborts the transfer with no payload stored.
 - **Duplicate vCard**: a received vCard identical (by exact text) to a stored one is not stored twice.
-- **WIP (B14)**: the framework end-to-end and BLE vCard exchange are not verified on hardware.
+- **Hardware-verified (2026-06-18)**: the framework end-to-end and BLE vCard exchange were verified on hardware.
 
 ---
 
@@ -140,20 +137,18 @@ queue replies Busy.
 
 ### Functional Requirements
 
-- **FR-050** *(Provisional / WIP)*: The device MUST provide a generic MIME-typed badge-to-badge
+- **FR-050**: The device MUST provide a generic MIME-typed badge-to-badge
   transfer over BLE GATT (Control/Status/Data characteristics) with chunked framing and a CRC32
   completion check.
-- **FR-051** *(Provisional / WIP)*: Inbound transfers MUST be routed to a registered handler by MIME
+- **FR-051**: Inbound transfers MUST be routed to a registered handler by MIME
   type; with no handler the transfer MUST be declined.
-- **FR-052** *(Provisional / WIP)*: Transfers MUST require ephemeral numeric-comparison pairing
+- **FR-052**: Transfers MUST require ephemeral numeric-comparison pairing
   confirmed on both badges; the bond MUST be forgotten after the transfer.
-- **FR-053** *(Provisional / WIP)*: The framework MUST enforce limits: payload ≤ 4096 bytes, MIME
+- **FR-053**: The framework MUST enforce limits: payload ≤ 4096 bytes, MIME
   ≤ 63 bytes, peer name ≤ 31 bytes, ≤ 8 registered handlers, ≤ 4 queued offers; plus abuse-resistance
   budgets (global ~5 prompts/30 s, per-connection ~3/10 s, post-decline cooldown).
-- **FR-054** *(Provisional / WIP)*: The vCard module MUST register a `text/vcard` handler and provide
-  "Send vCard"; received vCards MUST be deduplicated by exact text. [NEEDS CLARIFICATION: vCard
-  exchange and the message-transfer framework are documented as work-in-progress and not verified on
-  hardware. (baseline B14)]
+- **FR-054**: The vCard module MUST register a `text/vcard` handler and provide
+  "Send vCard"; received vCards MUST be deduplicated by exact text.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -181,15 +176,13 @@ queue replies Busy.
   replies Busy and never wedges the device.
 - **SC-004**: Inbound-prompt rate limits hold: bursts exceeding the global (~5/30 s) or per-connection
   (~3/10 s) budgets are throttled, and a declined offer triggers a post-decline cooldown.
-- **SC-005** *(Provisional, HIL non-blocking)*: On hardware, a vCard sent between two badges arrives
+- **SC-005** *(hardware-verified 2026-06-18)*: On hardware, a vCard sent between two badges arrives
   byte-identical only after both holders confirm the same six-digit code, the receiver dedups by
-  exact text, and the ephemeral bond is not retained. Verified by HIL plan T-HIL03; non-blocking
-  until the WIP framework (B14) is verified on hardware.
+  exact text, and the ephemeral bond is not retained. Verified by HIL plan T-HIL03.
 
 ## Assumptions
 
-- This capability is **Provisional (WIP, not hardware-verified)**; its hardware acceptance is
-  non-blocking per the baseline Clarifications (Session 2026-06-14) until verified on hardware.
+- This capability is **hardware-verified (2026-06-18)** via the on-device test run (HIL plan T-HIL03).
 - The BLE transport runs through the single shared controller (`IBluetoothController`); the
   single-controller invariant and bonding model are owned by spec `011-ble-controller-hid`.
 - The framework is consumed by `mod_vcard` for `text/vcard` and is exposed to plugins via the

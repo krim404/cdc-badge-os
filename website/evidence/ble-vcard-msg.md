@@ -147,13 +147,13 @@ All paths are relative to the repo root `~/GIT/cdc-badge-os`.
 
 | Claim | Source (path:line) | Tag |
 | --- | --- | --- |
-| BLE vCard "WIP, untested on hardware" | README.md:30 | VERIFIED |
-| BLE Serial "WIP, untested on hardware" | README.md:33 | VERIFIED |
+| BLE vCard hardware-verified 2026-06-18 (on-device test run) | T-HIL03 | VERIFIED |
+| BLE serial console not yet hardware-verified | — | OPEN |
 
 ## GAPs
 
 | Topic | Note | Tag |
 | --- | --- | --- |
-| On-hardware maturity | Whole cdc_msg framework + vCard exchange not verified on hardware; README flags BLE vCard/Serial as WIP/untested. | GAP |
+| On-hardware maturity | cdc_msg framework end-to-end + BLE vCard exchange verified on hardware 2026-06-18 (T-HIL03). BLE serial console still unverified. | RESOLVED |
 | Other modules using cdc_msg | Only mod_vcard registers a firmware handler (text/vcard); no other module found via registerHandler. Plugins may register via host API. | GAP |
 | Service UUID canonical string | MessageProfile.h gives the byte array (LE) and a comment "CDC5000x-B0A7-4E3D-9C82-5A6F1B3E9D2C"; the per-characteristic canonical strings (CDC50002/3/4) are inferred from the discriminator comment, not spelled out byte-for-byte as strings. | GAP |

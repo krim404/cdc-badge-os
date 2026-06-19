@@ -42,7 +42,7 @@
 | BLE HID advertises as keyboard (appearance 0x03C1) | components/mod_blehid/src/BleHidKeyboard.cpp:66, 373 | VERIFIED |
 | BLE HID menu under Settings: Status / Start-Stop Advertising / Unicode Method / Disconnect | components/mod_blehid/src/BleHidModule.cpp:157-183, 311-323 | VERIFIED |
 | BLE HID status: README marks "Working" (NOT WIP) | README.md:31 | VERIFIED |
-| BLE vCard & BLE Serial are WIP, untested (not BLE HID) | README.md:30, 33 | VERIFIED |
+| BLE vCard verified on hardware 2026-06-18; BLE serial console still untested | T-HIL03 | PARTIAL |
 | USB HID registers HID interface on UsbManager Keyboard slot | components/mod_usbhid/src/UsbHidKeyboard.cpp:84-109 | VERIFIED |
 | USB HID start fails if no free USB slot | components/mod_usbhid/src/UsbHidModule.cpp:186-192 | VERIFIED |
 | USB HID takes over keyboard provider, restores previous on stop | components/mod_usbhid/src/UsbHidModule.cpp:194-217 | VERIFIED |

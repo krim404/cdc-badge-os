@@ -59,10 +59,9 @@ operations.
 - Q: How should WIP / hardware-unverified features be scoped in this as-built spec? → A: In-scope,
   flagged "Provisional (WIP, not hardware-verified)"; their HIL acceptance is non-blocking until
   verified on hardware.
-- **Provisional (WIP) scope**: FR-044 (GPG cross-sign send path) and FR-050..054 (cdc_msg
-  badge-to-badge messaging, incl. BLE vCard exchange) are normative-but-Provisional. Their hardware
-  acceptance (SC-011; HIL plans T-HIL03 / T-HIL07) is **non-blocking** until verified on hardware,
-  and they MUST stay flagged WIP in their per-capability specs until then.
+- **Provisional (WIP) scope**: FR-044 (GPG cross-sign send path) remains normative-but-Provisional
+  (not hardware-verified), as does the BLE serial console. FR-050..054 (cdc_msg badge-to-badge
+  messaging, incl. BLE vCard exchange) and BLE HID auto-type were **hardware-verified (2026-06-18)**.
 - Q: What build-profile constraints define a valid production/release build? → A: Release MUST have
   `DEBUG_MODE=0`, `FEATURE_SECURE_SERIAL=1`, `FEATURE_PLUGIN_AOT=0`, `FEATURE_NVS_EDIT=0` (measurable
   release gate; see SC-013).
@@ -374,8 +373,8 @@ Grouped by capability area. Each requirement describes observable, as-built beha
   ≤ 31 bytes, ≤ 8 registered handlers, ≤ 4 queued offers; plus abuse-resistance budgets (global
   ~5 prompts/30s, per-connection ~3/10s, post-decline cooldown).
 - **FR-054**: The vCard module MUST register a `text/vcard` handler and provide "Send vCard";
-  received vCards MUST be deduplicated by exact text. [NEEDS CLARIFICATION: vCard exchange and the
-  message-transfer framework are documented as work-in-progress and not verified on hardware.]
+  received vCards MUST be deduplicated by exact text. (vCard exchange and the message-transfer
+  framework were hardware-verified 2026-06-18.)
 
 #### Encrypted backup / restore
 
@@ -660,10 +659,10 @@ Measurable, technology-agnostic outcomes that verify the system behaves as speci
   GDEY029T94 e-paper, BQ25895 charger, TCA9535 IO expander).
 - The firmware version and host-API level are taken from `platformio.ini` / plugin docs and are
   user-managed; this spec does not assert a target version.
-- Features documented as work-in-progress / not-yet-hardware-verified (BLE vCard exchange, the
-  message-transfer framework end-to-end, BLE serial console, GPG cross-sign send path, GPG/CCID
-  UI) are **in-scope but Provisional (WIP)**: specified as designed with their WIP status flagged,
-  and their hardware acceptance is non-blocking until verified (see Clarifications 2026-06-14).
+- Of the features previously flagged work-in-progress, the BLE vCard exchange, the message-transfer
+  framework end-to-end, and BLE HID auto-type were **hardware-verified (2026-06-18)**. Still
+  **Provisional (WIP, not hardware-verified)**: the BLE serial console, the GPG cross-sign send path,
+  and the GPG/CCID UI (hardware acceptance non-blocking until verified; see Clarifications 2026-06-14).
 
 ---
 
@@ -709,8 +708,9 @@ by reading the code or testing the device, then document).
 - **B12** BLE HID descriptor — report types / flow control. (Interfaces)
 - **B13** GPG cross-sign — curve always labeled EdDSA from the status snapshot; P-256 may be
   mislabeled; unverified on hardware. (FR-044)
-- **B14** Hardware-unverified / WIP — cdc_msg framework, BLE vCard exchange, BLE serial console,
-  GPG cross-sign send path, GPG/CCID UI. (FR-054, FR-044)
+- **B14** Hardware status — cdc_msg framework, BLE vCard exchange and BLE HID auto-type were
+  hardware-verified 2026-06-18; the BLE serial console, the GPG cross-sign send path and the
+  GPG/CCID UI remain unverified on hardware. (FR-054, FR-044)
 - **B15** Implementation details documented only at a high level — EventBus queue-overflow policy,
   ViewStack modal-depth semantics, plugin foreground→background demotion timing, module menu
   priority/sort order, plugin file-sandbox enforcement point, plugin file overwrite atomicity.

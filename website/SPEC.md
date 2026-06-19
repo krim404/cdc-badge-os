@@ -34,8 +34,9 @@ Out of scope: source-code-level commentary (that is Doxygen's job, linked under 
    the verified subset. A `GAP` is never published as fact (§5).
 4. **No GUI drawings.** No screen mockups, no ASCII art of the display, no pixel layouts. On-device
    navigation is described only as text breadcrumbs, e.g. *Tools → Bluetooth → Pair device*.
-5. **Honest status.** Features the codebase/README marks WIP or untested-on-hardware (e.g. BLE vCard, BLE
-   serial) are labelled as such and never presented as finished.
+5. **Honest status.** Features still untested-on-hardware (the BLE serial console and the GPG
+   cross-sign send path) are labelled as such and never presented as finished. BLE vCard, BLE HID and
+   the cdc_msg framework were hardware-verified 2026-06-18.
 6. **No version bumps.** Do not change any firmware/HOST_API/schema version while writing docs.
 7. **English.** All site content is English (project convention). German UI labels may be quoted as data.
 8. **Capacities from source.** Counts/limits (credential/account/entry capacities, slot ranges) are taken
@@ -128,10 +129,10 @@ work-in-progress).
 | `guide/two-factor` | 2FA: TOTP / HOTP / challenge-response | `components/mod_2fa/**` | VERIFY |
 | `guide/password-vault` | Password vault | `components/mod_password/**` | VERIFY |
 | `guide/gpg-ssh` | GPG / OpenPGP card & SSH | `components/mod_gpg/**` | VERIFY |
-| `guide/vcard` | vCard exchange | `components/mod_vcard/**`, `components/cdc_msg/**` | WIP |
+| `guide/vcard` | vCard exchange | `components/mod_vcard/**`, `components/cdc_msg/**` | VERIFIED |
 | `guide/bluetooth` | Bluetooth: pairing & bonds | `cdc_hal/IBluetoothController.h`, `cdc_os_ui/BluetoothMenuUi.cpp` | VERIFY |
 | `guide/wifi-time` | WiFi & time sync | `cdc_os_ui/WifiMenuUi.cpp`, i18n `core.wifi_*`/`core.ntp_*` | VERIFY |
-| `guide/auto-type` | Auto-type via HID (BLE/USB) | `mod_blehid`, `mod_usbhid` | VERIFY/WIP |
+| `guide/auto-type` | Auto-type via HID (BLE/USB) | `mod_blehid`, `mod_usbhid` | VERIFIED |
 | `guide/backup-restore` | Encrypted backup & restore | `cdc_os_ui` BackupManager, Expert menu | VERIFY |
 | `guide/settings` | Settings | `AppUi.cpp` settings menu, i18n `core.*` | VERIFY |
 | `guide/power-sleep` | Power, battery & sleep | `cdc_os_ui/SleepManager.cpp`, `AppUi.cpp` status icons | VERIFY |
@@ -185,7 +186,7 @@ work-in-progress).
 
 - Backup crypto exact parameters (KDF iteration count, AES variant/mode): verify at source or omit the number.
 - FIDO2: attestation self-signed vs CA-backed; LargeBlob / BioEnrollment / AuthnConfig — implemented or stub?
-- On-hardware maturity of WIP BLE features (vCard, BLE serial, BLE HID).
+- On-hardware maturity of the BLE serial console (vCard, BLE HID and cdc_msg verified 2026-06-18).
 - Password masking behaviour in edit view; precise T9 commit-timeout behaviour.
 - Which modules besides vCard actually use `cdc_msg`; whether plugins can use it.
 - Layout A vs B decision (flasher URL relocation) before touching CI.

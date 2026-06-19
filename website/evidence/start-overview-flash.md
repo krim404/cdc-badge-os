@@ -25,8 +25,8 @@
 | BLE HID acts as Bluetooth keyboard | main/CMakeLists.txt MODULES (mod_blehid); README.md:32 ("BLE HID ... Bluetooth keyboard for auto-type") | VERIFIED |
 | USB CDC serial + HID | platformio.ini:25-28 (CONFIG_TINYUSB_ENABLED, CDC); main/CMakeLists.txt MODULES (mod_usbhid) | VERIFIED |
 | WiFi NTP time sync via serial | components/serial_cmd/src/SerialCmd.cpp:2388-2398 (WIFI subcommands SCAN/STATUS/ON/CONNECT...); README.md:33 ("WiFi + NTP") | VERIFIED |
-| BLE vCard is WIP / untested on hardware | README.md:31 ("BLE vCard ... WIP, untested on hardware.") | VERIFIED |
-| BLE serial console (NUS) is WIP / untested | README.md:34 ("BLE Serial ... WIP, untested on hardware. ... Nordic UART Service") | VERIFIED |
+| BLE vCard hardware-verified 2026-06-18 (T-HIL03) | on-device test run | VERIFIED |
+| BLE serial console (NUS) not yet hardware-verified | — | OPEN |
 | WASM plugin runtime sandboxed (WAMR), separate 2 MB FAT partition | README.md:40 (WASM Plugin Runtime "Working"); partitions.csv:4 (plugins, data, fat, 0xDF0000, 0x200000); web-flasher/index.html:393 ("separate 2 MB FAT-FS partition ... WAMR runtime") | VERIFIED |
 | English + German UI languages | README.md:38 ("Multi-Language ... English and German UI"); assets/i18n/lang_de.json (German overlay exists) | VERIFIED |
 | Lock screen is PIN-protected | components/serial_cmd/src/SerialCmd.cpp:2436 (PIN command); existing page guide/lock-and-pin.md | VERIFIED |

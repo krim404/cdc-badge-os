@@ -1,11 +1,10 @@
 # T-HIL03 — BLE badge-to-badge vCard transfer (numeric comparison) + abuse budgets
 
-**Status: non-blocking (hardware verification)**
+**Status: passed (hardware-verified 2026-06-18)**
 
-**Provisional / WIP** — the cdc_msg message-transfer framework and BLE vCard exchange are
-documented as work-in-progress and **not yet verified on hardware** (spec FR-054, open items
-B14; Clarifications 2026-06-14). This plan defines the intended acceptance; passing it is what
-graduates the feature out of WIP.
+The cdc_msg message-transfer framework and BLE vCard exchange were verified on hardware on
+2026-06-18 (on-device test run). This plan defines the acceptance that graduated the feature
+out of WIP.
 
 **FRs covered**: FR-050, FR-051, FR-052, FR-053, FR-054
 
@@ -76,9 +75,8 @@ Maps to Success Criterion SC-011.
 
 ## Notes
 
-- **WIP status**: failures here do NOT block the build (non-blocking). Record outcomes against
-  B14; keep FR-044/FR-050..054 flagged WIP in their per-capability specs until this plan passes
-  on hardware.
+- **Status**: passed on hardware 2026-06-18. FR-050..054 (cdc_msg + BLE vCard) are now verified;
+  GPG cross-sign (FR-044) is covered separately by T-HIL07 and remains unverified.
 - **Flash conservation**: no flashing required. Flash both badges from one image and run the
   full plan. If a reflash is needed, use the serial `AUTH <pin>` then `BOOTLOADER` path.
 - **Budget timing**: the rate-limit windows are short (10 s / 30 s); pace offers with a stopwatch

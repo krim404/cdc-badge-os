@@ -85,7 +85,7 @@ Every claim on the `/security/` pages traces to firmware source here. Format:
 | Pre-1.0 beta, data loss on flash (FIDO2, TOTP, vault, GPG, PIN) | README.md:7-18 | BETA |
 | No-migration policy: breaking changes wipe + reinit, no version-detect fallbacks | /Users/krim/GIT/cdc-badge-os/CLAUDE.md "NO MIGRATION CODE" section | BETA |
 | Build-profile byte mismatch triggers full factory wipe at next boot | components/cdc_core/include/cdc_core/feature_flags.h:43-50; main/main.cpp:176-230 | BETA |
-| WIP/untested: BLE vCard, BLE Serial untested on hardware; GPG UI WIP | README.md:29-33 | WIP |
+| BLE vCard verified on hardware 2026-06-18; still untested: BLE serial console, GPG/CCID UI | T-HIL03 | PARTIAL |
 | DEBUG_MODE default 1 | components/cdc_core/include/cdc_core/feature_flags.h:39-41 | DEBUG |
 | DEBUG_MODE folds into BUILD_PROFILE_BYTE (bit 0) | components/cdc_core/include/cdc_core/feature_flags.h:49-50 | DEBUG |
 | DEBUG_MODE sets log level DEBUG vs WARN | components/cdc_log/src/cdc_log.cpp:140-147 | DEBUG |

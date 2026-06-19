@@ -16,7 +16,7 @@ owned twice.
 | 005-password-vault | Password vault | FR-030, FR-031, FR-032 |
 | 006-openpgp-ccid | OpenPGP CCID + GPG/SSH | FR-040, FR-041, FR-042, FR-043 |
 | 007-gpg-cross-signing | GPG cross-signing (Provisional/WIP) | FR-044 |
-| 008-message-transfer | Badge-to-badge messaging (Provisional/WIP) | FR-050, FR-051, FR-052, FR-053, FR-054 |
+| 008-message-transfer | Badge-to-badge messaging | FR-050, FR-051, FR-052, FR-053, FR-054 |
 | 009-encrypted-backup | Encrypted backup / restore | FR-060, FR-061, FR-062, FR-063, FR-064 |
 | 010-plugin-runtime-hostapi | Plugin runtime & host API | FR-071, FR-072, FR-073, FR-074, FR-075 |
 | 011-ble-controller-hid | BLE controller & HID | FR-090 |

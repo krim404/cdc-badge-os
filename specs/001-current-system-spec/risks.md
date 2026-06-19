@@ -11,7 +11,7 @@ Severity uses low / med / high. Area uses security / process / CI / hardware.
 
 | ID | Risk | Severity | Area | Mitigation | Owning spec/ADR | Status |
 |----|------|----------|------|-----------|-----------------|--------|
-| R-01 | WIP features unverified on hardware (cdc_msg, BLE vCard, GPG cross-sign send path) | High | hardware | HIL plans T-HIL03/07; mark WIP in specs until verified | spec 007, spec 008 (T-HIL03/07) | open |
+| R-01 | Unverified on hardware: GPG cross-sign send path, BLE serial console (cdc_msg + BLE vCard + BLE HID verified 2026-06-18) | Med | hardware | T-HIL03 passed 2026-06-18; T-HIL07 pending for GPG cross-sign | spec 007 (T-HIL07) | open |
 | R-02 | Doc-vs-code drift (D1–D4) until reconciled | Med | process | ADR-0004/0012 + doc-fix tasks; conformance gate C4 | ADR-0004, ADR-0012 | open |
 | R-03 | `DEBUG_MODE` defaults ON → sensitive logging if shipped | High | security | ADR-0012; release checklist gate; document in security docs | ADR-0012 | open |
 | R-04 | `credProtect` parsed/stored but not enforced at assertion (B2) | Med | security | spec 003 records as known gap; RF-04 design note | spec 003 (RF-04) | open |

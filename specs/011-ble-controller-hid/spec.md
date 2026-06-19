@@ -11,12 +11,9 @@ shared BLE controller (`cdc_hal` BluetoothController) and the HID-over-BLE modul
 the peripheral single-connection model, numeric-comparison pairing and host bonding, and the
 single-controller invariant that modules use `IBluetoothController` only and never touch NimBLE.
 
-> **⚠ PROVISIONAL (WIP) NOTE**: The HID-over-BLE / BLE-vCard parts of this capability that depend on
-> the BLE transport are **not yet hardware-verified**. Per the baseline Clarifications (Session
-> 2026-06-14), BLE-side features (BLE HID keyboard auto-type, BLE serial console, BLE vCard exchange)
-> are in-scope but Provisional; their hardware acceptance is **non-blocking** until verified on
-> hardware and they MUST stay flagged WIP until then. The single-controller invariant itself
-> (FR-090, the architectural rule) is normative and not WIP.
+> **Hardware status**: BLE HID keyboard auto-type and BLE vCard exchange were **hardware-verified
+> (2026-06-18)**. The **BLE serial console (NUS)** is not yet hardware-verified. The single-controller
+> invariant (FR-090, the architectural rule) is normative and independent of this.
 
 > **Source of truth**: This spec lifts requirement FR-090 faithfully from the baseline
 > (`specs/001-current-system-spec/spec.md`); the FR number is preserved as a cross-reference. Code is
@@ -74,8 +71,7 @@ matching code, and confirm the badge bonds the host and can act as a BLE HID key
 2. **Given** fewer than 5 bonded hosts, **When** a new host bonds, **Then** the device retains the
    bond (up to 5 bonded host devices).
 3. **Given** a bonded host, **When** the holder triggers auto-type for a password or 2FA field,
-   **Then** the field is sent to the host as BLE HID keystrokes. *(BLE-side Provisional, not
-   hardware-verified.)*
+   **Then** the field is sent to the host as BLE HID keystrokes. *(Hardware-verified 2026-06-18.)*
 
 ---
 
@@ -106,8 +102,8 @@ rejection behaviour.
   flow control) are referenced but not fully documented in-repo. (baseline B12)]
 - **Module touching NimBLE**: a BLE-using module must use `IBluetoothController` only; touching
   NimBLE directly or adding `bt` to its REQUIRES violates the single-controller invariant.
-- **BLE-side WIP**: BLE HID auto-type, BLE serial console and BLE vCard exchange are not
-  hardware-verified.
+- **BLE serial not yet verified**: the BLE serial console (NUS) is not yet hardware-verified; BLE HID
+  auto-type and BLE vCard exchange were verified on hardware (2026-06-18).
 
 ---
 
@@ -130,7 +126,7 @@ rejection behaviour.
   the holder confirms matches.
 - **BLE HID Keyboard** — the HID-over-BLE keyboard interface (`mod_blehid`) used to send password and
   2FA fields as keystrokes. [NEEDS CLARIFICATION: BLE HID descriptor/report types and flow control
-  (baseline B12).] *(BLE-side Provisional, not hardware-verified.)*
+  (baseline B12).] *(Hardware-verified 2026-06-18.)*
 
 ## Success Criteria *(mandatory)*
 
@@ -141,17 +137,15 @@ rejection behaviour.
 - **SC-002**: BLE-using modules access BLE only through `IBluetoothController` — none register their
   own GAP handler, add `bt` to REQUIRES, or touch NimBLE directly (architectural invariant, 100%).
 - **SC-003**: Host HID pairing uses numeric comparison and the device bonds up to 5 host devices.
-- **SC-004** *(BLE-side Provisional, HIL non-blocking)*: On hardware, a paired and bonded host
-  receives a password/2FA field as BLE HID keystrokes after auto-type; verified on hardware,
-  non-blocking until the BLE-side WIP parts are verified.
+- **SC-004** *(hardware-verified 2026-06-18)*: On hardware, a paired and bonded host
+  receives a password/2FA field as BLE HID keystrokes after auto-type.
 
 ## Assumptions
 
 - The single-controller invariant (one owning BluetoothController; modules use `IBluetoothController`
   only) is a Constitution I architectural rule and is normative (not WIP).
-- The BLE-side HID/serial/vCard features that ride the controller are **Provisional (WIP, not
-  hardware-verified)**; their hardware acceptance is non-blocking per the baseline Clarifications
-  (Session 2026-06-14) until verified on hardware.
+- BLE HID auto-type and BLE vCard exchange that ride the controller were **hardware-verified
+  (2026-06-18)**; the **BLE serial console** is not yet hardware-verified.
 - The badge-to-badge message-transfer framework (FR-050..054) also uses this controller but is owned
   by spec `008-message-transfer`; the keyboard auto-type *content* (which fields are typed) is owned
   by the password (005) and 2FA (004) specs — this spec owns only the BLE transport and pairing.

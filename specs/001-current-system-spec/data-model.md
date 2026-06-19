@@ -54,8 +54,8 @@ reference. Numbering is indicative (assigned at `/speckit-specify` time).
 | 004 | 2FA — TOTP/HOTP/CR | `mod_2fa` | FR-020..023 | — |
 | 005 | Password vault | `mod_password` | FR-030..032 | B3 (at-rest encryption) |
 | 006 | OpenPGP CCID + GPG/SSH | `mod_gpg`, `openpgp` | FR-040..043 | — |
-| 007 | GPG cross-signing | `mod_gpg` | FR-044 | B13 (curve labeling), B14 (WIP) |
-| 008 | Badge-to-badge messaging | `cdc_msg`, `mod_vcard` | FR-050..054 | B14 (WIP HW) |
+| 007 | GPG cross-signing | `mod_gpg` | FR-044 | B13 (curve labeling), B14 (HW-unverified) |
+| 008 | Badge-to-badge messaging | `cdc_msg`, `mod_vcard` | FR-050..054 | verified on HW 2026-06-18 |
 | 009 | Encrypted backup / restore | `cdc_os_ui` BackupManager | FR-060..064 | B5 (export auth) |
 | 010 | Plugin runtime & host API | `plugin_manager`, `wamr_runtime` | FR-071..075 | B15 (lifecycle details) |
 | 011 | BLE controller & HID | `cdc_hal` BluetoothController, `mod_blehid` | FR-090 | B10 (bond limit), B12 (HID descriptor) |
@@ -145,7 +145,7 @@ semi-automatic tests need an operator and run last. See [hil/README.md](./hil/RE
 
 | ID | Risk | Severity | Mitigation |
 |----|------|----------|-----------|
-| R-01 | WIP features unverified on hardware (cdc_msg, BLE vCard, GPG cross-sign send path) | High | HIL plans T-HIL03/07; mark WIP in specs until verified |
+| R-01 | Unverified on hardware: GPG cross-sign send path, BLE serial console (cdc_msg + BLE vCard + BLE HID verified 2026-06-18) | Med | T-HIL03 passed 2026-06-18; T-HIL07 pending for GPG cross-sign |
 | R-02 | Doc-vs-code drift (D1–D4) until reconciled | Med | ADR-0004/0012 + doc-fix tasks; conformance gate C4 |
 | R-03 | `DEBUG_MODE` defaults ON → sensitive logging if shipped | High | ADR-0012; release checklist gate; document in security docs |
 | R-04 | `credProtect` parsed/stored but not enforced at assertion (B2) | Med (security) | spec 003 records as known gap; RF-04 design note |
