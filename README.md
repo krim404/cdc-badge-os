@@ -27,7 +27,7 @@ The full documentation (introduction, flashing, a feature-by-feature user guide,
 the security background and automatic processes, plugin and power-user guides, and
 the developer and protocol reference) lives on the documentation site:
 
-### **https://krim.codeberg.page/cdc-badge-os/**
+### **https://krim404.github.io/cdc-badge-os/**
 
 The site is generated from [`website/`](website/) with Astro Starlight and is
 deployed to Codeberg, GitHub and GitLab Pages. Highlights:

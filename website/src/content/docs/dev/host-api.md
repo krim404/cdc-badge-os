@@ -13,7 +13,7 @@ table in `components/plugin_manager/src/WamrImports.cpp`.
 Every function listed here is both declared in `host_api.h` and registered in the
 symbol table: the two sets match exactly (213 functions each, a clean bijection),
 so there are no declared-but-unimplemented stubs. For the full signatures,
-parameters and return semantics, generate and read the [Doxygen reference](/api/).
+parameters and return semantics, generate and read the [Doxygen reference](/api/host__api_8h.html).
 
 For the plugin model, manifest schema and lifecycle, see the
 [Plugin SDK & manifest](/dev/plugin-sdk/) page.
@@ -78,7 +78,7 @@ feed their output back into the auto-converting UI functions
 Each family is a Doxygen `\defgroup` in `host_api.h` with a matching
 `host_api_<family>.cpp` implementation. The table below lists the family, the
 manifest capability it requires (if any), and a few representative functions. It
-is not exhaustive; consult `host_api.h` or the [Doxygen reference](/api/) for the
+is not exhaustive; consult `host_api.h` or the [Doxygen reference](/api/host__api_8h.html) for the
 complete set.
 
 The "Capability" column reflects what is enforced at the host-call boundary
@@ -131,5 +131,5 @@ call. Conflicting pin claims are rejected with `HOST_ERR_BUSY`.
 
 This page is a map, not a complete signature list. For every function's exact
 prototype, parameters and return contract, build and open the generated
-[Doxygen reference](/api/), which is rendered from the Doxygen comments in
+[Doxygen reference](/api/host__api_8h.html), which is rendered from the Doxygen comments in
 `host_api.h`.
