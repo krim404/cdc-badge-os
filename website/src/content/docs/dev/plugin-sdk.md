@@ -189,7 +189,7 @@ Omit any of these if the plugin does not need them
 | `plugin_on_action(action_id, selected_idx, user_data)` | A UI view, event subscription or message handler fired an action |
 | `plugin_on_button(button_code)` | A button event |
 | `plugin_on_event(event_type, event_value)` | A subscribed system event |
-| `plugin_on_tick(uptime_ms)` | Periodic tick |
+| `plugin_on_tick(uptime_ms)` | Periodic tick, fires every ~50 ms (~20 Hz); not a redraw signal - throttle e-paper updates to real changes |
 | `plugin_on_cmd(len)` | The host pushed a command; pull it with `host_cmd_consume` |
 | `plugin_on_prerequisite_failed(prereq_id, error_code)` | A prerequisite with `on_fail=callback` failed |
 
