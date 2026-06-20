@@ -187,7 +187,7 @@ static int32_t w_host_ui_push_context_menu(wasm_exec_env_t exec_env, const char*
     if (count == 0 || !items) return host_ui_push_context_menu(title, items, 0, sel);
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
     constexpr uint32_t kMaxItems = cdc::ui::ContextMenuView::MAX_ITEMS;
-    if (count > kMaxItems) count = kMaxItems;
+    if (count > kMaxItems) return HOST_ERR_INVALID_ARG;
     if (!wasm_runtime_validate_native_addr(inst, const_cast<ui_item_t*>(items),
                                            static_cast<uint64_t>(count) * sizeof(ui_item_t)))
         return HOST_ERR_INVALID_ARG;
@@ -292,10 +292,46 @@ static int32_t w_host_view_canvas_draw_rect(wasm_exec_env_t, int32_t x, int32_t 
                                     static_cast<int16_t>(w), static_cast<int16_t>(h),
                                     filled != 0); }
 
-static int32_t w_host_view_canvas_invert_rect(wasm_exec_env_t, int32_t x, int32_t y,
-                                               int32_t w, int32_t h)
-{ return host_view_canvas_invert_rect(static_cast<int16_t>(x), static_cast<int16_t>(y),
-                                       static_cast<int16_t>(w), static_cast<int16_t>(h)); }
+static int32_t w_host_view_canvas_draw_pixel(wasm_exec_env_t, int32_t x, int32_t y)
+{ return host_view_canvas_draw_pixel(static_cast<int16_t>(x), static_cast<int16_t>(y)); }
+
+static int32_t w_host_view_canvas_draw_line(wasm_exec_env_t, int32_t x0, int32_t y0,
+                                            int32_t x1, int32_t y1)
+{ return host_view_canvas_draw_line(static_cast<int16_t>(x0), static_cast<int16_t>(y0),
+                                    static_cast<int16_t>(x1), static_cast<int16_t>(y1)); }
+
+static int32_t w_host_view_canvas_draw_circle(wasm_exec_env_t, int32_t x, int32_t y,
+                                              int32_t r, uint32_t filled)
+{ return host_view_canvas_draw_circle(static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                      static_cast<int16_t>(r), filled != 0); }
+
+static int32_t w_host_view_canvas_draw_triangle(wasm_exec_env_t, int32_t x0, int32_t y0,
+                                                int32_t x1, int32_t y1,
+                                                int32_t x2, int32_t y2, uint32_t filled)
+{ return host_view_canvas_draw_triangle(static_cast<int16_t>(x0), static_cast<int16_t>(y0),
+                                        static_cast<int16_t>(x1), static_cast<int16_t>(y1),
+                                        static_cast<int16_t>(x2), static_cast<int16_t>(y2),
+                                        filled != 0); }
+
+static int32_t w_host_view_canvas_draw_round_rect(wasm_exec_env_t, int32_t x, int32_t y,
+                                                  int32_t w, int32_t h, int32_t r,
+                                                  uint32_t filled)
+{ return host_view_canvas_draw_round_rect(static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                          static_cast<int16_t>(w), static_cast<int16_t>(h),
+                                          static_cast<int16_t>(r), filled != 0); }
+
+static int32_t w_host_view_canvas_draw_bitmap(wasm_exec_env_t env, int32_t x, int32_t y,
+                                              int32_t w, int32_t h,
+                                              const uint8_t* data, uint32_t len)
+{
+    if (!wbuf_ok(env, data, len)) return HOST_ERR_INVALID_ARG;
+    return host_view_canvas_draw_bitmap(static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                        static_cast<int16_t>(w), static_cast<int16_t>(h),
+                                        data, len);
+}
+
+static int32_t w_host_view_canvas_set_shade(wasm_exec_env_t, uint32_t shade)
+{ return host_view_canvas_set_shade(static_cast<uint8_t>(shade)); }
 
 static int32_t w_host_view_canvas_hline(wasm_exec_env_t, int32_t x, int32_t y, int32_t w)
 { return host_view_canvas_hline(static_cast<int16_t>(x), static_cast<int16_t>(y),
@@ -947,12 +983,18 @@ static const NativeSymbol s_symbols[] = {
     W("host_view_canvas_clear",         w_host_view_canvas_clear,         "()i"),
     W("host_view_canvas_set_text_size", w_host_view_canvas_set_text_size, "(i)i"),
     W("host_view_canvas_set_text_color",w_host_view_canvas_set_text_color,"(i)i"),
+    W("host_view_canvas_set_shade",     w_host_view_canvas_set_shade,     "(i)i"),
     W("host_view_canvas_set_font",      w_host_view_canvas_set_font,      "(i)i"),
     W("host_text_pick_font_that_fits",  w_host_text_pick_font_that_fits,  "($i*~*)i"),
     W("host_view_canvas_draw_text",     w_host_view_canvas_draw_text,     "(ii$)i"),
     W("host_view_canvas_draw_text_aligned", w_host_view_canvas_draw_text_aligned, "(iii$i)i"),
     W("host_view_canvas_draw_rect",     w_host_view_canvas_draw_rect,     "(iiiii)i"),
-    W("host_view_canvas_invert_rect",   w_host_view_canvas_invert_rect,   "(iiii)i"),
+    W("host_view_canvas_draw_pixel",    w_host_view_canvas_draw_pixel,    "(ii)i"),
+    W("host_view_canvas_draw_line",     w_host_view_canvas_draw_line,     "(iiii)i"),
+    W("host_view_canvas_draw_circle",   w_host_view_canvas_draw_circle,   "(iiii)i"),
+    W("host_view_canvas_draw_triangle", w_host_view_canvas_draw_triangle, "(iiiiiii)i"),
+    W("host_view_canvas_draw_round_rect",w_host_view_canvas_draw_round_rect,"(iiiiii)i"),
+    W("host_view_canvas_draw_bitmap",   w_host_view_canvas_draw_bitmap,   "(iiii*~)i"),
     W("host_view_canvas_hline",         w_host_view_canvas_hline,         "(iii)i"),
     W("host_view_canvas_vline",         w_host_view_canvas_vline,         "(iii)i"),
     W("host_view_canvas_commit",        w_host_view_canvas_commit,        "(i)i"),

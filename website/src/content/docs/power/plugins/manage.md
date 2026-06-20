@@ -17,12 +17,12 @@ Open **Plugins** from the main menu. The list shows every installed plugin by it
 Actions:
 
 - **Start:** select a plugin (the normal select key) to start it and open its view.
-- **Context menu:** press <kbd>3</kbd> on a plugin to open its action menu. The entries depend on state:
-  - Disabled plugin: **Enable**.
-  - Running in the background: **Stop**, **Disable**.
-  - Stopped (and not disabled): **Start**, **Disable**.
+- **Context menu:** press <kbd>3</kbd> on a plugin to open its action menu. Every entry ends with **Uninstall**, and the rest depend on state:
+  - Disabled plugin: **Enable**, **Uninstall**.
+  - Running in the background: **Stop**, **Disable**, **Uninstall**.
+  - Stopped (and not disabled): **Start**, **Disable**, **Uninstall**.
 
-**Stop** force-unloads the plugin from RAM (its files stay on disk). **Disable** unloads it and writes a persistent marker so it will not start, including at boot. **Enable** removes that marker.
+**Stop** force-unloads the plugin from RAM (its files stay on disk). **Disable** unloads it and writes a persistent marker so it will not start, including at boot. **Enable** removes that marker. **Uninstall** asks for confirmation, then unloads the plugin and deletes its files from storage.
 
 ## Residency: foreground, background, autoload
 

@@ -3,6 +3,7 @@
 #include "plugin_manager/host_api.h"
 #include "cdc_views/ToastView.h"
 #include "cdc_views/ContextMenuView.h"
+#include "cdc_views/ConfirmView.h"
 #include "cdc_ui/I18n.h"
 #include "cdc_log.h"
 
@@ -16,7 +17,7 @@ static PluginListView* s_active = nullptr;
 // Plugin id targeted by the currently-open context menu (key 3). The menu's
 // callbacks take no arguments, so the selection is stashed here.
 static std::string s_ctxPluginId;
-static cdc::ui::ContextMenuItem s_ctxItems[2];
+static cdc::ui::ContextMenuItem s_ctxItems[3];
 
 /**
  * \brief Context-menu Stop callback: force-unloads the selected plugin.
@@ -102,6 +103,36 @@ static void onCtxStart()
     if (s_active) {
         s_active->refresh();
     }
+}
+
+/**
+ * \brief Confirm callback for uninstall: deletes the plugin and refreshes.
+ *
+ * ConfirmView hides its modal before invoking this, so it only acts.
+ */
+static void onUninstallConfirmed(void*)
+{
+    if (!s_ctxPluginId.empty()) {
+        PluginManager::instance().uninstallPlugin(s_ctxPluginId);
+        cdc::ui::showToastInfo(cdc::ui::tr("core.deleted"), 1800);
+    }
+    if (s_active) {
+        s_active->refresh();
+    }
+}
+
+/**
+ * \brief Context-menu Uninstall callback: asks for confirmation, then deletes.
+ */
+static void onCtxUninstall()
+{
+    cdc::ui::hideContextMenu();
+    if (s_ctxPluginId.empty()) return;
+    static std::string body;
+    body = std::string(cdc::ui::tr("core.uninstall")) + " " + s_ctxPluginId + "?\n"
+         + cdc::ui::tr("core.sure");
+    cdc::ui::showConfirm(body.c_str(), &onUninstallConfirmed, nullptr,
+                         cdc::ui::ConfirmView::Icon::WARNING);
 }
 
 PluginListView* PluginListView::active() noexcept { return s_active; }
@@ -233,6 +264,7 @@ void PluginListView::onMenu(uint16_t index)
             : cdc::ui::ContextMenuItem{cdc::ui::tr("core.start"), &onCtxStart};
         s_ctxItems[count++] = cdc::ui::ContextMenuItem{cdc::ui::tr("core.disable"), &onCtxDisable};
     }
+    s_ctxItems[count++] = cdc::ui::ContextMenuItem{cdc::ui::tr("core.uninstall"), &onCtxUninstall};
     cdc::ui::showContextMenu(cdc::ui::tr("core.actions"), s_ctxItems, count);
 }
 

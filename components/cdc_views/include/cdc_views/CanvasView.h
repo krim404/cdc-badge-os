@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cdc_ui/IView.h"
+#include "cdc_core/Raii.h"
 #include <cstddef>
 #include <cstdint>
 
@@ -39,9 +40,11 @@ public:
     static constexpr uint16_t T9_SETTLE_MS  = 800;
 
     /// Retained display list: draw primitives are recorded here and replayed in
-    /// render() after the framework clears the screen. Fixed-size, no heap.
+    /// render() after the framework clears the screen. Arenas are PSRAM-backed.
     static constexpr uint16_t MAX_CMDS   = 96;
     static constexpr uint16_t TEXT_ARENA = 2048;
+    /// Pixel-data arena for recorded bitmaps. 8 KB holds one full-body mono bitmap.
+    static constexpr uint16_t BLOB_ARENA = 8192;
 
     using KeyCallback       = void(*)(char key, uint32_t focused_widget);
     using WidgetCallback    = void(*)(uint32_t widget_id, WidgetEvent event);
@@ -63,10 +66,21 @@ public:
     void setTextInverted(bool inverted)        { textInverted_ = inverted; }
     /// Select one of the canonical font ids (see cdc_views/Fonts.h).
     void setFontId(uint8_t font_id)            { fontId_ = font_id; }
+    /// Fill ink for subsequent filled shapes: 0=none, 255=solid, between=dither.
+    void setShade(uint8_t shade)               { shade_ = shade; }
     void drawText(int16_t x, int16_t y, const char* text);
     void drawTextAligned(int16_t x, int16_t y, int16_t w, const char* text, uint8_t align);
     void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool filled);
-    void invertRect(int16_t x, int16_t y, int16_t w, int16_t h);
+    void drawPixel(int16_t x, int16_t y);
+    void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1);
+    void drawCircle(int16_t x, int16_t y, int16_t r, bool filled);
+    void drawTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                      int16_t x2, int16_t y2, bool filled);
+    void drawRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, bool filled);
+    /// Draw a 1-bpp bitmap (rows byte-padded, MSB first). Set bits draw black,
+    /// unset bits are transparent. Pixel data is copied into the canvas arena.
+    void drawBitmap(int16_t x, int16_t y, int16_t w, int16_t h,
+                    const uint8_t* data, uint32_t len);
     void drawHLine(int16_t x, int16_t y, int16_t w);
     void drawVLine(int16_t x, int16_t y, int16_t h);
     void commit(bool full_refresh);
@@ -93,19 +107,25 @@ public:
     const char* getName() const override       { return "CanvasView"; }
 
 private:
-    enum class CmdType : uint8_t { Text, TextAligned, Rect, HLine, VLine };
+    enum class CmdType : uint8_t {
+        Text, TextAligned, Rect, HLine, VLine,
+        Pixel, Line, Circle, Triangle, RoundRect, Bitmap
+    };
 
     struct DrawCmd {
         CmdType  type     = CmdType::Text;
         int16_t  x        = 0;
         int16_t  y        = 0;
-        int16_t  w        = 0;
-        int16_t  h        = 0;
-        uint16_t strOff   = 0;   // byte offset into textArena_
-        uint16_t strLen   = 0;   // string length (excluding NUL)
+        int16_t  w        = 0;   // width, or 2nd point x (Line/Triangle), or radius (Circle)
+        int16_t  h        = 0;   // height, or 2nd point y (Line/Triangle)
+        int16_t  x2       = 0;   // 3rd point x (Triangle), or corner radius (RoundRect)
+        int16_t  y2       = 0;   // 3rd point y (Triangle)
+        uint16_t strOff   = 0;   // byte offset into textArena_ (or blobArena_ for Bitmap)
+        uint16_t strLen   = 0;   // string/blob length (text excludes NUL)
         uint8_t  align    = 0;
         uint8_t  fontId   = 0;
         uint8_t  textSize = 1;
+        uint8_t  shade    = 255; // fill ink: 0=none, 255=solid; between = dither
         bool     filled   = false;
         bool     inverted = false;
     };
@@ -135,6 +155,8 @@ private:
     Gdey029T94* gfx() const;
     void        applyKeypadConfig();
     uint16_t    internText(const char* text, uint16_t* outLen);
+    uint16_t    internBlob(const uint8_t* data, uint16_t len);
+    void        allocArenas();
     void        replayDisplayList();
     void        paintText(int16_t x, int16_t y, int16_t w, const char* text,
                           uint8_t align, uint8_t fontId, uint8_t textSize,
@@ -142,7 +164,7 @@ private:
     int         bodyTop() const                { return headerHeight_; }
     int         bodyBottom() const;
 
-    Widget    widgets_[MAX_WIDGETS] {};
+    cdc::core::PsramUniquePtr<Widget> widgets_;
     uint8_t   widgetCount_ = 0;
     uint32_t  focused_     = 0;
 
@@ -151,14 +173,17 @@ private:
     WidgetCallback    widgetCb_ = nullptr;
     LongPressCallback longPressCb_ = nullptr;
 
-    DrawCmd   cmds_[MAX_CMDS] {};
+    cdc::core::PsramUniquePtr<DrawCmd> cmds_;
     uint16_t  cmdCount_ = 0;
-    char      textArena_[TEXT_ARENA] {};
+    cdc::core::PsramUniquePtr<char>    textArena_;
     uint16_t  textArenaUsed_ = 0;
+    cdc::core::PsramUniquePtr<uint8_t> blobArena_;
+    uint16_t  blobUsed_ = 0;
     bool      overflowLogged_ = false;
 
     uint8_t   textSize_ = 1;
     uint8_t   fontId_ = 0;
+    uint8_t   shade_ = 255;
     bool      textInverted_ = false;
     int       headerHeight_ = 18;
     bool      needsFullRefresh_ = true;

@@ -66,7 +66,7 @@ command except `PING` and `AUTH` is rejected until you authenticate:
 ```
 > STATUS
 ERROR: Not authenticated. Use AUTH <pin> to login.
-> AUTH 0000
+> AUTH 123456
 OK: Authenticated
 > STATUS
 === System Status ===

@@ -104,9 +104,11 @@ drive. The chosen state persists across reboots. A status entry under
 
 ### Behaviour
 
-- The drive shows your files at the volume root. The `system/` folder (installed
-  plugins and language overlays) is marked hidden and read-only so a host file
-  manager hides it and refuses to change it.
+- The drive shows your files at the volume root, including the `system/` folder
+  (installed plugins and language overlays). Marking that folder hidden and
+  read-only for the host is an opt-in security feature, off by default
+  (`FEATURE_PLUGIN_SYSTEM_LOCK`); enable it at build time to have a host file
+  manager hide and refuse to change system files.
 - Files copied onto the drive appear in the on-device **Files** browser after the
   host ejects or the cable is unplugged.
 - While a host has the drive mounted, the badge does not write to the volume: the

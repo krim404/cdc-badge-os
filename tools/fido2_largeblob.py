@@ -9,7 +9,7 @@ by a pinUvAuth token (largeBlobWrite permission), not user presence, so the run
 is fully unattended.
 
 Usage:
-    python tools/fido2_largeblob.py [--pin 0000]
+    python tools/fido2_largeblob.py [--pin 123456]
 
 Required: fido2 (`pip install fido2`).
 """
@@ -45,7 +45,8 @@ def find_badge() -> Ctap2:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--pin", default="0000", help="FIDO2 ClientPIN (default 0000)")
+    ap.add_argument("--pin", default=os.environ.get("BADGE_PIN", "123456"),
+                    help="FIDO2 ClientPIN (default: BADGE_PIN env or 123456)")
     args = ap.parse_args()
 
     ctap = find_badge()

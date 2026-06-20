@@ -71,6 +71,9 @@ public:
     /// resident background plugin. Returns true if the plugin was found and
     /// unloaded.
     bool                      unloadFromRam(const std::string& id);
+    /// Unload from RAM (if loaded) and delete the plugin's stored files
+    /// (wasm/aot/meta/lang/disabled). Returns true.
+    bool                      uninstallPlugin(const std::string& id);
     /// Force-unload every loaded plugin (foreground + background) from RAM,
     /// keeping files on disk. Runs plugin_on_exit, drops the active plugin's
     /// views, and tears down all host resources per instance. Used by the

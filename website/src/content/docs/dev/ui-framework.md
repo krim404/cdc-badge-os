@@ -146,7 +146,7 @@ hides the top modal) unless the view/modal consumed the press itself
 | `PinEntryView` | PIN entry | `components/cdc_views/include/cdc_views/PinEntryView.h` |
 | `SliderView` | Numeric slider | `components/cdc_views/include/cdc_views/SliderView.h` |
 | `ConfirmView` / `MessageBox` / `ToastView` | Confirm dialog, message box, toast | `components/cdc_views/include/cdc_views/ConfirmView.h`, `MessageBox.h`, `ToastView.h` |
-| `InfoView` / `QRCodeView` / `CanvasView` | Scrollable info text, QR code, freeform canvas | `components/cdc_views/include/cdc_views/InfoView.h`, `QRCodeView.h`, `CanvasView.h` |
+| `InfoView` / `QRCodeView` / `CanvasView` | Scrollable info text, QR code, freeform canvas (text, rectangles, lines, pixels, circles, triangles, rounded rectangles, 1-bpp bitmaps, dithered grey fills, plus slider/text/button widgets) | `components/cdc_views/include/cdc_views/InfoView.h`, `QRCodeView.h`, `CanvasView.h` |
 | `ContextMenuView` / `ColorPickerView` / `DateInputView` / `TimeInputView` | Context menu and pickers | `components/cdc_views/include/cdc_views/ContextMenuView.h`, `ColorPickerView.h`, `DateInputView.h`, `TimeInputView.h` |
 
 `ListView` stores its item array by pointer (not copied) and supports an

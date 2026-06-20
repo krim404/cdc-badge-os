@@ -12,7 +12,7 @@ Usage:
     python3 tools/gpg_selftest.py                     # auto-detect port, RSA-2048
     python3 tools/gpg_selftest.py --bits 2048 3072    # several sizes
     python3 tools/gpg_selftest.py --bits all          # 2048, 3072, 4096 (4096 is slow)
-    python3 tools/gpg_selftest.py --port /dev/cu.usbmodemXXXX --pin 0000
+    python3 tools/gpg_selftest.py --port /dev/cu.usbmodemXXXX --pin 123456
 
 Exit code 0 if every requested self-test reports OK, 1 otherwise.
 
@@ -21,6 +21,7 @@ Requirements:
 """
 
 import argparse
+import os
 import sys
 import time
 
@@ -86,7 +87,8 @@ def run_selftest(ser: serial.Serial, bits: int, timeout: float) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description="On-device GPG RSA self-test driver")
     ap.add_argument("--port", help="Serial port (auto-detected if omitted)")
-    ap.add_argument("--pin", default="0000", help="Badge PIN for AUTH (default 0000)")
+    ap.add_argument("--pin", default=os.environ.get("BADGE_PIN", "123456"),
+                    help="Badge PIN for AUTH (default: BADGE_PIN env or 123456)")
     ap.add_argument("--bits", nargs="+", default=["2048"],
                     help="Modulus sizes to test, or 'all' (default 2048)")
     ap.add_argument("--timeout", type=float, default=180.0,

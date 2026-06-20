@@ -25,13 +25,13 @@ The CDC Badge plugins project ships a Rust SDK, example plugins, and a Web-based
 
 `tools/upload.py` is the unified upload tool in this repository. It talks to the badge over USB-CDC serial at 115200 baud and auto-detects the port (override with `--port`). It requires `pyserial` (`pip install pyserial`).
 
-If the firmware was built with `FEATURE_SECURE_SERIAL`, pass the badge PIN with `--pin`; the tool sends `AUTH <pin>` before any command.
+If the firmware was built with `FEATURE_SECURE_SERIAL`, pass the badge PIN with `--pin` (factory default `123456`); the tool sends `AUTH <pin>` before any command.
 
 Install or update a plugin (uploads meta first, then the binary, then the optional language file):
 
 ```bash
-python tools/upload.py --wasm hello.wasm --meta hello.meta.json --pin 0000
-python tools/upload.py --wasm hello.wasm --meta hello.meta.json --lang hello.lang.json --pin 0000
+python tools/upload.py --wasm hello.wasm --meta hello.meta.json --pin 123456
+python tools/upload.py --wasm hello.wasm --meta hello.meta.json --lang hello.lang.json --pin 123456
 ```
 
 The id is read from `meta.json#id`. Override it with `--id`.
@@ -39,11 +39,11 @@ The id is read from `meta.json#id`. Override it with `--id`.
 Other modes:
 
 ```bash
-python tools/upload.py --list --pin 0000          # list installed plugins (JSON)
-python tools/upload.py --info hello --pin 0000     # show one plugin's manifest details
-python tools/upload.py --start hello --pin 0000    # start a plugin
-python tools/upload.py --stop --pin 0000           # stop the active plugin
-python tools/upload.py --delete hello --pin 0000   # delete a plugin
+python tools/upload.py --list --pin 123456          # list installed plugins (JSON)
+python tools/upload.py --info hello --pin 123456     # show one plugin's manifest details
+python tools/upload.py --start hello --pin 123456    # start a plugin
+python tools/upload.py --stop --pin 123456           # stop the active plugin
+python tools/upload.py --delete hello --pin 123456   # delete a plugin
 ```
 
 The tool can also write a UI language overlay to `/vfat/system/i18n/` and reload it (`--lang-overlay lang_<code>.json`), and stream an arbitrary file onto the partition (`--put <file> [--dir <dir>] [--name <n>]`). These use the VFAT serial shell rather than the plugin upload path.

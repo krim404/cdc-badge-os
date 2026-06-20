@@ -16,10 +16,10 @@ Modes:
                                                    VFAT RECEIVE
 
 Examples:
-    python tools/upload.py --wasm hello.wasm --meta hello.meta.json --pin 0000
-    python tools/upload.py --lang-overlay assets/i18n/lang_de.json --pin 0000
-    python tools/upload.py --put notes.txt --dir data --pin 0000
-    python tools/upload.py --list --pin 0000
+    python tools/upload.py --wasm hello.wasm --meta hello.meta.json --pin 123456
+    python tools/upload.py --lang-overlay assets/i18n/lang_de.json --pin 123456
+    python tools/upload.py --put notes.txt --dir data --pin 123456
+    python tools/upload.py --list --pin 123456
 
 Required: pyserial (`pip install pyserial`).
 """

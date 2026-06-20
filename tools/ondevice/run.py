@@ -8,10 +8,12 @@ once; no test or alternate-profile firmware is ever flashed.
 
 Usage:
     python tools/ondevice/run.py --list
-    python tools/ondevice/run.py --pin 0000
-    python tools/ondevice/run.py --pin 0000 --mutating --slow
-    python tools/ondevice/run.py --pin 0000 --semi
-    python tools/ondevice/run.py --pin 0000 --only A-PWD,A-2FA
+    python tools/ondevice/run.py --pin 123456
+    python tools/ondevice/run.py --pin 123456 --mutating --slow
+    python tools/ondevice/run.py --pin 123456 --semi
+    python tools/ondevice/run.py --pin 123456 --only A-PWD,A-2FA
+
+The PIN defaults to $BADGE_PIN or 123456; export BADGE_PIN=0000 for a dev badge.
 
 Required: pyserial (`pip install pyserial`).
 """
@@ -65,7 +67,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", help="Serial port (auto-detected if omitted)")
-    ap.add_argument("--pin", help="Badge PIN for AUTH (FEATURE_SECURE_SERIAL)")
+    ap.add_argument("--pin", help="Badge PIN for AUTH (default: BADGE_PIN env or 123456)")
     ap.add_argument("--semi", action="store_true",
                     help="Also run the semi-automatic catalog, after the automatic one")
     ap.add_argument("--mutating", action="store_true",
@@ -86,10 +88,9 @@ def main() -> int:
         print("No tests selected.")
         return 0
 
-    if not args.pin:
-        print("WARNING: no --pin given; AUTH-gated commands will fail", file=sys.stderr)
+    pin = args.pin or os.environ.get("BADGE_PIN", "123456")
 
-    badge = BadgeSerial(port=args.port, pin=args.pin)
+    badge = BadgeSerial(port=args.port, pin=pin)
     try:
         badge.connect()
     except Exception as exc:

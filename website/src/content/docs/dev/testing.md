@@ -29,6 +29,8 @@ input). No test-only or alternate-profile firmware is flashed per test or per st
 
 Both categories below are **optional**: the harness is a developer/QA tool and is not part of CI.
 
+The PIN-driving tools (`ondevice/run.py`, `fido2_largeblob.py`, `gpg_selftest.py`) resolve the badge PIN as `--pin` &gt; the `BADGE_PIN` environment variable &gt; the factory default `123456`. For a development badge whose PIN is `0000`, run `export BADGE_PIN=0000` once and you can drop `--pin` from every command below.
+
 List the catalog without a device:
 
 ```bash
@@ -41,8 +43,8 @@ Driven end-to-end over the USB-CDC serial console by `tools/ondevice/`, unattend
 self-cleaning:
 
 ```bash
-~/.platformio/penv/bin/python tools/ondevice/run.py --pin 0000
-~/.platformio/penv/bin/python tools/ondevice/run.py --pin 0000 --mutating --slow
+~/.platformio/penv/bin/python tools/ondevice/run.py --pin 123456
+~/.platformio/penv/bin/python tools/ondevice/run.py --pin 123456 --mutating --slow
 ```
 
 The default run is fast and non-destructive. `--mutating` adds tests that change device state and
@@ -60,10 +62,10 @@ These run fully unattended without the serial catalog, over their native interfa
 
 ```bash
 # USB-HID FIDO2 authenticatorLargeBlobs (0x0C) write/read round-trip
-~/.platformio/penv/bin/python tools/fido2_largeblob.py --pin 0000
+~/.platformio/penv/bin/python tools/fido2_largeblob.py --pin 123456
 
 # Software RSA self-test (generate/sign/verify/decrypt) for 2048/3072/4096-bit keys
-~/.platformio/penv/bin/python tools/gpg_selftest.py --pin 0000 --bits all
+~/.platformio/penv/bin/python tools/gpg_selftest.py --pin 123456 --bits all
 
 # OpenPGP smartcard (CCID) functional test through stock gpg
 ~/.platformio/penv/bin/python tools/gpg_card_test.py --pw1 123456 --pw3 12345678
@@ -83,7 +85,7 @@ These run last and need an operator: a button press / user-presence touch, a hos
 stack, a second badge, or a look at the display. Append them with `--semi`:
 
 ```bash
-~/.platformio/penv/bin/python tools/ondevice/run.py --pin 0000 --semi
+~/.platformio/penv/bin/python tools/ondevice/run.py --pin 123456 --semi
 ```
 
 The harness drives the serial-checkable parts and prompts the operator for the rest, then asks for a
@@ -101,7 +103,7 @@ criteria for the semi-automatic tests are under `specs/001-current-system-spec/h
 Run exactly the tests you name (this ignores the `--mutating`/`--slow`/`--semi` gating):
 
 ```bash
-~/.platformio/penv/bin/python tools/ondevice/run.py --pin 0000 --only A-PWD,A-2FA
+~/.platformio/penv/bin/python tools/ondevice/run.py --pin 123456 --only A-PWD,A-2FA
 ```
 
 ### Requirements

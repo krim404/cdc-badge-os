@@ -330,8 +330,7 @@ int PluginUiState::pushContextMenu(const char* title, const ui_item_t* items, ui
                                     uint32_t select_action_id)
 {
     if (count == 0 || !items) return HOST_ERR_INVALID_ARG;
-    uint16_t cap = cdc::ui::ContextMenuView::MAX_ITEMS;
-    if (count > cap) count = cap;
+    if (count > cdc::ui::ContextMenuView::MAX_ITEMS) return HOST_ERR_INVALID_ARG;
 
     ContextMenuState next;
     std::string cpLabels[cdc::ui::ContextMenuView::MAX_ITEMS];

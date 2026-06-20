@@ -223,6 +223,7 @@
   "core.start": "Starten",
   "core.enable": "Aktivieren",
   "core.disable": "Deaktivieren",
+  "core.uninstall": "Deinstallieren",
   "core.plugin_enabled": "Plugin aktiviert",
   "core.plugin_disabled": "Plugin deaktiviert",
   "core.plugin_bg_running": "Läuft im Hintergrund",

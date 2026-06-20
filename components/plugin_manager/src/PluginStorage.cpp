@@ -92,7 +92,9 @@ bool PluginStorage::mount()
     s_mounted = true;
     mkdir(SYSTEM_DIR, 0777);  // ensure the hidden system folder exists
     ensure_volume_label();
+#if FEATURE_PLUGIN_SYSTEM_LOCK
     protectSystemDir();
+#endif
     return true;
 }
 

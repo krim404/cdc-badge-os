@@ -11,8 +11,8 @@ It is built directly from the canonical header
 table in `components/plugin_manager/src/WamrImports.cpp`.
 
 Every function listed here is both declared in `host_api.h` and registered in the
-symbol table: the two sets match exactly (213 functions each, a clean bijection),
-so there are no declared-but-unimplemented stubs. For the full signatures,
+symbol table: the two sets match exactly (a clean bijection), so there are no
+declared-but-unimplemented stubs. For the full signatures,
 parameters and return semantics, generate and read the [Doxygen reference](/api/host__api_8h.html).
 
 For the plugin model, manifest schema and lifecycle, see the
@@ -73,6 +73,37 @@ exist for advanced cases such as pre-rendering to a specific codepage; do not
 feed their output back into the auto-converting UI functions
 (`host_api.h:1428-1454`).
 
+## Symbols and icons
+
+The display font is the built-in 6x8 Adafruit-GFX glyph set, which is the full
+IBM-PC code page 437 (CP437). The two charts below are rendered straight from the
+firmware's `components/Adafruit-GFX/glcdfont.c`, so they match the panel exactly
+(regenerate with `python3 tools/gen_symbol_chart.py`).
+
+The named pictographs (`UI_ICON_*`, bytes 0x01-0x1F):
+
+![CDC Badge UI_ICON_* icons](../../../assets/ui-icons.svg)
+
+The complete CP437 code page (every byte 0x00-0xFF):
+
+![CDC Badge CP437 map](../../../assets/cp437-map.svg)
+
+There are two ways to put a symbol on screen:
+
+- **As a list / context-menu item icon.** Pass the byte in the item's `icon`
+  field. The `UI_ICON_*` names are the CP437 bytes 0x01-0x1F
+  (`host_api.h:747-790`); `UI_ICON_NONE` (0) draws a default bullet. Toast /
+  message / confirm views only honor a small fixed icon set (`host_api_ui.cpp`);
+  other values fall back to no icon there.
+- **In text** (UI strings and `host_view_canvas_draw_text`). Pass the glyph's
+  normal Unicode character; the UTF-8->CP437 converter maps it to the right byte
+  (`Cp437.cpp` `fromUnicode`): `♥` (U+2665) becomes 0x03, `→` (U+2192) becomes
+  0x1A, the CP437 high half (accents, box-drawing, Greek, maths) maps via the
+  `kHigh` table, and ASCII passes straight through. Two pictographs cannot be
+  drawn as text - `0x0A` (U+25D9) and `0x0D` (U+266A) - because the text renderer
+  consumes those bytes as newline / carriage-return; they are reachable only as
+  the bitmap shown in the chart.
+
 ## Function families
 
 Each family is a Doxygen `\defgroup` in `host_api.h` with a matching
@@ -98,7 +129,7 @@ The "Capability" column reflects what is enforced at the host-call boundary
 | NVS (plugin-namespaced) | none | `host_nvs_get_blob`, `host_nvs_set_blob`, `host_nvs_get_u32`, `host_nvs_erase_all` |
 | vFAT (sandboxed files) | `vfat` | `host_fs_write`, `host_fs_read`, `host_fs_remove`, `host_fs_list`, `host_fs_view`, `host_fs_view_image`, `host_fs_view_markdown` |
 | UI - Views | none | `host_ui_push_toast`, `host_ui_push_list`, `host_ui_push_t9_input`, `host_ui_push_confirm`, `host_ui_pop`, `host_ui_view_image`, `host_ui_view_markdown`, `host_browser_open` |
-| UI - Canvas | none | `host_view_canvas_push`, `host_view_canvas_draw_text`, `host_view_canvas_add_slider`, `host_view_canvas_commit` |
+| UI - Canvas | none | `host_view_canvas_push`, `host_view_canvas_draw_text`, `host_view_canvas_draw_rect`, `host_view_canvas_draw_circle`, `host_view_canvas_draw_triangle`, `host_view_canvas_draw_round_rect`, `host_view_canvas_draw_line`, `host_view_canvas_draw_pixel`, `host_view_canvas_draw_bitmap`, `host_view_canvas_set_shade`, `host_view_canvas_add_slider`, `host_view_canvas_commit` |
 | UI - Low-level GFX | `display_lowlevel` | `host_display_width`, `host_display_draw_line`, `host_display_fill_rect`, `host_display_flush` |
 | I18n | none | `host_i18n_tr_key`, `host_i18n_tr_core`, `host_i18n_tr_meta`, `host_i18n_current_language` |
 | EventBus | none | `host_event_subscribe`, `host_event_unsubscribe`, `host_event_publish` |
