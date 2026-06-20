@@ -336,12 +336,7 @@ void cmdDelete(const char* args)
 {
     if (!args || !*args) { send("ERR missing_id"); return; }
     std::string id = args;
-    (void)PluginManager::instance().unloadFromRam(id);
-    std::remove(PluginStorage::wasmPath(id).c_str());
-    std::remove(PluginStorage::aotPath(id).c_str());
-    std::remove(PluginStorage::metaPath(id).c_str());
-    std::remove(PluginStorage::langPath(id).c_str());
-    std::remove(PluginStorage::disabledPath(id).c_str());
+    PluginManager::instance().uninstallPlugin(id);
     send("OK");
 }
 

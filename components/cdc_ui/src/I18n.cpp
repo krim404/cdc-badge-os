@@ -271,6 +271,7 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.start",              "Start"},
     {"core.enable",             "Enable"},
     {"core.disable",            "Disable"},
+    {"core.uninstall",          "Uninstall"},
     {"core.plugin_enabled",     "Plugin enabled"},
     {"core.plugin_disabled",    "Plugin disabled"},
     {"core.plugin_bg_running",  "Runs in background"},

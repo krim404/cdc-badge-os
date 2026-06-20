@@ -745,8 +745,8 @@ typedef struct {
 /* CP437 glyph codes routed straight to Adafruit-GFX. cdc_log + plugin SDKs
  * mirror these. UI_ICON_NONE renders a default bullet point. */
 #define UI_ICON_NONE            0
-#define UI_ICON_SUCCESS         1    /* smiley                             */
-#define UI_ICON_ERROR           2    /* dark smiley                        */
+#define UI_ICON_SUCCESS         2
+#define UI_ICON_ERROR           1
 #define UI_ICON_HEART           3    /* favorite                           */
 #define UI_ICON_DIAMOND         4
 #define UI_ICON_CLUB            5
@@ -829,9 +829,12 @@ int host_ui_view_markdown   (const uint8_t* data, uint32_t len);
 int host_browser_open       (const char* url);
 
 /**
- * \brief Show a context menu.
+ * \brief Show a context menu. At most 8 items (ContextMenuView::MAX_ITEMS); the
+ *        menu is scrollable and shows 4 at a time.
  * \param select_action_id Fired on selection with idx = selected item position
  *        (0-based) and user_data = items[i].item_id.
+ * \return HOST_OK, or HOST_ERR_INVALID_ARG when count is 0 or greater than the
+ *         8-item limit. Plugins must keep menus within that limit.
  */
 int host_ui_push_context_menu(const char* title, const ui_item_t* items, uint16_t count,
                               uint32_t select_action_id);
@@ -1078,6 +1081,17 @@ int host_text_pick_font_that_fits  (const char* text, int16_t max_width_px,
 /// \brief Switch between normal and inverted (white on black) text.
 int host_view_canvas_set_text_color(bool inverted);
 
+/**
+ * \brief Set the fill ink for subsequent filled shapes (rect, circle, triangle).
+ *
+ * 0 = none (nothing drawn), 255 = solid black (default). Values in between are
+ * rendered as an ordered-dither grey approximation (8x8 Bayer, ~64 levels) so a
+ * 1-bpp panel can fake greyscale fills. Outlines, lines, text and bitmaps are
+ * unaffected and always solid.
+ * \param shade Fill ink level, 0 (white) .. 255 (solid black).
+ */
+int host_view_canvas_set_shade     (uint8_t shade);
+
 /// \brief Draw text at (x, y) using the current text size/colour.
 int host_view_canvas_draw_text     (int16_t x, int16_t y, const char* text);
 
@@ -1091,8 +1105,34 @@ int host_view_canvas_draw_text_aligned(int16_t x, int16_t y, int16_t w,
 /// \brief Draw a rectangle outline or filled rectangle.
 int host_view_canvas_draw_rect     (int16_t x, int16_t y, int16_t w, int16_t h, bool filled);
 
-/// \brief Invert all pixels inside the rectangle.
-int host_view_canvas_invert_rect   (int16_t x, int16_t y, int16_t w, int16_t h);
+/// \brief Draw a single pixel.
+int host_view_canvas_draw_pixel    (int16_t x, int16_t y);
+
+/// \brief Draw a line between two points.
+int host_view_canvas_draw_line     (int16_t x0, int16_t y0, int16_t x1, int16_t y1);
+
+/// \brief Draw a circle outline or filled circle of radius r centred at (x, y).
+int host_view_canvas_draw_circle   (int16_t x, int16_t y, int16_t r, bool filled);
+
+/// \brief Draw a triangle outline or filled triangle through three points.
+int host_view_canvas_draw_triangle (int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                                    int16_t x2, int16_t y2, bool filled);
+
+/// \brief Draw a rounded rectangle outline or filled, corner radius r.
+int host_view_canvas_draw_round_rect(int16_t x, int16_t y, int16_t w, int16_t h,
+                                    int16_t r, bool filled);
+
+/**
+ * \brief Draw a 1-bpp bitmap; set bits render black, unset bits are transparent.
+ *
+ * Rows are byte-padded (stride = (w + 7) / 8), MSB first per Adafruit-GFX
+ * convention. The pixel data is copied into the canvas, so the buffer may be
+ * reused after the call.
+ * \param data Packed 1-bpp pixel data, length stride * h.
+ * \param len Length of \p data in bytes.
+ */
+int host_view_canvas_draw_bitmap   (int16_t x, int16_t y, int16_t w, int16_t h,
+                                    const uint8_t* data, uint32_t len);
 
 /// \brief Draw a horizontal line.
 int host_view_canvas_hline         (int16_t x, int16_t y, int16_t w);

@@ -35,6 +35,14 @@
 #define FEATURE_PLUGIN_AOT 0
 #endif
 
+// Lock the on-device system folder (plugins, i18n) read-only/hidden/system at
+// mount. Default off: an opt-in security feature so a USB-MSC host cannot modify
+// or delete system files. Off by default so plugin upload/overwrite/delete over
+// serial work normally without read-only attributes blocking them.
+#ifndef FEATURE_PLUGIN_SYSTEM_LOCK
+#define FEATURE_PLUGIN_SYSTEM_LOCK 0
+#endif
+
 // ============================================================================
 // Content Viewers (image decode + Markdown rendering)
 // ============================================================================

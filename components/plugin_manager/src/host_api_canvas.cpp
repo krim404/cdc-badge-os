@@ -72,6 +72,14 @@ int host_view_canvas_set_text_color(bool inverted)
     return HOST_OK;
 }
 
+int host_view_canvas_set_shade(uint8_t shade)
+{
+    auto* c = canvas();
+    if (!c) return HOST_ERR_NOT_FOUND;
+    c->setShade(shade);
+    return HOST_OK;
+}
+
 int host_view_canvas_set_font(uint8_t font_id)
 {
     auto* c = canvas();
@@ -138,11 +146,55 @@ int host_view_canvas_draw_rect(int16_t x, int16_t y, int16_t w, int16_t h, bool 
     return HOST_OK;
 }
 
-int host_view_canvas_invert_rect(int16_t x, int16_t y, int16_t w, int16_t h)
+int host_view_canvas_draw_pixel(int16_t x, int16_t y)
 {
     auto* c = canvas();
     if (!c) return HOST_ERR_NOT_FOUND;
-    c->invertRect(x, y, w, h);
+    c->drawPixel(x, y);
+    return HOST_OK;
+}
+
+int host_view_canvas_draw_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1)
+{
+    auto* c = canvas();
+    if (!c) return HOST_ERR_NOT_FOUND;
+    c->drawLine(x0, y0, x1, y1);
+    return HOST_OK;
+}
+
+int host_view_canvas_draw_circle(int16_t x, int16_t y, int16_t r, bool filled)
+{
+    auto* c = canvas();
+    if (!c) return HOST_ERR_NOT_FOUND;
+    c->drawCircle(x, y, r, filled);
+    return HOST_OK;
+}
+
+int host_view_canvas_draw_triangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                                   int16_t x2, int16_t y2, bool filled)
+{
+    auto* c = canvas();
+    if (!c) return HOST_ERR_NOT_FOUND;
+    c->drawTriangle(x0, y0, x1, y1, x2, y2, filled);
+    return HOST_OK;
+}
+
+int host_view_canvas_draw_round_rect(int16_t x, int16_t y, int16_t w, int16_t h,
+                                     int16_t r, bool filled)
+{
+    auto* c = canvas();
+    if (!c) return HOST_ERR_NOT_FOUND;
+    c->drawRoundRect(x, y, w, h, r, filled);
+    return HOST_OK;
+}
+
+int host_view_canvas_draw_bitmap(int16_t x, int16_t y, int16_t w, int16_t h,
+                                 const uint8_t* data, uint32_t len)
+{
+    auto* c = canvas();
+    if (!c) return HOST_ERR_NOT_FOUND;
+    if (!data) return HOST_ERR_INVALID_ARG;
+    c->drawBitmap(x, y, w, h, data, len);
     return HOST_OK;
 }
 

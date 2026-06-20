@@ -44,9 +44,39 @@ uint8_t fromUnicode(uint32_t cp)
     // closest renderable byte (the built-in font draws these positions).
     switch (cp) {
         case 0x00A6: return 0x7C;  // broken bar -> '|'
-        case 0x00A7: return 0x15;  // section sign (control-area glyph)
-        case 0x00B6: return 0x14;  // pilcrow (control-area glyph)
         case 0x00E3: return 0x83;  // a-tilde -> a-circ (closest glyph)
+        // CP437 control-area pictographs (0x01-0x1F) addressed by Unicode
+        // codepoint. 0x0A and 0x0D are intentionally absent: the text renderer
+        // consumes those bytes as newline / carriage-return.
+        case 0x263A: return 0x01;  // white smiling face
+        case 0x263B: return 0x02;  // black smiling face
+        case 0x2665: return 0x03;  // heart
+        case 0x2666: return 0x04;  // diamond
+        case 0x2663: return 0x05;  // club
+        case 0x2660: return 0x06;  // spade
+        case 0x2022: return 0x07;  // bullet
+        case 0x25D8: return 0x08;  // inverse bullet
+        case 0x25CB: return 0x09;  // circle
+        case 0x2642: return 0x0B;  // male sign
+        case 0x2640: return 0x0C;  // female sign
+        case 0x266B: return 0x0E;  // beamed eighth notes
+        case 0x263C: return 0x0F;  // sun with rays
+        case 0x25BA: return 0x10;  // right-pointing pointer
+        case 0x25C4: return 0x11;  // left-pointing pointer
+        case 0x2195: return 0x12;  // up-down arrow
+        case 0x203C: return 0x13;  // double exclamation mark
+        case 0x00B6: return 0x14;  // pilcrow / paragraph
+        case 0x00A7: return 0x15;  // section sign
+        case 0x25AC: return 0x16;  // black rectangle / bar
+        case 0x21A8: return 0x17;  // up-down arrow with base
+        case 0x2191: return 0x18;  // up arrow
+        case 0x2193: return 0x19;  // down arrow
+        case 0x2192: return 0x1A;  // right arrow
+        case 0x2190: return 0x1B;  // left arrow
+        case 0x221F: return 0x1C;  // right angle
+        case 0x2194: return 0x1D;  // left-right arrow
+        case 0x25B2: return 0x1E;  // up-pointing triangle
+        case 0x25BC: return 0x1F;  // down-pointing triangle
         default: break;
     }
     for (int i = 0; i < 128; ++i) {

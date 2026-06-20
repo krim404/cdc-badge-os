@@ -398,6 +398,18 @@ bool PluginManager::unloadFromRam(const std::string& id)
     return true;
 }
 
+bool PluginManager::uninstallPlugin(const std::string& id)
+{
+    (void)unloadFromRam(id);
+    std::remove(PluginStorage::wasmPath(id).c_str());
+    std::remove(PluginStorage::aotPath(id).c_str());
+    std::remove(PluginStorage::metaPath(id).c_str());
+    std::remove(PluginStorage::langPath(id).c_str());
+    std::remove(PluginStorage::disabledPath(id).c_str());
+    LOG_I(TAG, "uninstalled plugin %s", id.c_str());
+    return true;
+}
+
 void PluginManager::unloadAllFromRam()
 {
     ScopedLock lock(static_cast<SemaphoreHandle_t>(call_mutex_));
