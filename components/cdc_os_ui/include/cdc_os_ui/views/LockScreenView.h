@@ -143,14 +143,25 @@ private:
     UnlockCallback onUnlock_ = nullptr;
     PreRenderCallback preRenderCb_ = nullptr;
 
+    // Footer mode for transition screens (deep sleep / ship mode)
+    enum class FooterMode : uint8_t { NORMAL, DEEP_SLEEP, SHIP_MODE };
+
     // Long-press N for deep sleep (flight mode)
     uint32_t nPressStartMs_ = 0;
-    bool deepSleepMode_ = false;
+    FooterMode footerMode_ = FooterMode::NORMAL;
 
     void renderStatusIcons(void* gfx, int x, int y);
     void renderBattery(void* gfx, int x, int y);
+    void renderTransitionScreen(FooterMode mode);
     void renderDeepSleepScreen();
     void checkDeepSleepTrigger(uint32_t nowMs);
+
+public:
+    /**
+     * Renders the ship-mode transition screen and blocks until the e-paper
+     * refresh completes. Invoked right before the battery is disconnected.
+     */
+    void renderShipModeScreen();
 };
 
 } // namespace cdc::ui

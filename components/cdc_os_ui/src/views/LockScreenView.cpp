@@ -454,8 +454,11 @@ void LockScreenView::checkDeepSleepTrigger(uint32_t nowMs) {
  * \return Localized footer hint string.
  */
 const char* LockScreenView::getFooterHint() const {
-    if (deepSleepMode_) return ui::tr("core.deep_sleep");
-    return ui::tr("core.press_any_key");
+    switch (footerMode_) {
+        case FooterMode::DEEP_SLEEP: return ui::tr("core.deep_sleep");
+        case FooterMode::SHIP_MODE:  return ui::tr("core.ship_mode_hint");
+        default:                     return ui::tr("core.press_any_key");
+    }
 }
 
 /**
@@ -633,23 +636,38 @@ void LockScreenView::renderStatusIcons(void* gfxPtr, int x, int y) {
 }
 
 /**
- * \brief Renders and flushes dedicated deep-sleep transition screen.
+ * \brief Renders a minimal transition screen and blocks until the refresh ends.
+ * \param mode Footer mode selecting the transition hint (deep sleep / ship mode).
  */
-void LockScreenView::renderDeepSleepScreen() {
-    deepSleepMode_ = true;
+void LockScreenView::renderTransitionScreen(FooterMode mode) {
+    footerMode_ = mode;
 
     // Clear clock and status icons for minimal screen
     setClock("");
     setDate("");
     statusIcons_ = StatusIcon::NONE;
 
-    // Render normal lockscreen (with deep sleep footer) and push to display
+    // Render normal lockscreen (with transition footer) and push to display
     render(false);
 
     auto* display = hal::getDisplayInstance();
     if (display) {
         display->flushSync(hal::RefreshMode::PARTIAL);
     }
+}
+
+/**
+ * \brief Renders and flushes dedicated deep-sleep transition screen.
+ */
+void LockScreenView::renderDeepSleepScreen() {
+    renderTransitionScreen(FooterMode::DEEP_SLEEP);
+}
+
+/**
+ * \brief Renders and flushes dedicated ship-mode transition screen.
+ */
+void LockScreenView::renderShipModeScreen() {
+    renderTransitionScreen(FooterMode::SHIP_MODE);
 }
 
 /**

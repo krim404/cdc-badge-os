@@ -81,6 +81,7 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.enter_pin",          "Enter PIN"},
     {"core.press_any_key",      "Any key: unlock  [3]: menu"},
     {"core.deep_sleep",         "Deep Sleep"},
+    {"core.ship_mode_hint",     "Shipping mode - press PW ON 2s to re-enable"},
     {"core.wrong_pin",          "Wrong PIN"},
     {"core.locked_out",         "Locked out"},
     {"core.too_many_attempts",  "Too many attempts"},

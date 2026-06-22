@@ -30,6 +30,12 @@ enum class PowerSource : uint8_t {
  */
 class IPowerManager : public core::IService {
 public:
+    /**
+     * Callback invoked just before ship mode disconnects the battery. Lets the
+     * UI render a transition screen so the user sees how to re-enable the badge.
+     */
+    using PreShipModeCallback = void (*)();
+
     virtual ~IPowerManager() = default;
 
     /**
@@ -81,6 +87,12 @@ public:
      * Enable ship mode (deep power off)
      */
     virtual void enterShipMode() = 0;
+
+    /**
+     * Register a callback run immediately before ship mode disconnects the
+     * battery. Pass nullptr to clear.
+     */
+    virtual void setPreShipModeCallback(PreShipModeCallback cb) = 0;
 
     /**
      * Update power status (poll from main loop)

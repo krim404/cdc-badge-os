@@ -888,6 +888,14 @@ void ui_init(const UiDeps& deps) {
         updatePowerStatusIcons();
     });
 
+    if (s_deps.power) {
+        s_deps.power->setPreShipModeCallback([]() {
+            if (s_lockScreen) {
+                s_lockScreen->renderShipModeScreen();
+            }
+        });
+    }
+
     if (!core::TropicSlotMap::instance().isValid()) {
         const char* msg = core::TropicSlotMap::instance().errorMessage();
         showToastAlertSticky(msg ? msg : "Slot map invalid");

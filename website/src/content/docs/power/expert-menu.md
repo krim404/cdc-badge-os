@@ -73,9 +73,10 @@ them if the badge reports inconsistent secure-element state.
 
 **Shipping Mode** disconnects the battery so the badge can be stored or shipped
 without draining it. Selecting it shows a confirmation prompt first; on confirm
-the charger opens its BATFET and the badge powers off (or keeps running from USB
-if USB is attached). The same action is available by holding the Flash button
-for three seconds or via the `SHIPMODE` serial command. Full details are on the
+the badge draws a ship-mode notice on the e-paper and then the charger opens its
+BATFET, so the badge powers off (or keeps running from USB if USB is attached).
+The same action is available by holding the Flash button for three seconds or via
+the `SHIPMODE` serial command. Full details are on the
 [Power, battery & sleep](/guide/power-sleep/#ship-mode) page.
 
 ## Bootloader entry

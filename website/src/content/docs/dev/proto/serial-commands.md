@@ -43,7 +43,7 @@ needs authentication, including read-only ones.
 | `ERROR_LOG` | `[CLEAR]` | No | Dump the error log; `CLEAR` resets it |
 | `REBOOT` | - | Yes | Restart the device |
 | `BOOTLOADER` | - | Yes | Reboot into USB download (flash) mode |
-| `SHIPMODE` | - | Yes | Enter ship mode (disconnect the battery for storage/shipping) |
+| `SHIPMODE` | - | Yes | Enter ship mode: draw the ship-mode notice on the display, then disconnect the battery for storage/shipping |
 | `PASTE` | `<text>` | Yes | Append text into the active on-device T9 input view |
 
 ### Authentication

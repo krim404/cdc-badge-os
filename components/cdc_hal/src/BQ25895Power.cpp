@@ -112,6 +112,7 @@ public:
     bool isBatteryPresent() const override;
     void setChargingEnabled(bool enabled) override;
     void enterShipMode() override;
+    void setPreShipModeCallback(PreShipModeCallback cb) override { preShipModeCb_ = cb; }
     void update() override;
     void refresh() override;
     void prepareForSleep() override;
@@ -145,6 +146,9 @@ private:
     /** \brief Power-button long-press tracking for ship-mode entry. */
     bool powerButtonHeld_ = false;
     uint32_t powerButtonHoldStartMs_ = 0;
+
+    /** \brief Callback run before the battery is disconnected. */
+    PreShipModeCallback preShipModeCb_ = nullptr;
 
     /** \brief Cached charger state updated in `update()`. */
     mutable uint16_t cachedBatteryMv_ = 0;
@@ -558,6 +562,11 @@ void BQ25895Power::setChargingEnabled(bool enabled) {
  * \brief Requests battery ship mode via BATFET disconnect.
  */
 void BQ25895Power::enterShipMode() {
+    // Show the ship-mode screen and let it fully render before cutting power.
+    if (preShipModeCb_) {
+        preShipModeCb_();
+    }
+
     // Set BATFET_DIS (REG09[5]=1) to disconnect battery
     // System will only run from USB after this.
     // User must press PW ON / RESET to wake.

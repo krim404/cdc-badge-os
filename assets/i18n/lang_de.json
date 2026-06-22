@@ -37,6 +37,7 @@
   "core.enter_pin": "PIN eingeben",
   "core.press_any_key": "Taste: entsperren  [3]: Menü",
   "core.deep_sleep": "Tiefschlaf",
+  "core.ship_mode_hint": "Versandmodus - PW ON 2s zum Reaktivieren",
   "core.wrong_pin": "Falsche PIN",
   "core.locked_out": "Gesperrt",
   "core.too_many_attempts": "Zu viele Versuche",

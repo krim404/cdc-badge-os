@@ -62,6 +62,9 @@ meant for shipping and long-term storage.
 - **What happens:** the battery is electrically disconnected. With no USB
   attached the badge powers off completely; while USB is connected the badge
   keeps running from USB and the battery stays disconnected.
+- **On-screen notice:** before the battery is disconnected the badge draws a
+  notice on the e-paper (`Shipping mode - press PW ON 2s to re-enable`). Because
+  e-paper is bistable the message stays on screen after the badge powers off.
 - **Wake / exit:** connect USB, or press the power-on button, to bring the
   badge back. Unlike deep sleep this is a full power-down, not a timed sleep.
 
