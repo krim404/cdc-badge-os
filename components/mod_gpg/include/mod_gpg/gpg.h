@@ -92,6 +92,18 @@ bool gpg_reset(void);
 bool gpg_export_pubkey_pem(char *buf, size_t size, size_t *out_len);
 
 /**
+ * \brief Derives the DEC (decryption) public key as an uncompressed P-256 point.
+ *
+ * Loads the encrypted DEC private key (chip-bound), derives its public point and
+ * zeroes the private scalar. Used to append the encryption subkey to exported
+ * and badge-to-badge transferred public keys.
+ *
+ * \param pub65 65-byte output buffer (0x04 || X || Y).
+ * \return `true` on success.
+ */
+bool gpg_get_dec_pubkey(uint8_t *pub65);
+
+/**
  * \brief Writes the alchemical-word fingerprint of the SIG public key.
  *
  * Reads the current SIG key from the secure element, derives a SHA-256, and

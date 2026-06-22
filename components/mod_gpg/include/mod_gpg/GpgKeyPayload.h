@@ -12,20 +12,26 @@ namespace cdc::mod_gpg {
  * \brief Transport-agnostic (de)serialisation of a GPG public key.
  *
  * Wire payload layout (badge-to-badge, carried as MIME `application/pgp-keys`):
- *   1B curve, 1B pubkey_len, 32 or 64 pubkey bytes,
+ *   1B curve, 1B pubkey_len, 32 or 64 pubkey bytes (SIG primary key),
  *   4B created_at (big-endian), 20B fingerprint_v4,
- *   1B user_id_len, up to 63 user_id bytes.
+ *   1B user_id_len, up to 63 user_id bytes,
+ *   4B created_at_dec, 64B pubkey_dec (P-256 X || Y, DEC encryption subkey),
+ *   64B owner_self_sig, 64B dec_binding_sig.
  *
  * `created_at` is the originator's key-creation timestamp. The receiver
  * recomputes the v4 fingerprint from (curve, pubkey, created_at) and rejects
  * the payload if it does not match the transmitted `fingerprint_v4`, so a
- * later certification binds to the peer's real OpenPGP key.
+ * later certification binds to the peer's real OpenPGP key. The DEC subkey and
+ * its two signatures travel verbatim so the exchanged key imports as a full
+ * sign + encrypt OpenPGP key.
  */
 
-/// Minimum payload size (Ed25519 + empty user id).
-constexpr size_t kGpgKeyPayloadMin = 1 + 1 + 32 + 4 + 20 + 1 + 1;
-/// Maximum payload size (P-256 + maximum user id).
-constexpr size_t kGpgKeyPayloadMax = 1 + 1 + 64 + 4 + 20 + 1 + 63;
+/// Fixed-size trailing DEC encryption-subkey block.
+constexpr size_t kGpgKeyDecBlock = 4 + 64 + 64 + 64;
+/// Minimum payload size (Ed25519 + empty user id + DEC block).
+constexpr size_t kGpgKeyPayloadMin = 1 + 1 + 32 + 4 + 20 + 1 + 1 + kGpgKeyDecBlock;
+/// Maximum payload size (P-256 + maximum user id + DEC block).
+constexpr size_t kGpgKeyPayloadMax = 1 + 1 + 64 + 4 + 20 + 1 + 63 + kGpgKeyDecBlock;
 
 /**
  * \brief Serialise the badge's own public key into the wire payload.

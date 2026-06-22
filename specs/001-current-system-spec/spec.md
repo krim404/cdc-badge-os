@@ -535,9 +535,10 @@ throttling, and the role of the serial `PASTE` command in that flow.]
   AES-256-GCM decrypt → host-API-level check → per-record best-effort upsert → aggregate tally.
 - **OTP challenge-response**: host writes 64-byte challenge as feature reports (CRC16-checked) →
   2FA responder computes 20-byte HMAC-SHA1 (optional touch) → response streamed back in chunks.
-- **GPG cross-sign**: receive peer key over BLE → store in NVS → `GPG CROSS_SIGN <i>` builds an
-  RFC 4880 certification preimage signed by the SIG ECC slot → `GPG EXPORT_SIGNED <i>` emits an
-  armored block over serial.
+- **GPG cross-sign**: receive peer key over BLE → store in NVS → `GPG RECV_CROSS_SIGN <i>` builds an
+  RFC 4880 certification preimage signed by the SIG ECC slot → `GPG RECV_EXPORT <i>` emits an
+  armored block over serial. `RECV_EXPORT` always works and carries the encryption subkey; the
+  cross-signature is included once made (no cross-sign is required just to export).
 
 ---
 

@@ -109,6 +109,14 @@ struct PendingPairing {
 static PendingPairing s_pendingPairing;
 static SemaphoreHandle_t s_blePendingMutex = nullptr;
 
+/// Callback invoked once after a successful PIN unlock that was started for a
+/// pending BLE transfer (numeric-comparison pairing or transfer consent accepted
+/// on the lock screen). Cleared by a plain unlock so it never fires unexpectedly.
+static void (*s_transferUnlockCb)(void*) = nullptr;
+static void* s_transferUnlockUd = nullptr;
+/// Connection handle of a numeric-comparison pairing accepted on the lock screen.
+static uint16_t s_blePairingPendingHandle = 0xFFFF;
+
 /** \brief Runtime dependencies provided during `ui_init`. */
 static UiDeps s_deps = {};
 
@@ -167,6 +175,9 @@ static inline uint8_t getMainMenuCount() { return s_mainMenuPluginCount + MAIN_M
 
 /** \brief Starts unlock flow from lock screen. */
 static void onUnlockRequested();
+
+/** \brief Lock-screen accept of a BLE pairing: drives PIN unlock, then pairs. */
+static void onBlePairingLockedAccept(void* userData);
 /** \brief Verifies entered PIN via PinManager. */
 static bool onPinVerify(const char* pin);
 /** \brief Handles successful unlock and transitions to main menu. */
@@ -338,6 +349,8 @@ static void updateLockScreenClock() {
  * \brief Handles lock-screen unlock request and opens PIN entry when required.
  */
 static void onUnlockRequested() {
+    s_transferUnlockCb = nullptr;  // a plain unlock answers no pending transfer
+    s_transferUnlockUd = nullptr;
     clearKeypadBuffer();
     s_ignoreKeyUntilRelease = true;
 
@@ -399,6 +412,31 @@ static void onPinSuccess() {
     ViewStack::instance().replace(s_mainMenu);
     core::ModuleRegistry::instance().dispatchUnlock();
     if (s_deps.display) s_deps.display->backlightOn();
+
+    // A BLE transfer accepted on the lock screen (pairing or consent) is answered
+    // only now, so it continues on the freshly unlocked badge.
+    if (s_transferUnlockCb) {
+        auto cb = s_transferUnlockCb;
+        void* ud = s_transferUnlockUd;
+        s_transferUnlockCb = nullptr;
+        s_transferUnlockUd = nullptr;
+        cb(ud);
+    }
+}
+
+/**
+ * \brief Wake the screen and start the PIN-unlock flow for a transfer accepted
+ *        on the lock screen.
+ *
+ * On a successful unlock `onUnlocked(userData)` runs (so the caller answers the
+ * pending request and the transfer continues on the unlocked badge); on cancel
+ * or lockout the badge stays locked and the callback never fires.
+ */
+void requestUnlockForTransfer(void (*onUnlocked)(void*), void* userData) {
+    if (s_deps.display) s_deps.display->backlightOn();
+    onUnlockRequested();            // clears any stale callback, pushes PIN entry
+    s_transferUnlockCb = onUnlocked;
+    s_transferUnlockUd = userData;
 }
 
 /**
@@ -745,16 +783,37 @@ static void onBlePairingRequestEvent(const core::Event& evt) {
     }
     if (!req.valid) return;
 
-    auto* ble = hal::getBluetoothControllerInstance();
-    if (isBadgeLocked()) {
-        if (ble) ble->respondToNumericComparison(req.connHandle, false);
-        return;
-    }
     if (!s_pairingPrompt) {
         s_pairingPrompt = new BlePairingPromptView();
     }
     s_pairingPrompt->prepare(req.connHandle, req.passkey);
+
+    if (isBadgeLocked()) {
+        // Mirror the FIDO2 locked flow: wake the screen and show the request, but
+        // gate acceptance behind the badge PIN. Accepting drives the unlock flow;
+        // the pairing is answered (and the transfer continues) only after unlock.
+        if (s_deps.display) s_deps.display->backlightOn();
+        s_blePairingPendingHandle = req.connHandle;
+        s_pairingPrompt->setOnLockedAccept(onBlePairingLockedAccept, nullptr);
+    }
     ViewStack::instance().showModal(s_pairingPrompt);
+}
+
+/**
+ * \brief Lock-screen accept of a numeric-comparison pairing.
+ *
+ * The pairing code was already confirmed on the prompt; now require the badge
+ * PIN. On success onPinSuccess() unlocks and answers the pairing, after which
+ * the transfer's consent prompt surfaces on the unlocked badge.
+ */
+/** \brief Answers the lock-screen-accepted pairing once the unlock PIN succeeds. */
+static void onBlePairingUnlocked(void* /*userData*/) {
+    auto* ble = hal::getBluetoothControllerInstance();
+    if (ble) ble->respondToNumericComparison(s_blePairingPendingHandle, true);
+}
+
+static void onBlePairingLockedAccept(void* /*userData*/) {
+    requestUnlockForTransfer(onBlePairingUnlocked, nullptr);
 }
 
 /**

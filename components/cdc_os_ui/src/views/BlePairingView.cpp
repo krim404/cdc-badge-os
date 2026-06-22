@@ -89,7 +89,7 @@ void BlePairingView::render(bool partial) {
 
     // Connection status
     gfx->setCursor(8, 82);
-    render::printText(gfx, connected ? ui::tr("core.ble_pairing_connected")
+    render::printText(gfx, connected ? ui::tr("core.connected")
                                      : ui::tr("core.ble_pairing_waiting"));
 
     render::drawFooterBar(gfx, width, height, nullptr,

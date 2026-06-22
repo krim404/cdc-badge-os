@@ -89,15 +89,18 @@ on-device wizard does not.
 
 From **GPG**, choose **Export Public** once keys exist. The badge:
 
-- Prints the signature public key as a `BEGIN PUBLIC KEY` PEM block (DER
-  SubjectPublicKeyInfo) to the serial console.
+- Prints an ASCII-armored OpenPGP public key (`BEGIN PGP PUBLIC KEY BLOCK`) to
+  the serial console. It carries the signature primary key, the encryption
+  subkey, and every certification collected under **My Certifications**.
 - Shows the key as a **QR code** on the display, labelled with the user-id and a
   short word fingerprint for visual comparison.
 
 The same export is available over serial with `GPG EXPORT`.
 
-To import a full OpenPGP key into GnuPG, use `gpg --card-status` /
-`gpg --card-edit`, which reads the keys directly from the card.
+Import it on a computer with `gpg --import`, then run `gpg --card-status` to link
+the imported key to the card. The imported key has both a signing `[S]` and an
+encryption `[E]` subkey, so peers can encrypt to it and the badge decrypts. See
+[GPG on your computer](/guide/gpg-getting-started/) for the full walkthrough.
 
 ## User PIN and Admin PIN
 
@@ -143,12 +146,13 @@ the Bluetooth [message-transfer framework](/guide/bluetooth/) (the same beacon,
 peer picker and numeric-comparison pairing as the vCard exchange). The receiving
 badge stores it under **GPG ▸ Received Keys**, where each entry offers:
 
-- **Cross-Sign** the key (the badge produces an RFC 4880 certification signature
-  with its own signature key),
-- **Export** the resulting signed key as an ASCII-armored OpenPGP block that you
-  later `gpg --import` on a computer,
-- **Send Signature** to push the certification back to the key's owner over
-  Bluetooth,
+- **Cross-Sign** the key (optional: the badge produces an RFC 4880 certification
+  signature with its own signature key, for the web of trust),
+- **Export** the key as an ASCII-armored OpenPGP block to `gpg --import` on a
+  computer; always available, carries the encryption subkey, and includes your
+  certification once the key is cross-signed,
+- **Send Signature** to push your certification back to the key's owner over
+  Bluetooth (available once cross-signed),
 - **Forward** the key on to another nearby badge,
 - **Show QR** to display the public key as a QR code, and
 - **Delete** the entry.
@@ -158,9 +162,10 @@ When a peer sends a certification back, it is collected under
 your OpenPGP public key with every collected certification attached, so a single
 `gpg --import` rebuilds the web of trust.
 
-The listing, cross-sign, export, send and delete actions are also available over
-serial (`GPG RECV_LIST`, `GPG RECV_INFO`, `GPG CROSS_SIGN`, `GPG EXPORT_SIGNED`,
-`GPG SEND_SIG`, `GPG CERT_LIST`, `GPG RECV_DELETE`).
+The listing, cross-sign, export and delete actions are also available over
+serial (`GPG RECV_LIST`, `GPG RECV_INFO`, `GPG RECV_CROSS_SIGN`, `GPG RECV_EXPORT`,
+`GPG MYCERT_LIST`, `GPG RECV_DELETE`). Sending the cross-signature back to a peer
+is a Bluetooth-only action (**GPG ▸ Received Keys ▸ Send Signature**).
 
 For the exchange protocol and signature construction, see
 [GPG key cross-signing](/dev/proto/gpg-cross-signing/).
@@ -175,14 +180,13 @@ The `GPG` serial command groups the card operations:
 | `GPG GENERATE <curve> <user_id>` | Generate keys (`1` = Ed25519, `2` = P-256) |
 | `GPG EXPORT` | Print the own public key (armored, with certifications) |
 | `GPG RESET [token]` | Two-step destructive reset of all GPG keys |
-| `GPG RECV_LIST` | List received cross-sign keys |
-| `GPG RECV_INFO <index>` | Show a received key's details |
+| `GPG RECV_LIST` | List public keys received from peers (with their list index) |
+| `GPG RECV_INFO <index>` | Show a received peer key's details |
 | `GPG RECV_IMPORT <hex>` | Import a peer public-key wire payload (hex) |
-| `GPG CROSS_SIGN <index>` | Cross-sign a received key |
-| `GPG EXPORT_SIGNED <index>` | Export a signed received key as an armored block |
-| `GPG SEND_SIG <index>` | Send a cross-signature back to the peer over BLE |
-| `GPG CERT_LIST` | List third-party certifications on the own key |
-| `GPG CERT_DELETE <index>` | Delete a stored certification on the own key |
-| `GPG CERT_IMPORT <hex>` | Import a certification-return payload (hex) onto the own key |
-| `GPG RECV_DELETE <index>` | Delete a received key |
+| `GPG RECV_CROSS_SIGN <index>` | Cross-sign a received peer key with our signature key |
+| `GPG RECV_EXPORT <index>` | Export a received peer key (armored, encryptable; adds our cross-signature if present) |
+| `GPG MYCERT_LIST` | List third-party certifications collected on the own key |
+| `GPG MYCERT_DELETE <index>` | Delete a stored certification on the own key |
+| `GPG MYCERT_IMPORT <hex>` | Import a certification-return payload (hex) onto the own key |
+| `GPG RECV_DELETE <index>` | Delete a received peer key |
 | `GPG RSA_SELFTEST [bits]` | Run the software-RSA self-test (gen/sign/verify/decrypt), default 2048 |

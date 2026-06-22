@@ -201,9 +201,11 @@ bool gpg_generate_key(uint8_t curve) {
         LOG_E(TAG, "generate: SIG fingerprint failed");
         return false;
     }
-    // dec_pub65 layout is 0x04 || X || Y. calculate_fingerprint() expects raw
-    // X || Y for P-256, so skip the leading byte.
-    if (!calculate_fingerprint(dec_pub65 + 1, CDC_CURVE_P256, created_at, fp_dec)) {
+    // dec_pub65 layout is 0x04 || X || Y. The DEC key is an RFC 6637 ECDH
+    // encryption key, so its fingerprint must be taken over the ECDH public-key
+    // body (algorithm 18 + KDF params), not the ECDSA body, or GnuPG will not
+    // link the exported encryption subkey to the card.
+    if (!::cdc::mod_gpg::calculateFingerprintV4Ecdh(dec_pub65 + 1, created_at, fp_dec)) {
         LOG_E(TAG, "generate: DEC fingerprint failed");
         return false;
     }
@@ -318,6 +320,18 @@ bool gpg_export_pubkey_pem(char *buf, size_t size, size_t *out_len) {
     if (written < 0 || static_cast<size_t>(written) >= size) return false;
     *out_len = static_cast<size_t>(written);
     return true;
+}
+
+bool gpg_get_dec_pubkey(uint8_t *pub65) {
+    if (!pub65) return false;
+    uint8_t priv[P256_PRIVKEY_SIZE] = {};
+    if (!gpg_storage_load_dec_privkey(priv, nullptr)) {
+        LOG_W(TAG, "dec pubkey: load privkey failed");
+        return false;
+    }
+    bool ok = ecdh_p256_derive_pubkey(priv, pub65);
+    mbedtls_platform_zeroize(priv, sizeof(priv));
+    return ok;
 }
 
 bool gpg_alchemy_fingerprint(char *buf, size_t len) {

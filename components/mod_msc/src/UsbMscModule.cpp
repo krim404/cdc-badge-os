@@ -21,11 +21,8 @@ namespace cdc::mod_msc {
 
 constexpr ui::I18nEntry kStrings[] = {
     {"mod_msc.title",     "USB Storage"},
-    {"mod_msc.status",    "Status"},
     {"mod_msc.active",    "Active"},
-    {"mod_msc.inactive",  "Inactive"},
     {"mod_msc.host",      "Host"},
-    {"mod_msc.connected", "Connected"},
     {"mod_msc.idle",      "Idle"},
 };
 
@@ -87,15 +84,15 @@ public:
         const bool host = plugin_manager::PluginStorage::hostActive();
 
         gfx->setCursor(8, 30);
-        ui::render::printText(gfx, ui::tr("mod_msc.status"));
+        ui::render::printText(gfx, ui::tr("core.status"));
         ui::render::printText(gfx, ": ");
         ui::render::printText(gfx, active ? ui::tr("mod_msc.active")
-                                          : ui::tr("mod_msc.inactive"));
+                                          : ui::tr("core.inactive"));
 
         gfx->setCursor(8, 48);
         ui::render::printText(gfx, ui::tr("mod_msc.host"));
         ui::render::printText(gfx, ": ");
-        ui::render::printText(gfx, host ? ui::tr("mod_msc.connected")
+        ui::render::printText(gfx, host ? ui::tr("core.connected")
                                         : ui::tr("mod_msc.idle"));
 
         ui::render::drawFooterBar(gfx, width, height, nullptr, "[N] Back");

@@ -49,6 +49,17 @@ void rebuildToolsMenu();
 /// \brief True if the lock screen is the only view on the stack (badge locked).
 bool isBadgeLocked();
 
+/**
+ * \brief Wake the screen and run the PIN-unlock flow for a transfer accepted on
+ *        the lock screen, then invoke `onUnlocked(userData)` on success.
+ *
+ * Lets a feature surface its own request prompt over the lock screen and, once
+ * the user accepts, gate the action behind the badge PIN (mirrors FIDO2). The
+ * callback runs only after a successful unlock; cancel/lockout keeps the badge
+ * locked and never calls it.
+ */
+void requestUnlockForTransfer(void (*onUnlocked)(void*), void* userData);
+
 // ============================================================================
 // Feature Sub-file Entry Points
 // ============================================================================

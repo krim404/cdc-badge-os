@@ -6,7 +6,6 @@
 #include "AppUiInternal.h"
 #include "cdc_os_ui/views/BlePairingView.h"
 #include "cdc_hal/IBluetoothController.h"
-#include "cdc_msg/MessageTransfer.h"
 #include "cdc_views/RenderHelpers.h"
 #include "cdc_log.h"
 
@@ -28,7 +27,6 @@ enum BluetoothMenuIdx {
     BT_IDX_PAIRED,
     BT_IDX_STATUS,
     BT_IDX_SCAN,
-    BT_IDX_BEACON,
     BT_IDX_FORGET_BONDS,
     BT_IDX_FIXED_COUNT
 };
@@ -155,12 +153,6 @@ void rebuildBluetoothMenu() {
     s_bluetoothItems[BT_IDX_PAIRED] = {ui::tr("core.ble_paired_devices"), 0, !enabled, nullptr};
     s_bluetoothItems[BT_IDX_STATUS] = {ui::tr("core.ble_status"), 0, false, nullptr};
     s_bluetoothItems[BT_IDX_SCAN] = {ui::tr("core.ble_scan"), 0, !enabled, nullptr};
-    {
-        auto& msg = cdc::msg::MessageTransfer::instance();
-        s_bluetoothItems[BT_IDX_BEACON] = {
-            msg.isBeaconEnabled() ? ui::tr("core.msg_beacon_on") : ui::tr("core.msg_beacon_off"),
-            static_cast<uint8_t>(msg.isBeaconActive() ? '*' : 0), false, nullptr};
-    }
     s_bluetoothItems[BT_IDX_FORGET_BONDS] = {ui::tr("core.ble_forget_all"), 0, !enabled, nullptr};
 
     auto& moduleReg = core::ModuleRegistry::instance();
@@ -218,12 +210,6 @@ static void onBluetoothMenuSelect(uint16_t index, void* userData) {
         case BT_IDX_SCAN:
             startBluetoothScan();
             return;
-        case BT_IDX_BEACON: {
-            auto& msg = cdc::msg::MessageTransfer::instance();
-            msg.setBeaconEnabled(!msg.isBeaconEnabled());
-            rebuildBluetoothMenu();
-            return;
-        }
         case BT_IDX_FORGET_BONDS:
             askConfirm(ui::tr("core.ble_forget_all_confirm"), [](void*) {
                 auto* ble = hal::getBluetoothControllerInstance();
@@ -307,7 +293,7 @@ static void showBluetoothStatus() {
 
         if (ble->isConnected()) {
             append("\n%s\n", ui::tr("core.ble_connected_to"));
-            append("%s: %d dBm\n", ui::tr("core.ble_signal"), ble->getRssi());
+            append("%s: %d dBm\n", ui::tr("core.signal"), ble->getRssi());
         } else {
             append("\n%s\n", ui::tr("core.ble_not_connected"));
         }

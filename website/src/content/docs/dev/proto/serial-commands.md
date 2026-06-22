@@ -140,16 +140,15 @@ when the module is built in (`main/CMakeLists.txt` MODULES list).
 | `GENERATE` | `<curve> <user_id>` | Generate SIG+DEC+AUT keys (curve `1`=Ed25519, `2`=P-256) |
 | `EXPORT` | - | Print the own OpenPGP public key (armored, with certifications) |
 | `RESET` | `[token]` | Two-step destructive reset of all GPG keys |
-| `RECV_LIST` | - | List received cross-sign keys |
-| `RECV_INFO` | `<index>` | Show a received key's details |
-| `RECV_DELETE` | `<index>` | Delete a received key |
+| `RECV_LIST` | - | List public keys received from peers (with their list index) |
+| `RECV_INFO` | `<index>` | Show a received peer key's details |
+| `RECV_DELETE` | `<index>` | Delete a received peer key |
 | `RECV_IMPORT` | `<hex>` | Import a peer public-key wire payload (hex) into the received store |
-| `CROSS_SIGN` | `<index>` | Cross-sign a received key with the badge SIG subkey |
-| `EXPORT_SIGNED` | `<index>` | Export a signed received key as an ASCII-armored OpenPGP block |
-| `SEND_SIG` | `<index>` | Send a cross-signature back to the peer over BLE |
-| `CERT_LIST` | - | List third-party certifications on the own key |
-| `CERT_DELETE` | `<index>` | Delete a stored certification on the own key |
-| `CERT_IMPORT` | `<hex>` | Import a certification-return payload (hex) onto the own key |
+| `RECV_CROSS_SIGN` | `<index>` | Cross-sign a received peer key with the badge SIG key |
+| `RECV_EXPORT` | `<index>` | Export a received peer key as an ASCII-armored OpenPGP block (encryptable; adds our cross-signature once cross-signed) |
+| `MYCERT_LIST` | - | List third-party certifications collected on the own key |
+| `MYCERT_DELETE` | `<index>` | Delete a stored certification on the own key |
+| `MYCERT_IMPORT` | `<hex>` | Import a certification-return payload (hex) onto the own key |
 | `RSA_SELFTEST` | `[bits]` | Run the software-RSA self-test (gen/sign/verify/decrypt), default `2048` |
 
 ### FIDO2 attestation (`ATTEST`, AUTH-gated)

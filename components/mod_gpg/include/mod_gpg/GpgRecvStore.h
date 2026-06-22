@@ -33,12 +33,20 @@ struct gpg_recv_key_t {
     uint8_t  my_signature[64];
     uint8_t  sig_len;
     uint32_t sig_created_at;
+    // DEC (RFC 6637 ECDH P-256) encryption subkey and the two signatures the
+    // peer produced over it. Cannot be forged locally; replayed verbatim into
+    // the armored export. All-zero when absent.
+    uint8_t  pubkey_dec[64];
+    uint32_t created_at_dec;
+    uint8_t  owner_self_sig[64];
+    uint8_t  dec_binding_sig[64];
     uint8_t  flags;
 };
 #pragma pack(pop)
 
 static_assert(sizeof(gpg_recv_key_t) ==
-              (1 + 64 + 64 + 1 + 4 + 20 + 32 + 4 + 64 + 1 + 4 + 1),
+              (1 + 64 + 64 + 1 + 4 + 20 + 32 + 4 + 64 + 1 + 4 +
+               64 + 4 + 64 + 64 + 1),
               "gpg_recv_key_t layout drift");
 
 /**

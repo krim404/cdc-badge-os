@@ -113,17 +113,16 @@ struct WizardState {
 EXT_RAM_BSS_ATTR static WizardState s_wizard = {};
 static ui::T9InputView s_t9Input;
 
-static VcardWizard::StringResolver s_resolver = nullptr;
-static const uint16_t* s_titleOffsets = nullptr;
-static uint16_t s_savedOffset = 0;
-static uint16_t s_failedOffset = 0;
+static const char* const* s_titleKeys = nullptr;
+static const char* s_savedKey = nullptr;
+static const char* s_failedKey = nullptr;
 
 /**
- * \brief Returns the localized title for a wizard step via the configured resolver.
+ * \brief Returns the localized title for a wizard step via its i18n key.
  */
 static const char* stepTitle(uint8_t step) {
-    if (!s_resolver || !s_titleOffsets || step >= STEP_COUNT) return "?";
-    return s_resolver(s_titleOffsets[step]);
+    if (!s_titleKeys || step >= STEP_COUNT) return "?";
+    return ui::tr(s_titleKeys[step]);
 }
 
 /**
@@ -172,8 +171,7 @@ static void wizardFinish() {
     char buf[VCARD_MAX_LEN + 1];
     size_t len = vcard_generate_from_struct(&s_wizard.data, buf, sizeof(buf));
     if (len == 0) {
-        ui::showToastError(s_resolver ? s_resolver(s_failedOffset)
-                                      : ui::tr("core.failed"));
+        ui::showToastError(ui::tr(s_failedKey ? s_failedKey : "core.failed"));
         s_wizard.active = false;
         return;
     }
@@ -194,14 +192,12 @@ static void wizardFinish() {
     if (!ok) {
         LOG_W(TAG, "save failed: %s", err[0] ? err : "(no detail)");
         ui::showToastError(err[0] ? err
-                                  : (s_resolver ? s_resolver(s_failedOffset)
-                                                : ui::tr("core.failed")));
+                                  : ui::tr(s_failedKey ? s_failedKey : "core.failed"));
         s_wizard.active = false;
         return;
     }
 
-    ui::showToastSuccess(s_resolver ? s_resolver(s_savedOffset)
-                                    : "Saved");
+    ui::showToastSuccess(ui::tr(s_savedKey ? s_savedKey : "core.saved"));
     VcardWizard::DoneCallback done = s_wizard.onDone;
     ui::IView* anchor = s_wizard.returnAnchor;
     s_wizard.active = false;
@@ -239,12 +235,11 @@ static void onStepSave(const char* text) {
     }
 }
 
-void VcardWizard::configure(StringResolver resolver, const uint16_t* titleOffsets,
-                            uint16_t savedOffset, uint16_t failedOffset) {
-    s_resolver = resolver;
-    s_titleOffsets = titleOffsets;
-    s_savedOffset = savedOffset;
-    s_failedOffset = failedOffset;
+void VcardWizard::configure(const char* const* titleKeys, const char* savedKey,
+                            const char* failedKey) {
+    s_titleKeys = titleKeys;
+    s_savedKey = savedKey;
+    s_failedKey = failedKey;
 }
 
 void VcardWizard::start(ui::IView* returnAnchor) {

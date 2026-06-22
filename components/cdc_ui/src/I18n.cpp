@@ -117,7 +117,6 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.wifi_menu",          "WiFi"},
     {"core.wifi_setup",         "WiFi Setup"},
     {"core.wifi_connect",       "Connect"},
-    {"core.wifi_details",       "Details"},
     {"core.wifi_disconnect",    "Disconnect"},
     {"core.wifi_on",            "WiFi ON"},
     {"core.wifi_off",           "WiFi OFF"},
@@ -138,7 +137,6 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.wifi_netmask",       "Netmask"},
     {"core.wifi_dns",           "DNS"},
     {"core.wifi_saved_config",  "Saved Config"},
-    {"core.wifi_signal",        "Signal"},
     {"core.ntp_sync",           "Sync Time"},
     {"core.ntp_syncing",        "Syncing time..."},
     {"core.ntp_success",        "Time synced!"},
@@ -154,7 +152,6 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.ble_connected_to",   "Connected to"},
     {"core.ble_not_connected",  "Not connected"},
     {"core.ble_mac_address",    "MAC"},
-    {"core.ble_signal",         "Signal"},
     {"core.ble_paired_devices", "Paired devices"},
     {"core.ble_no_paired",      "No paired devices"},
     {"core.ble_forget_one",     "Forget this device?"},
@@ -165,7 +162,6 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.ble_pairing_title",  "Pairing Mode"},
     {"core.ble_pairing_instr",  "On your device, select:"},
     {"core.ble_pairing_waiting", "Waiting for device..."},
-    {"core.ble_pairing_connected", "Connected"},
     {"core.ble_pairing_exit",   "[N] Exit"},
     {"core.msg_beacon",         "Beacon"},
     {"core.msg_beacon_on",      "Beacon: on"},
@@ -203,7 +199,6 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.backup",             "Backup"},
     {"core.backup_export",      "Export"},
     {"core.backup_import",      "Import"},
-    {"core.backup_delete",      "Delete"},
     {"core.backup_passphrase",          "Passphrase"},
     {"core.backup_confirm_passphrase",  "Confirm passphrase"},
     {"core.backup_pass_empty",          "Passphrase required"},
@@ -282,6 +277,12 @@ constexpr I18nEntry kCoreStrings[] = {
 
     {"core.qr_error",           "QR Error"},
     {"core.no_data",            "No data"},
+
+    {"core.status",             "Status"},
+    {"core.connected",          "Connected"},
+    {"core.details",            "Details"},
+    {"core.signal",             "Signal"},
+    {"core.inactive",           "Inactive"},
 };
 
 constexpr std::size_t kCoreCount =

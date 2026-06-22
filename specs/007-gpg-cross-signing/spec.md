@@ -65,7 +65,7 @@ certification signature is produced by the SIG ECC slot and attached to the stor
 
 **Acceptance Scenarios**:
 
-1. **Given** a stored peer key, **When** the holder runs `GPG CROSS_SIGN <i>`, **Then** the device
+1. **Given** a stored peer key, **When** the holder runs `GPG RECV_CROSS_SIGN <i>`, **Then** the device
    builds an RFC 4880 certification preimage and signs it with the on-chip SIG key (ECC slot 1),
    recording the certification signature and setting the verified flag.
 2. **Given** a peer key on a P-256 curve, **When** it is cross-signed, **Then** the certification
@@ -82,17 +82,18 @@ key (with all collected certifications) so the web of trust can be rebuilt on a 
 **Why this priority**: Without a return path and an own-key export the certification stays trapped
 on the signer; returning it and re-exporting is what makes the cross-signature usable off-badge.
 
-**Independent Test (Provisional)**: After cross-signing a peer key, run `GPG EXPORT_SIGNED <i>` and
-confirm a well-formed armored block is emitted; run `GPG SEND_SIG <i>` to return it; import a
-returned certification and confirm `GPG EXPORT` emits the own key carrying it.
+**Independent Test (Provisional)**: After cross-signing a peer key, run `GPG RECV_EXPORT <i>` and
+confirm a well-formed armored block is emitted; use the on-badge **Send Signature** action to return
+it over BLE; import a returned certification and confirm `GPG EXPORT` emits the own key carrying it.
 
 **Acceptance Scenarios**:
 
-1. **Given** a cross-signed peer key, **When** the holder runs `GPG EXPORT_SIGNED <i>`, **Then** the
+1. **Given** a cross-signed peer key, **When** the holder runs `GPG RECV_EXPORT <i>`, **Then** the
    device emits an armored OpenPGP public-key block containing the certification signature over
-   serial.
-2. **Given** a cross-signed peer key, **When** the holder invokes **Send Signature** (or
-   `GPG SEND_SIG <i>`), **Then** the certification is transferred to the key's owner over BLE; the
+   serial. (`RECV_EXPORT` also works on a not-yet-cross-signed key, emitting the encryptable key
+   without the cross-signature.)
+2. **Given** a cross-signed peer key, **When** the holder invokes the on-badge **Send Signature**
+   action, **Then** the certification is transferred to the key's owner over BLE; the
    owner accepts it only if it targets the owner's own key and stores it under My Certifications.
 3. **Given** one or more collected certifications on the own key, **When** the holder runs
    `GPG EXPORT` (or **Export Public**), **Then** the device emits the armored own public key with
@@ -138,7 +139,7 @@ returned certification and confirm `GPG EXPORT` emits the own key carrying it.
 - **Self-Certification** — a third-party certification on the own key, persisted (issuer
   fingerprint, issuer user-id, receive timestamp, signature packet). NVS-backed, ≤ 16.
 - **Armored Public-Key Block** — the OpenPGP-armored export of either a certified peer key
-  (`GPG EXPORT_SIGNED <i>`) or the own key with its collected certifications (`GPG EXPORT`).
+  (`GPG RECV_EXPORT <i>`) or the own key with its collected certifications (`GPG EXPORT`).
 
 ## Success Criteria *(mandatory)*
 

@@ -252,15 +252,11 @@ bool ble_chalresp_init() {
         return false;
     }
 
+    // Request BLE; the controller defers the bring-up until the system is ready.
+    // GATT registration below is allowed while BLE is still down (committed on
+    // enable), so there is no need to block waiting for the stack here.
     if (!ble->isEnabled()) {
-        if (!ble->enable()) {
-            LOG_E(TAG, "Bluetooth enable failed");
-            return false;
-        }
-    }
-
-    for (int i = 0; i < 50 && !ble->isEnabled(); i++) {
-        vTaskDelay(pdMS_TO_TICKS(100));
+        ble->enable();
     }
 
     if (!registerGattService()) {

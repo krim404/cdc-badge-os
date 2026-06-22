@@ -239,6 +239,7 @@ public:
      */
     bool enable() override;
     void disable() override;
+    void notifySystemReady() override;
     bool isEnabled() const override { return enabled_; }
     bool getMacAddress(uint8_t* mac) const override;
     void setDeviceName(const char* name) override;
@@ -253,7 +254,7 @@ public:
      */
     void startAdvertising() override;
     void stopAdvertising() override;
-    bool isAdvertising() const override { return advertising_; }
+    bool isAdvertising() const override { return ble_gap_adv_active() != 0; }
     bool addAdvertisingUuid(const BleUuid& uuid) override;
     void removeAdvertisingUuid(const BleUuid& uuid) override;
     bool setAdvertisingManufacturerData(uint16_t companyId,
@@ -391,6 +392,9 @@ public:
     int8_t findConnectionSlot(uint16_t handle) const;
 
 private:
+    /// \brief Performs the actual NimBLE bring-up. Deferred until system ready.
+    bool enableNow();
+
     core::ServiceState state_ = core::ServiceState::UNINITIALIZED;
 
     // Serializes stack lifecycle transitions (enable/disable and the GATT
@@ -402,6 +406,8 @@ private:
 
     bool enabled_ = false;
     bool synced_ = false;
+    bool systemReady_ = false;
+    bool pendingEnable_ = false;
     bool advertising_ = false;
     bool scanning_ = false;
     bool scanWasAdvertising_ = false;
@@ -654,10 +660,44 @@ void BluetoothController::stop() {
 }
 
 /**
+ * \brief Records an enable request, deferring the actual bring-up until the
+ *        system signals readiness.
+ *
+ * During boot this only sets a pending flag so that all GATT services
+ * registered while modules initialize commit together in a single NimBLE start
+ * (see notifySystemReady()). After readiness it brings the stack up immediately.
+ * \return `true` if BLE is enabled or the request was accepted for deferral.
+ */
+bool BluetoothController::enable() {
+    cdc::core::RecursiveMutexGuard guard(lifecycleMutex_);
+    if (enabled_) {
+        return true;
+    }
+    if (!systemReady_) {
+        pendingEnable_ = true;
+        LOG_I(TAG, "BLE enable deferred until system ready");
+        return true;
+    }
+    return enableNow();
+}
+
+/**
+ * \brief Signals startup completion and performs any deferred BLE bring-up.
+ */
+void BluetoothController::notifySystemReady() {
+    cdc::core::RecursiveMutexGuard guard(lifecycleMutex_);
+    systemReady_ = true;
+    if (pendingEnable_ && !enabled_) {
+        pendingEnable_ = false;
+        enableNow();
+    }
+}
+
+/**
  * \brief Enables NimBLE host stack and starts host task execution.
  * \return `true` if BLE was enabled successfully.
  */
-bool BluetoothController::enable() {
+bool BluetoothController::enableNow() {
     cdc::core::RecursiveMutexGuard guard(lifecycleMutex_);
     if (enabled_) {
         return true;
@@ -1045,11 +1085,15 @@ void BluetoothController::onSync() {
 void BluetoothController::startAdvertising() {
     if (!enabled_ || !synced_) return;
 
-    // Stop current advertising if running
-    if (advertising_) {
+    // Stop any active advertising before reconfiguring. Query the real radio
+    // state, not just the cached flag: a flag desync must never leave NimBLE
+    // advertising while we restart it (which then returns BLE_HS_EALREADY and,
+    // with isAdvertising() reading the flag, spins reconcile() into a re-advertise
+    // loop).
+    if (ble_gap_adv_active()) {
         ble_gap_adv_stop();
-        advertising_ = false;
     }
+    advertising_ = false;
 
     struct ble_gap_adv_params advParams = {};
     advParams.conn_mode = BLE_GAP_CONN_MODE_UND;
@@ -1158,7 +1202,7 @@ void BluetoothController::startAdvertising() {
 
     rc = ble_gap_adv_start(ownAddrType_, nullptr, BLE_HS_FOREVER,
                            &advParams, bleGapEventCallback, nullptr);
-    if (rc != 0) {
+    if (rc != 0 && rc != BLE_HS_EALREADY) {
         LOG_E(TAG, "Failed to start advertising: %d", rc);
         return;
     }
@@ -1834,9 +1878,13 @@ void BluetoothController::forgetBond(const uint8_t addr[6], uint8_t addrType) {
     ble_addr_t peer = {};
     peer.type = addrType;
     std::memcpy(peer.val, addr, 6);
-    int rc = ble_gap_unpair(&peer);
+    // ble_gap_unpair() returns BLE_HS_EBUSY without deleting anything when the
+    // peer distributed an IRK and advertising/discovery is active (the state in
+    // the Bluetooth menu). Delete the bond records directly, as clearAllBonds()
+    // does for all peers; the resolving-list entry is rebuilt empty on boot.
+    int rc = ble_store_util_delete_peer(&peer);
     if (rc != 0) {
-        LOG_W(TAG, "ble_gap_unpair failed: %d", rc);
+        LOG_W(TAG, "ble_store_util_delete_peer failed: %d", rc);
     } else {
         LOG_I(TAG, "Bond forgotten");
     }

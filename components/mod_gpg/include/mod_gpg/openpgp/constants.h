@@ -22,11 +22,22 @@ extern "C" {
 
 /* === RFC 4880 Public-Key Algorithm Identifiers === */
 
+/** \brief OpenPGP algorithm ID for ECDH (RFC 6637, encryption key). */
+#define OPENPGP_ALGO_ECDH 18
+
 /** \brief OpenPGP algorithm ID for ECDSA (RFC 4880 Section 9.1). */
 #define OPENPGP_ALGO_ECDSA 19
 
 /** \brief OpenPGP algorithm ID for EdDSA (Ed25519). */
 #define OPENPGP_ALGO_EDDSA 22
+
+/* === RFC 6637 ECDH KDF parameters (P-256 encryption subkey) === */
+
+/** \brief KDF hash algorithm ID embedded in an ECDH public key (SHA-256). */
+#define OPENPGP_ECDH_KDF_HASH 0x08
+
+/** \brief KEK wrap cipher ID embedded in an ECDH public key (AES-128). */
+#define OPENPGP_ECDH_KDF_SYM 0x07
 
 /* === Fingerprint and digest sizes === */
 
@@ -47,8 +58,15 @@ extern "C" {
 /** \brief P-256 ECDH shared secret size in bytes. */
 #define P256_ECDH_SECRET_SIZE 32
 
-/** \brief P-256 public key bit-length (used as MPI bit count). */
-#define P256_PUBKEY_BITS 520
+/**
+ * \brief Canonical OpenPGP MPI bit-length of an uncompressed P-256 point.
+ *
+ * The point is encoded `0x04 || X || Y`; the leading `0x04` contributes 3
+ * significant bits, so the MPI bit count is 512 + 3 = 515 (not 520). GnuPG
+ * canonicalises to this value when hashing keys, so fingerprints and
+ * subkey-binding signatures must use it to verify.
+ */
+#define P256_PUBKEY_BITS 515
 
 /* === Ed25519 sizes === */
 

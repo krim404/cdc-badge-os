@@ -35,7 +35,6 @@ namespace cdc::mod_fido2 {
 
 constexpr ui::I18nEntry kStrings[] = {
     {"mod_fido2.title",              "WebAuthn"},
-    {"mod_fido2.details",            "Details"},
     {"mod_fido2.fido2_key",          "FIDO2 Key"},
     {"mod_fido2.sign_in_to",         "Sign in to"},
     {"mod_fido2.register_key",       "Register Key"},
@@ -259,7 +258,7 @@ static void onListMenu(uint16_t index, void* userData) {
     if (sel >= s_listCount) {
         sel = 0;
     }
-    items[0] = {ui::tr("mod_fido2.details"), []() { showDetail(s_listView ? s_listView->getSelection() : 0); }};
+    items[0] = {ui::tr("core.details"), []() { showDetail(s_listView ? s_listView->getSelection() : 0); }};
     items[1] = {ui::tr("core.delete"), []() { handleDelete(s_listView ? s_listView->getSelection() : 0); }};
     items[2] = {ui::tr("core.cancel"), []() {}};
     static char s_contextTitle[FIDO2_RP_ID_MAX_LEN] = {};

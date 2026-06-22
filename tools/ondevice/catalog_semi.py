@@ -50,7 +50,7 @@ def test_gpg_ble(b: BadgeSerial) -> None:
     if not (rl and find_line(rl, "received keys")):
         b.note("No received cross-sign keys; import a peer key first (RECV_IMPORT)")
     b.note("Maps to T-HIL02/spec 007. Needs a second badge over BLE.")
-    b.prompt("Cross-sign a received key and use GPG SEND_SIG to return it over BLE")
+    b.prompt("Cross-sign a received key and use the on-badge Send Signature action to return it over BLE")
     _pass_if(b, "Did the peer badge receive the cross-signature?")
 
 

@@ -125,6 +125,21 @@ void BeaconManager::removeAdv()
     LOG_I(TAG, "Beacon stopped");
 }
 
+void BeaconManager::bootApply()
+{
+    if (!enabled_) return;
+    auto* ble = cdc::hal::getBluetoothControllerInstance();
+    if (!ble) return;
+    // Populate the advertised name + UUID while BLE is still down, then request
+    // enable. The controller defers the bring-up until the system is ready, so
+    // the first advertising start already carries the service UUID.
+    ble->setDeviceName(name_);
+    ble->addAdvertisingUuid(cdc::hal::BleUuid::from128(kMsgServiceUuid));
+    ble->enable();
+    applied_ = true;
+    LOG_I(TAG, "Beacon prepared as '%s'", name_);
+}
+
 void BeaconManager::reconcile()
 {
     auto* ble = cdc::hal::getBluetoothControllerInstance();

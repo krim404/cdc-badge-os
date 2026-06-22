@@ -23,9 +23,7 @@ namespace cdc::mod_usbhid {
 
 constexpr ui::I18nEntry kStrings[] = {
     {"mod_usbhid.title",          "USB Keyboard"},
-    {"mod_usbhid.status",         "Status"},
     {"mod_usbhid.connection",     "Connection"},
-    {"mod_usbhid.connected",      "Connected"},
     {"mod_usbhid.waiting",        "Waiting for host"},
     {"mod_usbhid.not_registered", "Not active"},
     {"mod_usbhid.unicode_method", "Unicode Method"},
@@ -86,7 +84,7 @@ public:
         gfx->setCursor(8, 30);
         ui::render::printText(gfx, ui::tr("mod_usbhid.connection"));
         ui::render::printText(gfx, ": ");
-        const char* state = kb.isConnected()       ? ui::tr("mod_usbhid.connected")
+        const char* state = kb.isConnected()       ? ui::tr("core.connected")
                             : kb.isRegistered()     ? ui::tr("mod_usbhid.waiting")
                                                     : ui::tr("mod_usbhid.not_registered");
         ui::render::printText(gfx, state);
@@ -159,7 +157,7 @@ static void onMenuSelect(uint16_t index, void* userData) {
 
 /** \brief Builds the top-level USB HID menu entries. */
 static void rebuildMenu() {
-    s_menuItems[MENU_STATUS] = {ui::tr("mod_usbhid.status"), 0, false, nullptr};
+    s_menuItems[MENU_STATUS] = {ui::tr("core.status"), 0, false, nullptr};
     s_menuItems[MENU_UNICODE] = {ui::tr("mod_usbhid.unicode_method"), 0, false, nullptr};
     s_menuView.init(ui::tr("mod_usbhid.title"), s_menuItems, MENU_COUNT);
 }

@@ -214,7 +214,7 @@ void rebuildWifiMainMenu() {
     }
 
     s_wifiMainItems[WIFI_IDX_SETUP] = {ui::tr("core.wifi_setup"), 0, false, nullptr};
-    s_wifiMainItems[WIFI_IDX_DETAILS] = {ui::tr("core.wifi_details"), 0, false, nullptr};
+    s_wifiMainItems[WIFI_IDX_DETAILS] = {ui::tr("core.details"), 0, false, nullptr};
     s_wifiMainItems[WIFI_IDX_NTP_SYNC] = {ui::tr("core.ntp_sync"), 0, !connected && !hasConfig, nullptr};
 
     auto& moduleReg = core::ModuleRegistry::instance();
@@ -665,7 +665,7 @@ static void wifiShowDetails() {
             append("IP: %s\n", ipBuf);
         }
 
-        append("%s: %d dBm\n", ui::tr("core.wifi_signal"), wifi->getRssi());
+        append("%s: %d dBm\n", ui::tr("core.signal"), wifi->getRssi());
 
     } else if (wifiHandlers.config().valid) {
         append("Status: %s\n\n", ui::tr("core.wifi_disconnected"));
@@ -676,7 +676,7 @@ static void wifiShowDetails() {
         append("%s", ui::tr("core.wifi_no_config"));
     }
 
-    showInfo(ui::tr("core.wifi_details"), info);
+    showInfo(ui::tr("core.details"), info);
 }
 
 /**

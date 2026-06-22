@@ -44,7 +44,6 @@ namespace cdc::mod_gpg {
 
 constexpr ui::I18nEntry kStrings[] = {
     {"mod_gpg.title",            "GPG"},
-    {"mod_gpg.status",           "Status"},
     {"mod_gpg.generate",         "Generate Keys"},
     {"mod_gpg.export",           "Export Public"},
     {"mod_gpg.reset",            "Reset"},
@@ -70,22 +69,18 @@ constexpr ui::I18nEntry kStrings[] = {
     {"mod_gpg.recv_export",      "Export"},
     {"mod_gpg.recv_forward",     "Forward"},
     {"mod_gpg.recv_qr",          "Show QR"},
-    {"mod_gpg.recv_delete",      "Delete"},
     {"mod_gpg.recv_confirm_sign","Sign this key?"},
     {"mod_gpg.recv_confirm_del", "Delete this key?"},
     {"mod_gpg.recv_signed",      "Signed"},
     {"mod_gpg.recv_unsigned",    "Unsigned"},
-    {"mod_gpg.recv_export_title","Signed Key Export"},
+    {"mod_gpg.recv_export_title","Key Export"},
     {"mod_gpg.recv_send_sig",    "Send Signature"},
     {"mod_gpg.toast_signed",     "Cross-signed"},
     {"mod_gpg.toast_sign_fail",  "Sign failed"},
-    {"mod_gpg.toast_deleted",    "Deleted"},
     {"mod_gpg.cert_received",    "Incoming key certification"},
     {"mod_gpg.mycerts",          "My Certifications"},
-    {"mod_gpg.mycerts_title",    "My Certifications"},
     {"mod_gpg.mycerts_none",     "No certifications"},
     {"mod_gpg.mycerts_details",  "Certification"},
-    {"mod_gpg.mycerts_delete",   "Delete"},
     {"mod_gpg.mycerts_confirm_del","Delete this certification?"},
 };
 
@@ -161,13 +156,12 @@ static void cmd_gpg_reset(const char* args);
 static void cmd_gpg_recv_list(const char* args);
 static void cmd_gpg_recv_info(const char* args);
 static void cmd_gpg_recv_delete(const char* args);
-static void cmd_gpg_cross_sign(const char* args);
-static void cmd_gpg_export_signed(const char* args);
-static void cmd_gpg_send_sig(const char* args);
-static void cmd_gpg_cert_list(const char* args);
-static void cmd_gpg_cert_delete(const char* args);
+static void cmd_gpg_recv_cross_sign(const char* args);
+static void cmd_gpg_recv_export(const char* args);
+static void cmd_gpg_mycert_list(const char* args);
+static void cmd_gpg_mycert_delete(const char* args);
 static void cmd_gpg_recv_import(const char* args);
-static void cmd_gpg_cert_import(const char* args);
+static void cmd_gpg_mycert_import(const char* args);
 static void cmd_gpg_rsa_selftest(const char* args);
 
 static const cdc::serial::SubCommand kGpgSubs[] = {
@@ -175,17 +169,16 @@ static const cdc::serial::SubCommand kGpgSubs[] = {
     {"GENERATE",     "<curve> <user_id>",     "Generate SIG+DEC+AUT keys (curve 1=Ed25519, 2=P-256)",         cmd_gpg_generate},
     {"EXPORT",       "",                      "Print own OpenPGP public key (armored, with certifications)",  cmd_gpg_export},
     {"RESET",        "[token]",               "Two-step destructive reset of all GPG keys",                   cmd_gpg_reset},
-    {"RECV_LIST",    "",                      "List received cross-sign keys",                                cmd_gpg_recv_list},
-    {"RECV_INFO",    "<index>",               "Show received key details",                                    cmd_gpg_recv_info},
-    {"RECV_DELETE",  "<index>",               "Delete received key",                                          cmd_gpg_recv_delete},
-    {"RECV_IMPORT",  "<hex>",                 "Import a peer key wire payload (hex) into the received store",  cmd_gpg_recv_import},
-    {"CROSS_SIGN",   "<index>",               "Cross-sign a received key",                                    cmd_gpg_cross_sign},
-    {"EXPORT_SIGNED","<index>",               "Export signed key as ASCII-armored OpenPGP block",             cmd_gpg_export_signed},
-    {"SEND_SIG",     "<index>",               "Send a cross-signature back to the peer over BLE",             cmd_gpg_send_sig},
-    {"CERT_LIST",    "",                      "List third-party certifications on the own key",               cmd_gpg_cert_list},
-    {"CERT_DELETE",  "<index>",               "Delete a stored certification on the own key",                 cmd_gpg_cert_delete},
-    {"CERT_IMPORT",  "<hex>",                 "Import a certification return payload (hex) onto the own key",  cmd_gpg_cert_import},
-    {"RSA_SELFTEST", "[bits]",                "Software RSA self-test (gen/sign/verify/decrypt), default 2048", cmd_gpg_rsa_selftest},
+    {"RECV_LIST",    "",                      "List public keys received from peers",                         cmd_gpg_recv_list},
+    {"RECV_INFO",    "<index>",               "Show a received peer key's details",                           cmd_gpg_recv_info},
+    {"RECV_DELETE",  "<index>",               "Delete a received peer key",                                   cmd_gpg_recv_delete},
+    {"RECV_IMPORT",     "<hex>",              "Import a peer key wire payload (hex) into the received store",   cmd_gpg_recv_import},
+    {"RECV_CROSS_SIGN", "<index>",            "Cross-sign a received peer key with our signature key",         cmd_gpg_recv_cross_sign},
+    {"RECV_EXPORT",     "<index>",            "Export a received peer key (armored, encryptable; adds our cross-signature if present)", cmd_gpg_recv_export},
+    {"MYCERT_LIST",     "",                   "List third-party certifications collected on the own key",      cmd_gpg_mycert_list},
+    {"MYCERT_DELETE",   "<index>",            "Delete a stored certification on the own key",                  cmd_gpg_mycert_delete},
+    {"MYCERT_IMPORT",   "<hex>",              "Import a certification return payload (hex) onto the own key",   cmd_gpg_mycert_import},
+    {"RSA_SELFTEST",    "[bits]",             "Software RSA self-test (gen/sign/verify/decrypt), default 2048", cmd_gpg_rsa_selftest},
     {nullptr, nullptr, nullptr, nullptr},
 };
 
@@ -400,10 +393,10 @@ static void cmd_gpg_recv_delete(const char* args) {
                                  : "ERROR: delete failed\r\n");
 }
 
-static void cmd_gpg_cross_sign(const char* args) {
+static void cmd_gpg_recv_cross_sign(const char* args) {
     uint8_t idx = 0;
     if (!parse_index(args, &idx)) {
-        cdc::serial::Console::printf("Usage: GPG CROSS_SIGN <index>\r\n");
+        cdc::serial::Console::printf("Usage: GPG RECV_CROSS_SIGN <index>\r\n");
         return;
     }
     gpg_recv_key_t key = {};
@@ -425,19 +418,15 @@ static void cmd_gpg_cross_sign(const char* args) {
     cdc::serial::Console::printf("OK\r\n");
 }
 
-static void cmd_gpg_export_signed(const char* args) {
+static void cmd_gpg_recv_export(const char* args) {
     uint8_t idx = 0;
     if (!parse_index(args, &idx)) {
-        cdc::serial::Console::printf("Usage: GPG EXPORT_SIGNED <index>\r\n");
+        cdc::serial::Console::printf("Usage: GPG RECV_EXPORT <index>\r\n");
         return;
     }
     gpg_recv_key_t key = {};
     if (!GpgRecvStore::instance().getKey(idx, &key)) {
         cdc::serial::Console::printf("ERROR: index not found\r\n");
-        return;
-    }
-    if (key.sig_len == 0) {
-        cdc::serial::Console::printf("ERROR: key not yet signed (use GPG CROSS_SIGN first)\r\n");
         return;
     }
 
@@ -447,7 +436,7 @@ static void cmd_gpg_export_signed(const char* args) {
         return;
     }
     size_t out_len = 0;
-    if (!gpgBuildSignedKeyArmored(key, buf.get(), 4096, &out_len)) {
+    if (!gpgBuildReceivedKeyArmored(key, buf.get(), 4096, &out_len)) {
         cdc::serial::Console::printf("ERROR: export failed\r\n");
         return;
     }
@@ -456,33 +445,8 @@ static void cmd_gpg_export_signed(const char* args) {
     cdc::serial::Console::print(buf.get());
 }
 
-static void cmd_gpg_send_sig(const char* args) {
-    uint8_t idx = 0;
-    if (!parse_index(args, &idx)) {
-        cdc::serial::Console::printf("Usage: GPG SEND_SIG <index>\r\n");
-        return;
-    }
-    gpg_recv_key_t key = {};
-    if (!GpgRecvStore::instance().getKey(idx, &key)) {
-        cdc::serial::Console::printf("ERROR: index not found\r\n");
-        return;
-    }
-    if (key.sig_len == 0) {
-        cdc::serial::Console::printf("ERROR: key not yet signed (use GPG CROSS_SIGN first)\r\n");
-        return;
-    }
-    static EXT_RAM_BSS_ATTR uint8_t payload[kGpgCertPayloadMax];
-    size_t len = gpgBuildCertPayload(key, payload, sizeof(payload));
-    if (len == 0) {
-        cdc::serial::Console::printf("ERROR: build failed\r\n");
-        return;
-    }
-    cdc::msg::MessageTransfer::instance().beginInteractiveSend(
-        kGpgCertMime, payload, static_cast<uint32_t>(len));
-    cdc::serial::Console::printf("OK: pick peer on the badge\r\n");
-}
 
-static void cmd_gpg_cert_list(const char* args) {
+static void cmd_gpg_mycert_list(const char* args) {
     (void)args;
     auto& store = GpgSelfCertStore::instance();
     auto buf = ::cdc::core::psramAlloc<gpg_self_cert_index_entry_t>(GpgSelfCertStore::kMaxCerts);
@@ -502,10 +466,10 @@ static void cmd_gpg_cert_list(const char* args) {
     }
 }
 
-static void cmd_gpg_cert_delete(const char* args) {
+static void cmd_gpg_mycert_delete(const char* args) {
     uint8_t idx = 0;
     if (!parse_index(args, &idx)) {
-        cdc::serial::Console::printf("Usage: GPG CERT_DELETE <index>\r\n");
+        cdc::serial::Console::printf("Usage: GPG MYCERT_DELETE <index>\r\n");
         return;
     }
     cdc::serial::Console::printf(GpgSelfCertStore::instance().deleteCert(idx)
@@ -556,11 +520,11 @@ static void cmd_gpg_recv_import(const char* args) {
                                  : "ERROR: store full\r\n");
 }
 
-static void cmd_gpg_cert_import(const char* args) {
+static void cmd_gpg_mycert_import(const char* args) {
     static EXT_RAM_BSS_ATTR uint8_t payload[kGpgCertPayloadMax];
     size_t len = 0;
     if (!parse_hex(args, payload, sizeof(payload), &len)) {
-        cdc::serial::Console::printf("Usage: GPG CERT_IMPORT <hex>\r\n");
+        cdc::serial::Console::printf("Usage: GPG MYCERT_IMPORT <hex>\r\n");
         return;
     }
     gpg_self_cert_t cert = {};
@@ -675,7 +639,7 @@ static inline ui::ListItem makeMenuItem(const char* label, GpgMenuAction action)
 static void rebuildMenu() {
     const bool hasKeys = openpgp_has_any_key();
     uint8_t count = 0;
-    s_menuItems[count++] = makeMenuItem(ui::tr("mod_gpg.status"),   GPG_MENU_STATUS);
+    s_menuItems[count++] = makeMenuItem(ui::tr("core.status"),   GPG_MENU_STATUS);
     if (!hasKeys) {
         s_menuItems[count++] = makeMenuItem(ui::tr("mod_gpg.generate"), GPG_MENU_GENERATE);
     } else {
@@ -832,7 +796,7 @@ static void showSettings() {
 static void showStatus() {
     gpg_status_t status = {};
     if (!gpg_get_status(&status)) {
-        s_infoView.init(ui::tr("mod_gpg.status"), ui::tr("mod_gpg.no_key"));
+        s_infoView.init(ui::tr("core.status"), ui::tr("mod_gpg.no_key"));
         ui::ViewStack::instance().push(&s_infoView);
         return;
     }
@@ -849,7 +813,7 @@ static void showStatus() {
              status.user_id, curveName, fp_hex,
              static_cast<unsigned long>(status.created_at),
              static_cast<unsigned long>(status.sign_count));
-    s_infoView.init(ui::tr("mod_gpg.status"), detail);
+    s_infoView.init(ui::tr("core.status"), detail);
     ui::ViewStack::instance().push(&s_infoView);
 }
 
@@ -938,9 +902,7 @@ static void onWizardCurve(uint16_t index, void*) {
     } else {
         ui::showToastError(ui::tr("core.failed"));
     }
-    while (ui::ViewStack::instance().depth() > 1) {
-        ui::ViewStack::instance().pop();
-    }
+    ui::ViewStack::instance().popToAnchor(&s_menuView);
 }
 
 /**
@@ -1109,11 +1071,11 @@ static void showReceivedDetail() {
 
     const bool unsigned_key = (s_recvSelectedKey.sig_len == 0);
     s_recvActionItems[0] = { ui::tr("mod_gpg.recv_sign"),     0, false, reinterpret_cast<void*>(1) };
-    s_recvActionItems[1] = { ui::tr("mod_gpg.recv_export"),   0, unsigned_key, reinterpret_cast<void*>(2) };
+    s_recvActionItems[1] = { ui::tr("mod_gpg.recv_export"),   0, false, reinterpret_cast<void*>(2) };
     s_recvActionItems[2] = { ui::tr("mod_gpg.recv_send_sig"), 0, unsigned_key, reinterpret_cast<void*>(6) };
     s_recvActionItems[3] = { ui::tr("mod_gpg.recv_forward"),  0, false, reinterpret_cast<void*>(4) };
     s_recvActionItems[4] = { ui::tr("mod_gpg.recv_qr"),       0, false, reinterpret_cast<void*>(5) };
-    s_recvActionItems[5] = { ui::tr("mod_gpg.recv_delete"),   0, false, reinterpret_cast<void*>(3) };
+    s_recvActionItems[5] = { ui::tr("core.delete"),   0, false, reinterpret_cast<void*>(3) };
     s_recvActionView.init(ui::tr("mod_gpg.recv_details"), s_recvActionItems, 6);
     s_recvActionView.setOnSelect(onReceivedActionSelect);
 
@@ -1133,8 +1095,8 @@ static void onReceivedActionSelect(uint16_t, void* userData) {
             break;
         case 2: {
             size_t out_len = 0;
-            if (!gpgBuildSignedKeyArmored(s_recvSelectedKey, s_recvExportBuf,
-                                          sizeof(s_recvExportBuf), &out_len)) {
+            if (!gpgBuildReceivedKeyArmored(s_recvSelectedKey, s_recvExportBuf,
+                                            sizeof(s_recvExportBuf), &out_len)) {
                 ui::showToast(ui::tr("mod_gpg.toast_sign_fail"));
                 return;
             }
@@ -1211,16 +1173,14 @@ static void onReceivedDeleteConfirm(void*) {
     // Pop ActionView + InfoView back to the list.
     ui::ViewStack::instance().pop();
     ui::ViewStack::instance().pop();
-    ui::showToast(ui::tr("mod_gpg.toast_deleted"));
+    ui::showToast(ui::tr("core.deleted"));
 }
 
 /**
  * \brief My-certifications (third-party signatures on our own key) UI state.
  */
 static ui::ListView    s_myCertListView;
-static ui::ListView    s_myCertActionView;
 EXT_RAM_BSS_ATTR static ui::ListItem s_myCertListItems[GpgSelfCertStore::kMaxCerts + 1];
-static ui::ListItem    s_myCertActionItems[1];
 EXT_RAM_BSS_ATTR static char s_myCertLabels[GpgSelfCertStore::kMaxCerts][72];
 static uint8_t         s_myCertSelectedIndex = 0;
 static gpg_self_cert_t s_myCertSelected = {};
@@ -1234,7 +1194,7 @@ static void rebuildMyCertList() {
     auto& store = GpgSelfCertStore::instance();
     auto idxBuf = ::cdc::core::psramAlloc<gpg_self_cert_index_entry_t>(GpgSelfCertStore::kMaxCerts);
     if (!idxBuf) {
-        s_myCertListView.init(ui::tr("mod_gpg.mycerts_title"), s_myCertListItems, 0);
+        s_myCertListView.init(ui::tr("mod_gpg.mycerts"), s_myCertListItems, 0);
         return;
     }
     uint8_t n = store.listIndex(idxBuf.get(), GpgSelfCertStore::kMaxCerts);
@@ -1248,14 +1208,14 @@ static void rebuildMyCertList() {
         s_myCertListItems[i] = { s_myCertLabels[i], 0, false,
                                  reinterpret_cast<void*>(static_cast<uintptr_t>(i)) };
     }
-    s_myCertListView.init(ui::tr("mod_gpg.mycerts_title"), s_myCertListItems, n);
+    s_myCertListView.init(ui::tr("mod_gpg.mycerts"), s_myCertListItems, n);
     s_myCertListView.setOnSelect(onMyCertListSelect);
 }
 
 static void showMyCertifications() {
     rebuildMyCertList();
     if (s_myCertListView.getItemCount() == 0) {
-        ui::showInfo(ui::tr("mod_gpg.mycerts_title"), ui::tr("mod_gpg.mycerts_none"));
+        ui::showInfo(ui::tr("mod_gpg.mycerts"), ui::tr("mod_gpg.mycerts_none"));
         return;
     }
     ui::ViewStack::instance().push(&s_myCertListView);
@@ -1280,27 +1240,23 @@ static void onMyCertListSelect(uint16_t, void* userData) {
                   "%s\nFP: %s\nRcvd: %s",
                   s_myCertSelected.issuer_uid, fp_v4, timeBuf);
 
-    s_myCertActionItems[0] = { ui::tr("mod_gpg.mycerts_delete"), 0, false,
-                               reinterpret_cast<void*>(1) };
-    s_myCertActionView.init(ui::tr("mod_gpg.mycerts_details"), s_myCertActionItems, 1);
-    s_myCertActionView.setOnSelect([](uint16_t, void*) {
+    // Show the certification details first; deleting is a context-menu action
+    // (key 3) on that view, so the user reads the info before any delete prompt.
+    s_infoView.init(ui::tr("mod_gpg.mycerts_details"), s_myCertDetailText);
+    s_infoView.setHint("[3] Delete  [N] Back");
+    s_infoView.setOnMenu([](void*) {
         ui::showConfirm(ui::tr("mod_gpg.mycerts_confirm_del"),
                         onMyCertDeleteConfirm, nullptr,
                         ui::ConfirmView::Icon::WARNING, nullptr);
-    });
-
-    s_infoView.init(ui::tr("mod_gpg.mycerts_details"), s_myCertDetailText);
+    }, nullptr);
     ui::ViewStack::instance().push(&s_infoView);
-    ui::ViewStack::instance().push(&s_myCertActionView);
 }
 
 static void onMyCertDeleteConfirm(void*) {
     GpgSelfCertStore::instance().deleteCert(s_myCertSelectedIndex);
     rebuildMyCertList();
-    // Pop ActionView + InfoView back to the list.
-    ui::ViewStack::instance().pop();
-    ui::ViewStack::instance().pop();
-    ui::showToast(ui::tr("mod_gpg.toast_deleted"));
+    ui::ViewStack::instance().pop();  // close the details view, back to the list
+    ui::showToast(ui::tr("core.deleted"));
 }
 
 /**

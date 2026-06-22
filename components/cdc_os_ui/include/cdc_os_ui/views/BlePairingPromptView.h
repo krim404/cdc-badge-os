@@ -26,6 +26,16 @@ public:
      */
     void prepare(uint16_t connHandle, uint32_t passkey, uint32_t timeoutMs = 30000);
 
+    /**
+     * Install an accept handler used when the badge is locked. When set, pressing
+     * Y dismisses the prompt and invokes the handler (which drives PIN-unlock)
+     * instead of accepting the pairing directly. Cleared by prepare().
+     */
+    void setOnLockedAccept(void (*cb)(void*), void* userData) {
+        onLockedAccept_ = cb;
+        lockedAcceptUd_ = userData;
+    }
+
     // IView
     void render(bool partial) override;
     InputResult onKey(char key) override;
@@ -40,6 +50,8 @@ private:
     uint32_t timeoutMs_ = 30000;
     uint32_t enteredAtMs_ = 0;
     bool responded_ = false;
+    void (*onLockedAccept_)(void*) = nullptr;
+    void* lockedAcceptUd_ = nullptr;
 
     void respond(bool accept);
 };

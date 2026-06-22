@@ -171,6 +171,16 @@ public:
     virtual void disable() = 0;
 
     /**
+     * \brief Signals that system startup is complete.
+     *
+     * Before this is called, enable() only records the request and defers the
+     * actual stack bring-up. This lets every GATT service registered during boot
+     * commit together in a single NimBLE start, so advertising begins once with
+     * the complete service-UUID set instead of racing per-module restarts.
+     */
+    virtual void notifySystemReady() {}
+
+    /**
      * Check if Bluetooth is currently enabled
      */
     virtual bool isEnabled() const = 0;

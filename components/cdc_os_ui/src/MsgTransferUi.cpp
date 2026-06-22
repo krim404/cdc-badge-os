@@ -29,6 +29,7 @@ constexpr uint32_t kPickerScanMs = 2500;
 // ---- consent ----
 InfoView* s_consentView = nullptr;
 char      s_consentText[160];
+bool      s_msgConsentWasLocked = false;
 
 // ---- peer picker / beacon scan ----
 ListItem s_peerItems[kMaxPeers];
@@ -282,8 +283,23 @@ void pushProgressView(bool isSend) {
 // Consent prompt
 // ===========================================================================
 
+/// Answers a consent accepted on the lock screen once the unlock PIN succeeds,
+/// so the transfer (and its pairing) continues on the unlocked badge.
+void onMsgConsentUnlocked(void* /*ud*/) {
+    MessageTransfer::instance().respondConsent(true);
+    pushProgressView(false);
+    ViewStack::instance().push(s_progressView);
+}
+
 void onMsgConsentYes(void* /*ud*/) {
     ViewStack::instance().hideModal();
+    if (s_msgConsentWasLocked) {
+        // Accepted over the lock screen: require the badge PIN, then answer the
+        // offer on the freshly unlocked badge (mirrors FIDO2).
+        s_msgConsentWasLocked = false;
+        requestUnlockForTransfer(onMsgConsentUnlocked, nullptr);
+        return;
+    }
     MessageTransfer::instance().respondConsent(true);
     pushProgressView(false);
     ViewStack::instance().push(s_progressView);
@@ -291,17 +307,11 @@ void onMsgConsentYes(void* /*ud*/) {
 
 void onMsgConsentNo(void* /*ud*/) {
     ViewStack::instance().hideModal();
+    s_msgConsentWasLocked = false;
     MessageTransfer::instance().respondConsent(false);
 }
 
 void onMsgConsentRequestEvent(const core::Event& /*evt*/) {
-    // Receiving requires an ephemeral pairing, which the lock screen rejects
-    // anyway; decline up front (mirrors the numeric-comparison pairing prompt)
-    // so no consent modal or peer name surfaces over the lock screen.
-    if (isBadgeLocked()) {
-        MessageTransfer::instance().respondConsent(false);
-        return;
-    }
     char peerName[cdc::msg::kNameBufSize] = {};
     char mime[cdc::msg::kMimeBufSize] = {};
     const char* descKey = nullptr;
@@ -316,6 +326,14 @@ void onMsgConsentRequestEvent(const core::Event& /*evt*/) {
              peerName[0] ? peerName : "?");
     snprintf(s_consentText, sizeof(s_consentText), "%s\n\n%s\n%lu B",
              fromLine, what, static_cast<unsigned long>(size));
+
+    // When locked, wake the screen and gate acceptance behind the badge PIN
+    // (mirrors FIDO2): show the offer, and only answer it after a PIN unlock.
+    s_msgConsentWasLocked = isBadgeLocked();
+    if (s_msgConsentWasLocked) {
+        auto* display = hal::getDisplayInstance();
+        if (display) display->backlightOn();
+    }
 
     if (!s_consentView) s_consentView = new InfoView();
     s_consentView->init(ui::tr("core.msg_offer_title"), s_consentText);

@@ -59,21 +59,23 @@ size_t buildCertSigPacket(const gpg_recv_key_t& key, uint8_t* out, size_t out_si
 bool gpgBuildOwnSignedKeyArmored(char* out, size_t out_size, size_t* out_len);
 
 /**
- * \brief Build an ASCII-armored OpenPGP block carrying the cross-signed key.
+ * \brief Build an ASCII-armored OpenPGP block for a received peer key.
  *
  * Packs the received key as Public Key Packet (Tag 6) + User ID Packet
- * (Tag 13) + Certification Signature Packet (Tag 2) into a single
- * `BEGIN/END PGP PUBLIC KEY BLOCK` payload. Suitable for `gpg --import`.
+ * (Tag 13) + the owner's UID self-signature + the DEC encryption subkey
+ * (Tag 14) with the owner's binding signature, so the result imports into
+ * GnuPG as a usable sign + encrypt key. Our own cross-certification is added
+ * only when the entry has been cross-signed; the export works either way.
  *
- * \param key Received key descriptor (must already have `my_signature`).
+ * \param key Received key descriptor.
  * \param out Output character buffer.
  * \param out_size Capacity of `out`.
  * \param out_len Bytes written (excluding any terminating null).
  * \return `true` on success; `false` on buffer overflow or invalid input.
  */
-bool gpgBuildSignedKeyArmored(const gpg_recv_key_t& key,
-                              char* out, size_t out_size,
-                              size_t* out_len);
+bool gpgBuildReceivedKeyArmored(const gpg_recv_key_t& key,
+                                char* out, size_t out_size,
+                                size_t* out_len);
 
 /**
  * \brief Build an ASCII-armored OpenPGP public-key block (no signature).
@@ -91,5 +93,23 @@ bool gpgBuildSignedKeyArmored(const gpg_recv_key_t& key,
 bool gpgBuildPublicKeyArmored(const gpg_recv_key_t& key,
                               char* out, size_t out_size,
                               size_t* out_len);
+
+/**
+ * \brief Gather the badge's own encryption-subkey material for transfer.
+ *
+ * Derives the DEC (RFC 6637 ECDH P-256) public point, its creation time, the
+ * UID self-signature over the primary SIG key and the DEC subkey-binding
+ * signature, all signed with the badge's own SIG slot. The receiver cannot
+ * forge these, so they travel in the badge-to-badge key payload and let an
+ * exchanged key be imported as a full sign + encrypt OpenPGP key.
+ *
+ * \param dec_pubkey 64-byte output: raw P-256 point X || Y.
+ * \param dec_created_at Output: DEC subkey creation timestamp.
+ * \param self_sig 64-byte output: UID self-certification (R || S).
+ * \param binding_sig 64-byte output: subkey-binding signature (R || S).
+ * \return `true` on success.
+ */
+bool gpgBuildOwnSubkeyMaterial(uint8_t dec_pubkey[64], uint32_t* dec_created_at,
+                               uint8_t self_sig[64], uint8_t binding_sig[64]);
 
 } // namespace cdc::mod_gpg

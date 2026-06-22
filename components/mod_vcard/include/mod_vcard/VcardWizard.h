@@ -15,23 +15,14 @@ namespace cdc::mod_vcard {
 class VcardWizard {
 public:
     /**
-     * \brief Resolves a localized step title.
-     * \param baseId The base i18n string ID of the owning module.
-     * \param offset Per-module string offset within the registered range.
-     * \return Translated string pointer.
-     */
-    using StringResolver = const char* (*)(uint16_t offset);
-
-    /**
-     * \brief Configures the wizard with i18n callbacks. Must be called before
+     * \brief Configures the wizard with i18n keys. Must be called before
      *        start() or edit() so step titles can be looked up.
-     * \param resolver Function returning a translated title for a string offset.
-     * \param titleOffsets Pointer to an array of 16 offsets for the wizard steps.
-     * \param savedOffset Offset of the "saved" toast message.
-     * \param failedOffset Offset of the generic "failed" toast message.
+     * \param titleKeys Pointer to an array of 16 i18n keys for the wizard steps.
+     * \param savedKey i18n key of the "saved" toast message.
+     * \param failedKey i18n key of the generic "failed" toast message.
      */
-    static void configure(StringResolver resolver, const uint16_t* titleOffsets,
-                          uint16_t savedOffset, uint16_t failedOffset);
+    static void configure(const char* const* titleKeys, const char* savedKey,
+                          const char* failedKey);
 
     /**
      * \brief Callback fired after a successful save, before returning to the

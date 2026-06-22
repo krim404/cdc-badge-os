@@ -21,11 +21,8 @@ namespace cdc::mod_otphid {
 
 constexpr ui::I18nEntry kStrings[] = {
     {"mod_otphid.title",      "USB OTP (CR)"},
-    {"mod_otphid.status",     "Status"},
     {"mod_otphid.connection", "Connection"},
-    {"mod_otphid.connected",  "Connected"},
     {"mod_otphid.waiting",    "Waiting for host"},
-    {"mod_otphid.inactive",   "Inactive"},
     {"mod_otphid.identity",   "Identity"},
     {"mod_otphid.cr_confirm", "Allow challenge-response?"},
 };
@@ -70,9 +67,9 @@ public:
         gfx->setCursor(8, 30);
         ui::render::printText(gfx, ui::tr("mod_otphid.connection"));
         ui::render::printText(gfx, ": ");
-        const char* state = otp.isConnected()   ? ui::tr("mod_otphid.connected")
+        const char* state = otp.isConnected()   ? ui::tr("core.connected")
                             : otp.isRegistered() ? ui::tr("mod_otphid.waiting")
-                                                 : ui::tr("mod_otphid.inactive");
+                                                 : ui::tr("core.inactive");
         ui::render::printText(gfx, state);
 
         gfx->setCursor(8, 48);
@@ -119,7 +116,7 @@ static void onMenuSelect(uint16_t index, void* userData) {
 
 /** \brief Builds the top-level OTP HID menu entries. */
 static void rebuildMenu() {
-    s_menuItems[MENU_STATUS] = {ui::tr("mod_otphid.status"), 0, false, nullptr};
+    s_menuItems[MENU_STATUS] = {ui::tr("core.status"), 0, false, nullptr};
     s_menuView.init(ui::tr("mod_otphid.title"), s_menuItems, MENU_COUNT);
 }
 

@@ -32,105 +32,56 @@ static const char* TAG = "VCARD";
 namespace cdc::mod_vcard {
 
 constexpr ui::I18nEntry kStrings[] = {
-    {"mod_vcard.title",            "vCards"},          // 0  STR_VCARD
-    {"mod_vcard.my_vcard",         "My vCard"},        // 1  STR_MY_VCARD
-    {"mod_vcard.nearby",           "Nearby"},          // 2  STR_NEARBY
-    {"mod_vcard.scan",             "Start Scan"},      // 3  STR_SCAN
-    {"mod_vcard.stop_scan",        "Stop Scan"},       // 4  STR_STOP_SCAN
-    {"mod_vcard.advertising",      "Start Advertising"},// 5 STR_ADVERTISING
-    {"mod_vcard.stop_adv",         "Stop Advertising"},// 6  STR_STOP_ADV
-    {"mod_vcard.exchange",         "Exchange"},        // 7  STR_EXCHANGE
-    {"mod_vcard.no_peers",         "No peers found"},  // 8  STR_NO_PEERS
-    {"mod_vcard.scanning",         "Scanning..."},     // 9  STR_SCANNING
-    {"mod_vcard.exchange_req",     "Exchange Request"},// 10 STR_EXCHANGE_REQ
-    {"mod_vcard.accept",           "Accept"},          // 11 STR_ACCEPT
-    {"mod_vcard.decline",          "Decline"},         // 12 STR_DECLINE
-    {"mod_vcard.exchange_ok",      "Exchange successful"},// 13 STR_EXCHANGE_OK
-    {"mod_vcard.exchange_fail",    "Exchange failed"}, // 14 STR_EXCHANGE_FAIL
-    {"mod_vcard.connecting",       "Connecting..."},   // 15 STR_CONNECTING
-    {"mod_vcard.edit_my_vcard",    "Edit my vCard"},   // 16 STR_EDIT_MY_VCARD
-    {"mod_vcard.no_vcard",         "No vCard set"},    // 17 STR_NO_VCARD
-    {"mod_vcard.saved",            "Saved"},           // 18 STR_SAVED
-    {"mod_vcard.given_name",       "First name"},      // 19 STR_GIVEN_NAME
-    {"mod_vcard.family_name",      "Last name"},       // 20 STR_FAMILY_NAME
-    {"mod_vcard.formatted_name",   "Display name"},    // 21 STR_FORMATTED_NAME
-    {"mod_vcard.organization",     "Organization"},    // 22 STR_ORGANIZATION
-    {"mod_vcard.position",         "Position"},        // 23 STR_POSITION
-    {"mod_vcard.email",            "Email"},           // 24 STR_EMAIL
-    {"mod_vcard.tel_cell",         "Phone (Mobile)"},  // 25 STR_TEL_CELL
-    {"mod_vcard.tel_home",         "Phone (Home)"},    // 26 STR_TEL_HOME
-    {"mod_vcard.tel_work",         "Phone (Work)"},    // 27 STR_TEL_WORK
-    {"mod_vcard.url",              "Website"},         // 28 STR_URL
-    {"mod_vcard.telegram",         "Telegram"},        // 29 STR_TELEGRAM
-    {"mod_vcard.signal",           "Signal"},          // 30 STR_SIGNAL
-    {"mod_vcard.matrix",           "Matrix"},          // 31 STR_MATRIX
-    {"mod_vcard.threema",          "Threema"},         // 32 STR_THREEMA
-    {"mod_vcard.social_profile",   "Social Profile"},  // 33 STR_SOCIAL_PROFILE
-    {"mod_vcard.note",             "Note"},            // 34 STR_NOTE
-    {"mod_vcard.send",             "Send vCard"},      // 35 STR_SEND
-    {"mod_vcard.received",         "Contact (vCard)"}, // 36 STR_RECEIVED
-    {"mod_vcard.received_title",   "Received vCards"}, // 37 STR_RECEIVED_TITLE
-    {"mod_vcard.no_received",      "No received vCards"},// 38 STR_NO_RECEIVED
-    {"mod_vcard.show_qr",          "Show QR"},         // 39 STR_SHOW_QR
-    {"mod_vcard.forward",          "Forward"},         // 40 STR_FORWARD
-    {"mod_vcard.confirm_delete",   "Delete this contact?"},// 41 STR_CONFIRM_DELETE
+    {"mod_vcard.title",            "vCards"},
+    {"mod_vcard.my_vcard",         "My vCard"},
+    {"mod_vcard.nearby",           "Nearby"},
+    {"mod_vcard.scan",             "Start Scan"},
+    {"mod_vcard.stop_scan",        "Stop Scan"},
+    {"mod_vcard.advertising",      "Start Advertising"},
+    {"mod_vcard.stop_adv",         "Stop Advertising"},
+    {"mod_vcard.exchange",         "Exchange"},
+    {"mod_vcard.no_peers",         "No peers found"},
+    {"mod_vcard.scanning",         "Scanning..."},
+    {"mod_vcard.exchange_req",     "Exchange Request"},
+    {"mod_vcard.accept",           "Accept"},
+    {"mod_vcard.decline",          "Decline"},
+    {"mod_vcard.exchange_ok",      "Exchange successful"},
+    {"mod_vcard.exchange_fail",    "Exchange failed"},
+    {"mod_vcard.connecting",       "Connecting..."},
+    {"mod_vcard.edit_my_vcard",    "Edit my vCard"},
+    {"mod_vcard.no_vcard",         "No vCard set"},
+    {"mod_vcard.given_name",       "First name"},
+    {"mod_vcard.family_name",      "Last name"},
+    {"mod_vcard.formatted_name",   "Display name"},
+    {"mod_vcard.organization",     "Organization"},
+    {"mod_vcard.position",         "Position"},
+    {"mod_vcard.email",            "Email"},
+    {"mod_vcard.tel_cell",         "Phone (Mobile)"},
+    {"mod_vcard.tel_home",         "Phone (Home)"},
+    {"mod_vcard.tel_work",         "Phone (Work)"},
+    {"mod_vcard.url",              "Website"},
+    {"mod_vcard.telegram",         "Telegram"},
+    {"mod_vcard.matrix",           "Matrix"},
+    {"mod_vcard.threema",          "Threema"},
+    {"mod_vcard.social_profile",   "Social Profile"},
+    {"mod_vcard.note",             "Note"},
+    {"mod_vcard.send",             "Send vCard"},
+    {"mod_vcard.received",         "Contact (vCard)"},
+    {"mod_vcard.received_title",   "Received vCards"},
+    {"mod_vcard.no_received",      "No received vCards"},
+    {"mod_vcard.show_qr",          "Show QR"},
+    {"mod_vcard.forward",          "Forward"},
+    {"mod_vcard.confirm_delete",   "Delete this contact?"},
 };
 
-// Numeric offsets retained because VcardWizard takes an offset-array + resolver.
-static constexpr uint16_t STR_VCARD = 0;
-static constexpr uint16_t STR_MY_VCARD = 1;
-static constexpr uint16_t STR_NEARBY = 2;
-static constexpr uint16_t STR_SCAN = 3;
-static constexpr uint16_t STR_STOP_SCAN = 4;
-static constexpr uint16_t STR_ADVERTISING = 5;
-static constexpr uint16_t STR_STOP_ADV = 6;
-static constexpr uint16_t STR_EXCHANGE = 7;
-static constexpr uint16_t STR_NO_PEERS = 8;
-static constexpr uint16_t STR_SCANNING = 9;
-static constexpr uint16_t STR_EXCHANGE_REQ = 10;
-static constexpr uint16_t STR_ACCEPT = 11;
-static constexpr uint16_t STR_DECLINE = 12;
-static constexpr uint16_t STR_EXCHANGE_OK = 13;
-static constexpr uint16_t STR_EXCHANGE_FAIL = 14;
-static constexpr uint16_t STR_CONNECTING = 15;
-static constexpr uint16_t STR_EDIT_MY_VCARD = 16;
-static constexpr uint16_t STR_NO_VCARD = 17;
-static constexpr uint16_t STR_SAVED = 18;
-static constexpr uint16_t STR_GIVEN_NAME = 19;
-static constexpr uint16_t STR_FAMILY_NAME = 20;
-static constexpr uint16_t STR_FORMATTED_NAME = 21;
-static constexpr uint16_t STR_ORGANIZATION = 22;
-static constexpr uint16_t STR_POSITION = 23;
-static constexpr uint16_t STR_EMAIL = 24;
-static constexpr uint16_t STR_TEL_CELL = 25;
-static constexpr uint16_t STR_TEL_HOME = 26;
-static constexpr uint16_t STR_TEL_WORK = 27;
-static constexpr uint16_t STR_URL = 28;
-static constexpr uint16_t STR_TELEGRAM = 29;
-static constexpr uint16_t STR_SIGNAL = 30;
-static constexpr uint16_t STR_MATRIX = 31;
-static constexpr uint16_t STR_THREEMA = 32;
-static constexpr uint16_t STR_SOCIAL_PROFILE = 33;
-static constexpr uint16_t STR_NOTE = 34;
-static constexpr uint16_t STR_SEND = 35;
-static constexpr uint16_t STR_RECEIVED = 36;
-static constexpr uint16_t STR_RECEIVED_TITLE = 37;
-static constexpr uint16_t STR_NO_RECEIVED = 38;
-static constexpr uint16_t STR_SHOW_QR = 39;
-static constexpr uint16_t STR_FORWARD = 40;
-static constexpr uint16_t STR_CONFIRM_DELETE = 41;
-
-static const uint16_t s_wizardStepOffsets[16] = {
-    STR_GIVEN_NAME, STR_FAMILY_NAME, STR_FORMATTED_NAME, STR_ORGANIZATION,
-    STR_POSITION, STR_EMAIL, STR_TEL_CELL, STR_TEL_HOME, STR_TEL_WORK,
-    STR_URL, STR_TELEGRAM, STR_SIGNAL, STR_MATRIX, STR_THREEMA,
-    STR_SOCIAL_PROFILE, STR_NOTE,
+static const char* const s_wizardStepKeys[16] = {
+    "mod_vcard.given_name", "mod_vcard.family_name", "mod_vcard.formatted_name",
+    "mod_vcard.organization", "mod_vcard.position", "mod_vcard.email",
+    "mod_vcard.tel_cell", "mod_vcard.tel_home", "mod_vcard.tel_work",
+    "mod_vcard.url", "mod_vcard.telegram", "core.signal",
+    "mod_vcard.matrix", "mod_vcard.threema", "mod_vcard.social_profile",
+    "mod_vcard.note",
 };
-
-static const char* mstr(uint16_t offset) {
-    if (offset >= std::size(kStrings)) return "?";
-    return ui::tr(kStrings[offset].key);
-}
 
 static void registerStrings() {
     ui::I18n::instance().registerEnglishTable(kStrings, std::size(kStrings));
@@ -226,22 +177,22 @@ static void showVcardDetails(const char* title, const char* raw, bool withAction
         append("%s %s\n\n", s_parsed.given_name, s_parsed.family_name);
     }
 
-    auto field = [&](uint16_t label, const char* value) {
-        if (value[0]) append("%s: %s\n", mstr(label), value);
+    auto field = [&](const char* labelKey, const char* value) {
+        if (value[0]) append("%s: %s\n", ui::tr(labelKey), value);
     };
-    field(STR_ORGANIZATION,   s_parsed.organization);
-    field(STR_POSITION,       s_parsed.title);
-    field(STR_EMAIL,          s_parsed.email);
-    field(STR_TEL_CELL,       s_parsed.tel_cell);
-    field(STR_TEL_HOME,       s_parsed.tel_home);
-    field(STR_TEL_WORK,       s_parsed.tel_work);
-    field(STR_URL,            s_parsed.url);
-    field(STR_TELEGRAM,       s_parsed.impp_telegram);
-    field(STR_SIGNAL,         s_parsed.impp_signal);
-    field(STR_MATRIX,         s_parsed.impp_matrix);
-    field(STR_THREEMA,        s_parsed.impp_threema);
-    field(STR_SOCIAL_PROFILE, s_parsed.social_profile);
-    field(STR_NOTE,           s_parsed.note);
+    field("mod_vcard.organization",   s_parsed.organization);
+    field("mod_vcard.position",       s_parsed.title);
+    field("mod_vcard.email",          s_parsed.email);
+    field("mod_vcard.tel_cell",       s_parsed.tel_cell);
+    field("mod_vcard.tel_home",       s_parsed.tel_home);
+    field("mod_vcard.tel_work",       s_parsed.tel_work);
+    field("mod_vcard.url",            s_parsed.url);
+    field("mod_vcard.telegram",       s_parsed.impp_telegram);
+    field("core.signal",              s_parsed.impp_signal);
+    field("mod_vcard.matrix",         s_parsed.impp_matrix);
+    field("mod_vcard.threema",        s_parsed.impp_threema);
+    field("mod_vcard.social_profile", s_parsed.social_profile);
+    field("mod_vcard.note",           s_parsed.note);
 
     if (n == 0) snprintf(s_text, sizeof(s_text), "%s", raw);
 
@@ -286,11 +237,11 @@ static void showVcardQr(const char* raw, const char* fallbackTitle) {
  * \brief Rebuilds the vCard main menu.
  */
 static void rebuildMainMenu() {
-    s_mainMenuItems[MENU_MY_VCARD]      = {mstr(STR_MY_VCARD),      0, false, nullptr};
-    s_mainMenuItems[MENU_EDIT_MY_VCARD] = {mstr(STR_EDIT_MY_VCARD), 0, false, nullptr};
-    s_mainMenuItems[MENU_SEND]          = {mstr(STR_SEND),          0, false, nullptr};
-    s_mainMenuItems[MENU_RECEIVED]      = {mstr(STR_RECEIVED_TITLE), 0, false, nullptr};
-    s_mainMenu.init(mstr(STR_VCARD), s_mainMenuItems, MENU_COUNT);
+    s_mainMenuItems[MENU_MY_VCARD]      = {ui::tr("mod_vcard.my_vcard"),      0, false, nullptr};
+    s_mainMenuItems[MENU_EDIT_MY_VCARD] = {ui::tr("mod_vcard.edit_my_vcard"), 0, false, nullptr};
+    s_mainMenuItems[MENU_SEND]          = {ui::tr("mod_vcard.send"),          0, false, nullptr};
+    s_mainMenuItems[MENU_RECEIVED]      = {ui::tr("mod_vcard.received_title"), 0, false, nullptr};
+    s_mainMenu.init(ui::tr("mod_vcard.title"), s_mainMenuItems, MENU_COUNT);
 }
 
 /**
@@ -306,9 +257,9 @@ static void onMainMenuSelect(uint16_t index, void* userData) {
             static EXT_RAM_BSS_ATTR char vcardText[VCARD_MAX_LEN + 1];
             size_t len = vcard_store_get_own(vcardText, sizeof(vcardText));
             if (len > 0) {
-                showVcardDetails(mstr(STR_MY_VCARD), vcardText, false);
+                showVcardDetails(ui::tr("mod_vcard.my_vcard"), vcardText, false);
             } else {
-                ui::showToastInfo(mstr(STR_NO_VCARD));
+                ui::showToastInfo(ui::tr("mod_vcard.no_vcard"));
             }
             break;
         }
@@ -327,7 +278,7 @@ static void onMainMenuSelect(uint16_t index, void* userData) {
             static EXT_RAM_BSS_ATTR char own[VCARD_MAX_LEN + 1];
             size_t len = vcard_store_get_own(own, sizeof(own));
             if (len == 0) {
-                ui::showToastInfo(mstr(STR_NO_VCARD));
+                ui::showToastInfo(ui::tr("mod_vcard.no_vcard"));
                 break;
             }
             cdc::msg::MessageTransfer::instance().beginInteractiveSend(
@@ -359,8 +310,8 @@ static void rebuildReceivedList() {
         s_recvItems[i] = {s_recvLabels[i], 0, false,
                           reinterpret_cast<void*>(static_cast<uintptr_t>(slot))};
     }
-    s_receivedMenu.setEmptyText(mstr(STR_NO_RECEIVED));
-    s_receivedMenu.init(mstr(STR_RECEIVED_TITLE), s_recvItems, s_recvCount);
+    s_receivedMenu.setEmptyText(ui::tr("mod_vcard.no_received"));
+    s_receivedMenu.init(ui::tr("mod_vcard.received_title"), s_recvItems, s_recvCount);
 }
 
 /**
@@ -373,7 +324,7 @@ static void onReceivedSelect(uint16_t index, void* userData) {
     s_activeSlot = static_cast<uint16_t>(reinterpret_cast<uintptr_t>(userData));
     static EXT_RAM_BSS_ATTR char raw[VCARD_MAX_LEN + 1];
     if (vcard_store_get(s_activeSlot, raw, sizeof(raw)) == 0) return;
-    showVcardDetails(mstr(STR_RECEIVED_TITLE), raw, true);
+    showVcardDetails(ui::tr("mod_vcard.received_title"), raw, true);
 }
 
 /// Context-menu action: create a new stored contact via the wizard.
@@ -390,7 +341,7 @@ static void ctxReceivedEdit() {
 static void ctxReceivedQr() {
     static EXT_RAM_BSS_ATTR char raw[VCARD_MAX_LEN + 1];
     if (vcard_store_get(s_activeSlot, raw, sizeof(raw)) == 0) return;
-    showVcardQr(raw, mstr(STR_RECEIVED_TITLE));
+    showVcardQr(raw, ui::tr("mod_vcard.received_title"));
 }
 
 /// Context-menu action: forward the active contact to a nearby badge.
@@ -421,7 +372,7 @@ static void onReceivedDeleteConfirm(void* userData) {
 
 /// Context-menu action: confirm and delete the active contact.
 static void ctxReceivedDelete() {
-    ui::showConfirm(mstr(STR_CONFIRM_DELETE), onReceivedDeleteConfirm, nullptr,
+    ui::showConfirm(ui::tr("mod_vcard.confirm_delete"), onReceivedDeleteConfirm, nullptr,
                     ui::ConfirmView::Icon::WARNING, &s_activeSlot);
 }
 
@@ -433,8 +384,8 @@ static void onReceivedViewMenu(void* userData) {
     (void)userData;
     const ui::ContextMenuItem items[] = {
         {ui::tr("core.edit"),   ctxReceivedEdit},
-        {mstr(STR_FORWARD),     ctxReceivedForward},
-        {mstr(STR_SHOW_QR),     ctxReceivedQr},
+        {ui::tr("mod_vcard.forward"),     ctxReceivedForward},
+        {ui::tr("mod_vcard.show_qr"),     ctxReceivedQr},
         {ui::tr("core.delete"), ctxReceivedDelete},
     };
     ui::showContextMenu(ui::tr("core.actions"), items, 4);
@@ -454,7 +405,7 @@ static void onReceivedMenu(uint16_t index, void* userData) {
     if (s_recvCount > 0) {
         s_activeSlot = static_cast<uint16_t>(reinterpret_cast<uintptr_t>(userData));
         items[n++] = {ui::tr("core.edit"),   ctxReceivedEdit};
-        items[n++] = {mstr(STR_FORWARD),     ctxReceivedForward};
+        items[n++] = {ui::tr("mod_vcard.forward"),     ctxReceivedForward};
         items[n++] = {ui::tr("core.delete"), ctxReceivedDelete};
     }
     ui::showContextMenu(ui::tr("core.actions"), items, n);
@@ -481,7 +432,7 @@ static void openReceivedList() {
  * \brief Returns the localized label for the lock-screen quick action.
  */
 static const char* getMyVcardLockscreenLabel() {
-    return mstr(STR_MY_VCARD);
+    return ui::tr("mod_vcard.my_vcard");
 }
 
 /**
@@ -492,10 +443,10 @@ static void onMyVcardLockscreenSelect() {
     static EXT_RAM_BSS_ATTR char s_qrBuf[VCARD_MAX_LEN + 1];
     size_t len = vcard_store_get_own(s_qrBuf, sizeof(s_qrBuf));
     if (len == 0) {
-        ui::showToastError(mstr(STR_NO_VCARD));
+        ui::showToastError(ui::tr("mod_vcard.no_vcard"));
         return;
     }
-    showVcardQr(s_qrBuf, mstr(STR_MY_VCARD));
+    showVcardQr(s_qrBuf, ui::tr("mod_vcard.my_vcard"));
 }
 
 // ============================================================================
@@ -784,7 +735,7 @@ bool VcardModule::init() {
     registerStrings();
     registerSerialCommands();
 
-    VcardWizard::configure(mstr, s_wizardStepOffsets, STR_SAVED, STR_EXCHANGE_FAIL);
+    VcardWizard::configure(s_wizardStepKeys, "core.saved", "mod_vcard.exchange_fail");
 
     // Register as the handler for incoming "text/vcard" message transfers.
     cdc::msg::MessageTransfer::instance().registerHandler(
@@ -825,7 +776,7 @@ uint8_t VcardModule::getMenuItems(core::ModuleMenuItem* items, uint8_t maxItems)
     if (!items || maxItems == 0) return 0;
 
     items[0] = {
-        mstr(STR_VCARD),
+        ui::tr("mod_vcard.title"),
         110,
         []() -> ui::IView* {
             if (!s_viewsInitialized) {

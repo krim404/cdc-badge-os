@@ -7,6 +7,7 @@
 #include "mod_gpg/GpgStorage.h"
 #include "mod_gpg/gpg.h"
 #include "openpgp/fingerprint.h"
+#include "openpgp/xsig.h"
 
 #include "cdc_hal/ISecureElement.h"
 
@@ -50,8 +51,19 @@ size_t gpgBuildOwnKeyPayload(uint8_t* out, size_t out_size) {
         return 0;
     }
 
+    // DEC encryption-subkey material (public point + the two signatures the
+    // peer cannot reproduce locally). Required for the exchanged key to import
+    // as a usable encryption key.
+    uint8_t dec_pubkey[64] = {0};
+    uint32_t dec_created_at = 0;
+    uint8_t self_sig[64] = {0};
+    uint8_t binding_sig[64] = {0};
+    if (!gpgBuildOwnSubkeyMaterial(dec_pubkey, &dec_created_at, self_sig, binding_sig)) {
+        return 0;
+    }
+
     const size_t uid_len = strnlen(status.user_id, sizeof(status.user_id));
-    const size_t total = 1 + 1 + pubkey_len + 4 + 20 + 1 + uid_len;
+    const size_t total = 1 + 1 + pubkey_len + 4 + 20 + 1 + uid_len + kGpgKeyDecBlock;
     if (total > out_size) return 0;
 
     size_t off = 0;
@@ -66,6 +78,14 @@ size_t gpgBuildOwnKeyPayload(uint8_t* out, size_t out_size) {
     out[off++] = static_cast<uint8_t>(uid_len);
     std::memcpy(out + off, status.user_id, uid_len);
     off += uid_len;
+    writeBe32(out + off, dec_created_at);
+    off += 4;
+    std::memcpy(out + off, dec_pubkey, 64);
+    off += 64;
+    std::memcpy(out + off, self_sig, 64);
+    off += 64;
+    std::memcpy(out + off, binding_sig, 64);
+    off += 64;
     return off;
 }
 
@@ -74,7 +94,7 @@ size_t gpgBuildRecvKeyPayload(const gpg_recv_key_t& key, uint8_t* out, size_t ou
     if (pubkey_len != 32 && pubkey_len != 64) return 0;
 
     const size_t uid_len = strnlen(key.user_id, sizeof(key.user_id));
-    const size_t total = 1 + 1 + pubkey_len + 4 + 20 + 1 + uid_len;
+    const size_t total = 1 + 1 + pubkey_len + 4 + 20 + 1 + uid_len + kGpgKeyDecBlock;
     if (total > out_size) return 0;
 
     size_t off = 0;
@@ -89,6 +109,14 @@ size_t gpgBuildRecvKeyPayload(const gpg_recv_key_t& key, uint8_t* out, size_t ou
     out[off++] = static_cast<uint8_t>(uid_len);
     std::memcpy(out + off, key.user_id, uid_len);
     off += uid_len;
+    writeBe32(out + off, key.created_at_dec);
+    off += 4;
+    std::memcpy(out + off, key.pubkey_dec, 64);
+    off += 64;
+    std::memcpy(out + off, key.owner_self_sig, 64);
+    off += 64;
+    std::memcpy(out + off, key.dec_binding_sig, 64);
+    off += 64;
     return off;
 }
 
@@ -119,6 +147,19 @@ bool gpgParseKeyPayload(const uint8_t* data, size_t len, gpg_recv_key_t* out) {
     if (uid_len > 63 || off + uid_len > len) return false;
     std::memcpy(out->user_id, data + off, uid_len);
     out->user_id[uid_len] = '\0';
+    off += uid_len;
+
+    // DEC encryption-subkey block: created_at_dec, pubkey_dec, owner_self_sig,
+    // dec_binding_sig. The binding signature is verified by GnuPG on import.
+    if (off + kGpgKeyDecBlock > len) return false;
+    out->created_at_dec = readBe32(data + off);
+    off += 4;
+    std::memcpy(out->pubkey_dec, data + off, 64);
+    off += 64;
+    std::memcpy(out->owner_self_sig, data + off, 64);
+    off += 64;
+    std::memcpy(out->dec_binding_sig, data + off, 64);
+    off += 64;
 
     // Reject the payload unless the transmitted fingerprint reproduces from the
     // transmitted creation time, so the stored key (and any certification over

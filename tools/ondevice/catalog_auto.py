@@ -406,18 +406,28 @@ def test_gpg_xsign(b: BadgeSerial) -> None:
         require(mi, f"imported peer key not listed: {joined(lst)}")
         idx = mi.group(1)
 
-        cs = b.command(f"GPG CROSS_SIGN {idx}", timeout=10)
-        require(find_line(cs, "OK"), f"CROSS_SIGN failed: {joined(cs)}")
+        # A received key exports without cross-signing, carrying the DEC
+        # encryption subkey so a peer can encrypt to it.
+        ex0 = b.command_until(f"GPG RECV_EXPORT {idx}", "END PGP", timeout=10)
+        require(find_line(ex0, "BEGIN PGP PUBLIC KEY"),
+                f"RECV_EXPORT produced no armored block: {joined(ex0)}")
+        tags0 = _packet_tags(_dearmor(joined(ex0)))
+        require(14 in tags0,
+                f"no encryption subkey (tag 14) in unsigned export: {tags0}")
 
-        ex = b.command_until(f"GPG EXPORT_SIGNED {idx}", "END PGP", timeout=10)
+        cs = b.command(f"GPG RECV_CROSS_SIGN {idx}", timeout=10)
+        require(find_line(cs, "OK"), f"RECV_CROSS_SIGN failed: {joined(cs)}")
+
+        ex = b.command_until(f"GPG RECV_EXPORT {idx}", "END PGP", timeout=10)
         require(find_line(ex, "BEGIN PGP PUBLIC KEY"),
-                f"EXPORT_SIGNED produced no armored block: {joined(ex)}")
+                f"RECV_EXPORT produced no armored block: {joined(ex)}")
         require(find_line(ex, "END PGP"),
-                f"EXPORT_SIGNED armored block was truncated (no END): {joined(ex)}")
+                f"RECV_EXPORT armored block was truncated (no END): {joined(ex)}")
         tags = _packet_tags(_dearmor(joined(ex)))
         require(6 in tags, f"no public-key packet (tag 6) in export: {tags}")
         require(13 in tags, f"no user-id packet (tag 13) in export: {tags}")
         require(2 in tags, f"no certification signature packet (tag 2): {tags}")
+        require(14 in tags, f"no encryption subkey (tag 14) in export: {tags}")
     finally:
         if imported:
             md = match_line(b.command("GPG RECV_LIST", timeout=8),

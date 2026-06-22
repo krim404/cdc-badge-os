@@ -207,7 +207,7 @@ void showBackupMenu() {
     }
     s_backupItems[0] = {ui::tr("core.backup_export"), 0, false, nullptr};
     s_backupItems[1] = {ui::tr("core.backup_import"), 0, false, nullptr};
-    s_backupItems[2] = {ui::tr("core.backup_delete"), 0, false, nullptr};
+    s_backupItems[2] = {ui::tr("core.delete"), 0, false, nullptr};
     s_backupMenu->init(ui::tr("core.backup"), s_backupItems, 3);
     ViewStack::instance().push(s_backupMenu);
 }

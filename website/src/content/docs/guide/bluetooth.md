@@ -77,17 +77,16 @@ read-only: it does not pair with or bond to the scanned devices.
 
 ## The beacon (badge-to-badge transfer)
 
-The **Beacon** row in the Bluetooth menu toggles the badge-to-badge transfer
-beacon. When on, the badge advertises the message-transfer service so other
-badges can find it and send it a contact card or other typed payload. It shows
-**Beacon: on** (with a `*` when actively advertising) or **Beacon: off**. The
-beacon keeps advertising while you scan and resumes automatically after a
-transfer, so the badge stays discoverable without a manual reset.
+The badge-to-badge transfer **beacon** has its own submenu, reached from the
+Tools menu. When on, the badge advertises the message-transfer service so other
+badges can find it and send it a contact card or other typed payload. The beacon
+keeps advertising while you scan and resumes automatically after a transfer, so
+the badge stays discoverable without a manual reset.
 
-There is a dedicated beacon submenu (reached from the Tools menu) with three
-items:
+The beacon submenu has three items:
 
-- **Beacon** toggle (on/off).
+- **Beacon** toggle (on/off) — shows **Beacon: on** (with a `*` when actively
+  advertising) or **Beacon: off**.
 - **Beacon name** — the name other badges see; defaults to the badge name.
 - **Beacon scan** — a read-only scan that continuously lists other badges
   advertising the transfer service, with their signal strength. It runs as a

@@ -638,6 +638,13 @@ extern "C" void app_main(void)
     // STAGE 6b: Plugin system (WAMR + plugins partition)
     initPluginSystem();
 
+    // All modules and plugins have now registered their GATT services and
+    // advertising UUIDs. Release the BLE boot barrier so any deferred enable
+    // brings the stack up once, committing every service together.
+    if (auto* bt = cdc::hal::getBluetoothControllerInstance()) {
+        bt->notifySystemReady();
+    }
+
     // STAGE 7: Final startup
     startApp();
 

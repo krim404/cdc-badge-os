@@ -25,6 +25,8 @@ void BlePairingPromptView::prepare(uint16_t connHandle, uint32_t passkey,
     timeoutMs_ = timeoutMs;
     responded_ = false;
     enteredAtMs_ = 0;
+    onLockedAccept_ = nullptr;
+    lockedAcceptUd_ = nullptr;
     dirty_ = true;
 }
 
@@ -49,7 +51,15 @@ InputResult BlePairingPromptView::onKey(char key) {
     if (responded_) return InputResult::CONSUMED;
 
     if (key == KEY_YES) {
-        respond(true);
+        if (onLockedAccept_) {
+            // Locked: do not pair yet. Dismiss the prompt and hand off to the
+            // PIN-unlock flow; the pairing is accepted only once the PIN succeeds.
+            responded_ = true;
+            ViewStack::instance().hideModal();
+            onLockedAccept_(lockedAcceptUd_);
+        } else {
+            respond(true);
+        }
         return InputResult::CONSUMED;
     }
     if (key == KEY_NO) {

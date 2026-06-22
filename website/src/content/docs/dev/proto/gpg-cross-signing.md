@@ -45,22 +45,32 @@ packet stream:
 
 | Field | Size | Notes |
 | --- | --- | --- |
-| curve | 1 | `0` = Ed25519, `1` = P-256 |
+| curve | 1 | `0` = Ed25519, `1` = P-256 (signature primary key) |
 | pubkey_len | 1 | 32 for Ed25519, 64 for P-256 |
-| pubkey | 32 or 64 | raw key bytes (P-256 is X\|\|Y, no `0x04` prefix) |
+| pubkey | 32 or 64 | raw signature key bytes (P-256 is X\|\|Y, no `0x04` prefix) |
 | created_at | 4 | key creation time (big-endian), reproduces the fingerprint |
 | fingerprint_v4 | 20 | sender's OpenPGP v4 (SHA-1) fingerprint |
 | user_id_len | 1 | 0 to 63 |
 | user_id | 0 to 63 | UTF-8 user-id |
+| created_at_dec | 4 | DEC subkey creation time (big-endian) |
+| pubkey_dec | 64 | DEC encryption subkey, raw P-256 point X\|\|Y |
+| owner_self_sig | 64 | sender's UID self-signature, R\|\|S |
+| dec_binding_sig | 64 | sender's DEC subkey-binding signature, R\|\|S |
 
-Maximum payload is 154 bytes (P-256, 63-byte user-id). On receipt the badge
+Maximum payload is ~350 bytes (P-256, 63-byte user-id). On receipt the badge
 recomputes the v4 fingerprint from `(curve, pubkey, created_at)` and rejects the
 record unless it matches the transmitted `fingerprint_v4`, so a later
 certification binds to the peer's real OpenPGP key. The receiver also computes a
 v5 fingerprint locally and records the receive timestamp.
 
-**Send Key** serialises `gpg_get_status()` plus the raw public key read from the
-signature ECC slot; **Forward** serialises a stored received key.
+The DEC encryption subkey travels with the two signatures the sender made over
+it (its UID self-signature and the subkey-binding signature); the receiver
+cannot forge these. They are re-emitted verbatim when the received key is
+exported, so an exchanged key imports into GnuPG as a full sign + encrypt key.
+
+**Send Key** serialises `gpg_get_status()`, the signature key read from the
+signature ECC slot, and the DEC encryption-subkey material; **Forward**
+serialises a stored received key.
 
 ### Certification-return payload
 
@@ -84,9 +94,10 @@ key's fingerprint, then stores it in the self-cert store.
 Each received key is persisted as a single NVS blob, keyed by the first 4 bytes
 of its v4 fingerprint. The store is a singleton with a hard ceiling of **128**
 keys. The stored record (`gpg_recv_key_t`) carries the curve, user-id, raw
-public key, key creation time, both fingerprints, the receive timestamp, and -
-once cross-signed - the 64-byte signature, its length, the signature creation
-time and a `verified` flag.
+signature public key, key creation time, both fingerprints, the DEC encryption
+subkey (point, creation time, the owner's self-signature and subkey-binding
+signature), the receive timestamp, and - once cross-signed - the 64-byte
+signature, its length, the signature creation time and a `verified` flag.
 
 Because NVS iteration order is unspecified, callers build a sorted (oldest-first)
 index snapshot and address keys by position in that snapshot.
@@ -148,20 +159,24 @@ new-format headers with the 5-byte length form.
   Packet (Tag 6) + User ID Packet (Tag 13) + one Signature Packet (Tag 2) per
   stored self-cert. **Export Public** (QR and serial) and `GPG EXPORT` use it, so
   importing the own key merges every collected third-party certification.
-- `gpgBuildSignedKeyArmored()` builds a **received** key with this badge's
-  certification (Tag 6 + Tag 13 + Tag 2). Requires the entry to be cross-signed
-  (`sig_len == 64`). The **Export** action and `GPG EXPORT_SIGNED` use it.
-- `gpgBuildPublicKeyArmored()` builds a received key with only the Public-Key and
-  User ID packets (no signature). The **Show QR** action uses it.
+- `gpgBuildReceivedKeyArmored()` builds a **received** key: Public-Key (Tag 6) +
+  User ID (Tag 13) + the owner's UID self-signature + the DEC encryption subkey
+  (Tag 14) with the owner's binding signature, so it imports as a usable sign +
+  encrypt key. This badge's own cross-certification is appended only when the
+  entry has been cross-signed (`sig_len == 64`); the export works either way. The
+  **Export** action and `GPG RECV_EXPORT` use it.
+- `gpgBuildPublicKeyArmored()` builds the same received key **without** this
+  badge's cross-certification (owner's signatures and the encryption subkey are
+  still included). The **Show QR** action uses it.
 
 ## Menus
 
 The GPG menu offers **Export Public**, **Send Key**, **Received Keys** and
 **My Certifications**. A received key's detail view offers **Cross-Sign**,
 **Export**, **Send Signature**, **Forward**, **Show QR** and **Delete**;
-**Export** and **Send Signature** are disabled until the key is cross-signed.
-**My Certifications** lists the third-party certifications on the own key with a
-**Delete** action.
+**Export** is always available, while **Send Signature** is disabled until the
+key is cross-signed. **My Certifications** lists the third-party certifications on
+the own key with a **Delete** action.
 
 ## Serial commands
 
@@ -173,13 +188,12 @@ The full workflow is driveable over serial:
 | `GPG RECV_LIST` | List received keys with short fingerprint and signed state |
 | `GPG RECV_INFO <index>` | Show curve, full v4 / v5 fingerprints, receive time, signature |
 | `GPG RECV_IMPORT <hex>` | Import a peer public-key wire payload (hex) into the received store |
-| `GPG CROSS_SIGN <index>` | Produce and store the certification signature |
-| `GPG EXPORT_SIGNED <index>` | Print the armored signed received key |
-| `GPG SEND_SIG <index>` | Send a cross-signature back to the peer over BLE |
-| `GPG CERT_LIST` | List third-party certifications on the own key |
-| `GPG CERT_DELETE <index>` | Delete a stored certification on the own key |
-| `GPG CERT_IMPORT <hex>` | Import a certification-return payload (hex) onto the own key |
+| `GPG RECV_CROSS_SIGN <index>` | Produce and store the certification signature |
+| `GPG RECV_EXPORT <index>` | Print the received peer key (armored, encryptable; adds our cross-signature once cross-signed) |
+| `GPG MYCERT_LIST` | List third-party certifications on the own key |
+| `GPG MYCERT_DELETE <index>` | Delete a stored certification on the own key |
+| `GPG MYCERT_IMPORT <hex>` | Import a certification-return payload (hex) onto the own key |
 | `GPG RECV_DELETE <index>` | Delete a received key |
 
 `<index>` is the position in the sorted (oldest-first) snapshot, the same
-ordering shown by `RECV_LIST` / `CERT_LIST`.
+ordering shown by `RECV_LIST` / `MYCERT_LIST`.

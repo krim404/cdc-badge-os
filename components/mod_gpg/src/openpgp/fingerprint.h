@@ -32,6 +32,37 @@ bool calculateFingerprintV5(uint8_t curve,
                             uint8_t out_fp[32]);
 
 /**
+ * \brief Serialise an RFC 6637 ECDH Public Key Packet body (algorithm 18).
+ *
+ * Layout: version 0x04, 4-byte creation time, ECDH algorithm id, P-256 curve
+ * OID, the MPI-encoded uncompressed point, then the KDF parameter field
+ * `03 01 <hash> <sym>`. Used for the decryption (DEC) encryption subkey so the
+ * exported packet and the stored fingerprint stay byte-identical.
+ *
+ * \param pubkey Raw 64-byte P-256 point (X || Y, no SEC1 prefix).
+ * \param created_at Subkey creation timestamp (Unix epoch seconds).
+ * \param out Output buffer.
+ * \param out_size Capacity of \p out.
+ * \return body length, or 0 on failure.
+ */
+size_t buildEcdhPubkeyBody(const uint8_t* pubkey, uint32_t created_at,
+                           uint8_t* out, size_t out_size);
+
+/**
+ * \brief Compute the V4 fingerprint of an ECDH (DEC) subkey.
+ *
+ * Hashes the RFC 6637 ECDH public-key body (see buildEcdhPubkeyBody) so the
+ * result matches what GnuPG derives from the exported encryption subkey.
+ *
+ * \param pubkey Raw 64-byte P-256 point (X || Y).
+ * \param created_at Subkey creation timestamp.
+ * \param out_fp 20-byte output buffer.
+ * \return `true` on success.
+ */
+bool calculateFingerprintV4Ecdh(const uint8_t* pubkey, uint32_t created_at,
+                                uint8_t out_fp[20]);
+
+/**
  * \brief Build the digest input for a cross-signature.
  *
  * Per `docs/CROSS_SIGNING.md`:

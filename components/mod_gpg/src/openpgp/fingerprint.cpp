@@ -72,7 +72,71 @@ size_t buildPublicKeyBody(uint8_t curve,
     return off;
 }
 
+/// SHA-1 of (0x99 || 2-byte body length || body) -> V4 fingerprint.
+void v4FpFromBody(const uint8_t* body, size_t body_len, uint8_t out_fp[20])
+{
+    const uint8_t prefix[3] = {
+        0x99,
+        static_cast<uint8_t>((body_len >> 8) & 0xFF),
+        static_cast<uint8_t>(body_len & 0xFF),
+    };
+    mbedtls_sha1_context ctx;
+    mbedtls_sha1_init(&ctx);
+    mbedtls_sha1_starts(&ctx);
+    mbedtls_sha1_update(&ctx, prefix, sizeof(prefix));
+    mbedtls_sha1_update(&ctx, body, body_len);
+    mbedtls_sha1_finish(&ctx, out_fp);
+    mbedtls_sha1_free(&ctx);
+}
+
 } // namespace
+
+size_t buildEcdhPubkeyBody(const uint8_t* pubkey, uint32_t created_at,
+                           uint8_t* out, size_t out_size)
+{
+    if (!out || !pubkey) return 0;
+
+    // MPI of the uncompressed point: bit-length || 0x04 || X || Y.
+    uint8_t mpi[MPI_FULL_SIZE_P256];
+    uint16_t bits = P256_PUBKEY_BITS;
+    mpi[0] = static_cast<uint8_t>((bits >> 8) & 0xFF);
+    mpi[1] = static_cast<uint8_t>(bits & 0xFF);
+    mpi[MPI_HEADER_SIZE] = 0x04;
+    std::memcpy(mpi + MPI_HEADER_SIZE + 1, pubkey, 64);
+    const size_t mpi_len = MPI_FULL_SIZE_P256;
+
+    // RFC 6637 KDF parameters: size(0x03) || reserved(0x01) || hash || sym.
+    const uint8_t kdf[4] = {0x03, 0x01, OPENPGP_ECDH_KDF_HASH, OPENPGP_ECDH_KDF_SYM};
+
+    const size_t total = 1 + 4 + 1 + sizeof(kOidP256) + mpi_len + sizeof(kdf);
+    if (total > out_size) return 0;
+
+    size_t off = 0;
+    out[off++] = 0x04;
+    out[off++] = (created_at >> 24) & 0xFF;
+    out[off++] = (created_at >> 16) & 0xFF;
+    out[off++] = (created_at >> 8) & 0xFF;
+    out[off++] = created_at & 0xFF;
+    out[off++] = OPENPGP_ALGO_ECDH;
+    std::memcpy(out + off, kOidP256, sizeof(kOidP256));
+    off += sizeof(kOidP256);
+    std::memcpy(out + off, mpi, mpi_len);
+    off += mpi_len;
+    std::memcpy(out + off, kdf, sizeof(kdf));
+    off += sizeof(kdf);
+    return off;
+}
+
+bool calculateFingerprintV4Ecdh(const uint8_t* pubkey, uint32_t created_at,
+                                uint8_t out_fp[20])
+{
+    if (!out_fp || !pubkey) return false;
+    uint8_t body[128];
+    const size_t body_len = buildEcdhPubkeyBody(pubkey, created_at, body, sizeof(body));
+    if (body_len == 0) return false;
+    v4FpFromBody(body, body_len, out_fp);
+    return true;
+}
 
 bool calculateFingerprintV4(uint8_t curve,
                             const uint8_t* pubkey, size_t pubkey_len,
@@ -86,19 +150,7 @@ bool calculateFingerprintV4(uint8_t curve,
                                                created_at, body, sizeof(body));
     if (body_len == 0) return false;
 
-    const uint8_t prefix[3] = {
-        0x99,
-        static_cast<uint8_t>((body_len >> 8) & 0xFF),
-        static_cast<uint8_t>(body_len & 0xFF),
-    };
-
-    mbedtls_sha1_context ctx;
-    mbedtls_sha1_init(&ctx);
-    mbedtls_sha1_starts(&ctx);
-    mbedtls_sha1_update(&ctx, prefix, sizeof(prefix));
-    mbedtls_sha1_update(&ctx, body, body_len);
-    mbedtls_sha1_finish(&ctx, out_fp);
-    mbedtls_sha1_free(&ctx);
+    v4FpFromBody(body, body_len, out_fp);
     return true;
 }
 

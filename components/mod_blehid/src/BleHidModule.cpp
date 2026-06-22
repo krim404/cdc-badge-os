@@ -19,7 +19,6 @@ namespace cdc::mod_blehid {
 
 constexpr ui::I18nEntry kStrings[] = {
     {"mod_blehid.title",           "BLE Keyboard"},
-    {"mod_blehid.status",          "Status"},
     {"mod_blehid.start_adv",       "Start Advertising"},
     {"mod_blehid.stop_adv",        "Stop Advertising"},
     {"mod_blehid.unicode_method",  "Unicode Method"},
@@ -74,7 +73,7 @@ public:
 
         // Status
         gfx->setCursor(8, 30);
-        gfx->print(ui::tr("mod_blehid.status"));
+        gfx->print(ui::tr("core.status"));
         gfx->print(": ");
         gfx->print(kb.getStatusText());
 
@@ -168,7 +167,7 @@ static ui::ListItem s_menuItems[MENU_COUNT];
 static void rebuildMenu() {
     auto& kb = BleHidKeyboard::instance();
 
-    s_menuItems[MENU_STATUS] = {ui::tr("mod_blehid.status"), 0, false, nullptr};
+    s_menuItems[MENU_STATUS] = {ui::tr("core.status"), 0, false, nullptr};
 
     if (kb.isAdvertising() || kb.isConnected()) {
         s_menuItems[MENU_TOGGLE_ADV] = {ui::tr("mod_blehid.stop_adv"), 0, false, nullptr};

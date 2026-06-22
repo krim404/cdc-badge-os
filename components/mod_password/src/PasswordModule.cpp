@@ -43,13 +43,9 @@ constexpr ui::I18nEntry kStrings[] = {
     {"mod_password.notes",          "Notes"},
     {"mod_password.view",           "View"},
     {"mod_password.edit",           "Edit"},
-    {"mod_password.delete",         "Delete"},
     {"mod_password.actions",        "Actions"},
-    {"mod_password.saved",          "Saved"},
-    {"mod_password.deleted",        "Deleted"},
     {"mod_password.invalid_input",  "Invalid input"},
     {"mod_password.slot_error",     "Slot map error"},
-    {"mod_password.details",        "Details"},
     {"mod_password.hint_list",      "[Y] View  [3] Menu  [N] Back"},
     {"mod_password.confirm_delete", "Delete entry?"},
     {"mod_password.hint_type",      "[Y] Type  [2/8] Scroll  [N] Back"},
@@ -583,7 +579,7 @@ static void showDetails(uint16_t slot) {
              totpText,
              notesText);
 
-    s_infoView.init(ui::tr("mod_password.details"), detailText);
+    s_infoView.init(ui::tr("core.details"), detailText);
 
     // Set up Type callback if keyboard is available
     auto* kb = core::getKeyboard();
@@ -610,7 +606,7 @@ static void wizardFinish() {
     }
 
     if (ok) {
-        ui::showToastSuccess(ui::tr("mod_password.saved"));
+        ui::showToastSuccess(ui::tr("core.saved"));
         s_listView.preservePosition();
         rebuildList();
         ui::ViewStack::instance().popToAnchor(&s_listView);
@@ -778,7 +774,7 @@ static void onMenuDeleteConfirm(void* userData) {
     uint16_t slot = *static_cast<uint16_t*>(userData);
     bool ok = PasswordStore::instance().deleteEntry(slot);
     if (ok) {
-        ui::showToastSuccess(ui::tr("mod_password.deleted"));
+        ui::showToastSuccess(ui::tr("core.deleted"));
         s_listView.preservePosition();
         rebuildList();
         ui::ViewStack::instance().popToAnchor(&s_listView);
@@ -817,7 +813,7 @@ static void onListMenu(uint16_t index, void* userData) {
     static ui::ContextMenuItem items[] = {
         {ui::tr("mod_password.view"), onMenuView},
         {ui::tr("mod_password.edit"), onMenuEdit},
-        {ui::tr("mod_password.delete"), onMenuDelete}
+        {ui::tr("core.delete"), onMenuDelete}
     };
     ui::showContextMenu(ui::tr("mod_password.actions"), items, 3);
 }

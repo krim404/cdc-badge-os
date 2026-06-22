@@ -59,7 +59,7 @@ stubbed / uncertain), `CAVEAT` (verified but with a correctness limitation).
 | OpenPGP NVS state signed with slot-0 P-256 ECDSA attestation; invalid sig -> reinit | components/mod_gpg/src/openpgp/openpgp.cpp:646-693, 716-723 | VERIFIED |
 | DEC privkey + AES key encrypted with AES-256-GCM, HKDF over (chip_id\|\|pin_hash), AAD binds slot | components/mod_gpg/src/GpgStorage.cpp:1-7, 38-46 | VERIFIED |
 | ECDH path uses MBEDTLS_ECP_DP_SECP256R1 | components/mod_gpg/src/openpgp/ecdh.cpp:92, 170, 231 | VERIFIED |
-| Serial commands: STATUS/GENERATE/EXPORT/RESET/RECV_LIST/RECV_INFO/RECV_DELETE/CROSS_SIGN/EXPORT_SIGNED | components/mod_gpg/src/GpgModule.cpp:93-104 | VERIFIED |
+| Serial commands: STATUS/GENERATE/EXPORT/RESET/RECV_LIST/RECV_INFO/RECV_DELETE/RECV_IMPORT/RECV_CROSS_SIGN/RECV_EXPORT/MYCERT_LIST/MYCERT_DELETE/MYCERT_IMPORT | components/mod_gpg/src/GpgModule.cpp:167-181 | VERIFIED |
 | GPG GENERATE arg: curve 1=Ed25519, 2=P-256, then user_id | components/mod_gpg/src/GpgModule.cpp:95, 144-173 | VERIFIED |
 | GPG RESET is two-step token-confirmed (30 s window) | components/mod_gpg/src/GpgModule.cpp:194-219 | VERIFIED |
 | Cross-sign: badge signs a received key's V4 pubkey + UID as RFC 4880 cert (sig type 0x10) | components/mod_gpg/src/openpgp/xsig.cpp:193-281 | VERIFIED |

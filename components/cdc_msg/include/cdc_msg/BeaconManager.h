@@ -40,6 +40,16 @@ public:
     /// \brief Reconcile advertising with the preference and BLE power state. Call from tick().
     void reconcile();
 
+    /**
+     * \brief Declare the beacon name + service UUID during boot.
+     *
+     * Call once after load(), before the BLE stack is brought up. Records the
+     * device name and advertising UUID and requests BLE enable; the controller's
+     * boot barrier defers the actual bring-up until the system is ready, so the
+     * UUID is present in the very first advertising start.
+     */
+    void bootApply();
+
 private:
     void resolveName();
     void persistEnabled();

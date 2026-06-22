@@ -109,6 +109,9 @@ bool MessageTransfer::start()
         serviceRegistered_ = registerService();
     }
     registerListeners();
+    // Declare the beacon name + UUID now, before the BLE stack is brought up, so
+    // the first (post-init) advertising start already carries the service UUID.
+    beacon_.bootApply();
     state_ = cdc::core::ServiceState::STARTED;
     LOG_I(TAG, "Message transfer started (beacon=%s)", beacon_.isEnabled() ? "on" : "off");
     return true;
