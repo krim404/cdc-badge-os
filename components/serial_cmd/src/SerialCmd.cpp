@@ -25,6 +25,7 @@
 #include "cdc_views/RenderHelpers.h"
 #include "cdc_views/T9InputView.h"
 #include "cdc_ui/ViewStack.h"
+#include "plugin_manager/host_api.h"
 #include "esp_timer.h"
 #include "esp_attr.h"
 #include "nvs_flash.h"
@@ -434,6 +435,17 @@ static void cmdHelp(const char* args) {
 static void cmdPing(const char* args) {
     (void)args;
     Console::printf("PONG\r\n");
+}
+
+/**
+ * \brief Prints the firmware version and the plugin host API level.
+ * \param args Unused command arguments.
+ */
+static void cmdVersion(const char* args) {
+    (void)args;
+    Console::printf("Firmware: %s\r\n", APP_VERSION);
+    Console::printf("API level: %s\r\n", HOST_API_LEVEL_STR);
+    Console::flush();
 }
 
 /**
@@ -2431,6 +2443,7 @@ void SerialCmd::registerBuiltinCommands() {
 
     reg.registerCommand({"HELP", "Show available commands", cmdHelp, "system", false});
     reg.registerCommand({"PING", "Check if device is responsive", cmdPing, "system", false});
+    reg.registerCommand({"VERSION", "Show firmware version and API level", cmdVersion, "system", false});
     reg.registerCommand({"STATUS", "Show system status", cmdStatus, "system", false});
     reg.registerCommand({"MEM", "Show memory usage", cmdMem, "system", false});
     reg.registerCommand({"MEMINFO", "Show detailed memory + task info", cmdMemInfo, "system", false});
