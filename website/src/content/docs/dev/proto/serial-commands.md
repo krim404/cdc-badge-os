@@ -36,7 +36,7 @@ needs authentication, including read-only ones.
 |---------|-----------|------|-------------|
 | `HELP` | - | No | List all registered commands, including subcommands |
 | `PING` | - | No | Liveness check; replies `PONG` (works even during PIN lockout) |
-| `VERSION` | - | No | Firmware version and plugin host API level |
+| `VERSION` | - | No | Firmware version, plugin host API level, and the last stored firmware-check result |
 | `STATUS` | - | No | Free heap, min free heap, uptime |
 | `MEM` | - | No | Heap / internal DRAM / DMA / PSRAM usage |
 | `MEMINFO` | - | No | Detailed per-region heap and FreeRTOS task watermarks |

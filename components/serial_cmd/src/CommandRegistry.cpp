@@ -137,10 +137,13 @@ public:
             }
             // PING is allowed even when blocked
         } else {
-            // When secure serial is enabled, block ALL commands except PING and AUTH
-            // when not authenticated
+            // When secure serial is enabled, block all commands except the
+            // auth-free set (liveness, login, and the read-only version/help
+            // commands) when not authenticated.
             bool isAllowedWithoutAuth = (strcasecmp(cmdBuf, "PING") == 0 ||
-                                          strcasecmp(cmdBuf, "AUTH") == 0);
+                                          strcasecmp(cmdBuf, "AUTH") == 0 ||
+                                          strcasecmp(cmdBuf, "VERSION") == 0 ||
+                                          strcasecmp(cmdBuf, "HELP") == 0);
             if (!isAllowedWithoutAuth && authCheck_ && !authCheck_()) {
                 Console::printf("ERROR: Not authenticated. Use AUTH <pin> to login.\r\n");
                 return true;  // Command blocked

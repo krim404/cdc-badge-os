@@ -4,6 +4,7 @@
 idf_component_register(
     SRCS
         "src/HardwareInfo.cpp"
+        "src/FirmwareCheck.cpp"
         "src/AppUi.cpp"
         "src/WifiMenuUi.cpp"
         "src/BluetoothMenuUi.cpp"
@@ -36,6 +37,8 @@ idf_component_register(
         esp_hw_support
         freertos
         mbedtls
+        esp_http_client
+        esp-tls
         json
         espressif__tinyusb
         usb_badge

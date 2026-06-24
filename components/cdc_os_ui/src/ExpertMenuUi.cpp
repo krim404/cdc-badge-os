@@ -6,6 +6,7 @@
 #include "AppUiInternal.h"
 #include "cdc_os_ui/AppUi.h"
 #include "cdc_os_ui/HardwareInfo.h"
+#include "cdc_os_ui/FirmwareCheck.h"
 #include "cdc_core/TropicStorage.h"
 #include "cdc_core/UsbManager.h"
 #include "cdc_core/EventBus.h"
@@ -40,6 +41,7 @@ void rebootIntoBootloader();
 struct FixedExpertEntry { const char* key; void (*action)(); };
 static const FixedExpertEntry kExpertTop[] = {
     {"core.hardware_info",  runSystemTest},
+    {"core.firmware_check", showFirmwareCheck},
     {"core.modules",        showModulesView},
     {"core.backup",         showBackupMenu},
     {"core.set_duress_pin", showDuressPinSetup},

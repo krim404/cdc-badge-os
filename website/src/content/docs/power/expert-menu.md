@@ -25,6 +25,7 @@ entries are:
 | Entry | What it does |
 | --- | --- |
 | **Hardware Info** | Opens a read-only screen that probes the I2C bus, power IC (BQ25895), keypad expander (TCA9535), display, TROPIC01 secure element (including its session state, RISC-V/SPECT firmware versions and R-Memory slot size), WiFi and BLE, and reports heap/DRAM memory usage. |
+| **Firmware Check** | Opens a read-only screen showing the running firmware version and the plugin host API level. When WiFi is already connected it also checks the upstream GitHub releases and reports whether a newer version is available; while online it also syncs the clock over NTP and stores the latest found version with the check date (shown as `v0.7.3 (checked: 24.06.26)` here and in the `VERSION` serial command). With WiFi off it shows the version info, the last stored result, and a note that the update check needs WiFi. Press `[Y]` to re-check; if WiFi is off, `[Y]` connects using the saved network first, then checks. |
 | **Modules** | Opens the module list. Each row shows a module name and its current status. Selecting a module toggles it enabled/disabled and starts or stops it; a module that failed to start shows an error and selecting it offers a retry. |
 | **Backup** | Opens the encrypted backup submenu (Export / Import / Delete). See [Encrypted backup & restore](/guide/backup-restore/). |
 | **Set Duress PIN** | Starts the duress-PIN setup flow. See [Duress PIN / self-destruct](/security/duress/). |

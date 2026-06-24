@@ -319,8 +319,9 @@ bool WifiHandlers::syncNtp(bool disconnectAfter) {
     static bool sntpInited = false;
     if (!sntpInited) {
         esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
-        esp_sntp_setservername(0, "pool.ntp.org");
-        esp_sntp_setservername(1, "time.google.com");
+        esp_sntp_setservername(0, "time.krim.dev");
+        esp_sntp_setservername(1, "pool.ntp.org");
+        esp_sntp_setservername(2, "time.google.com");
         esp_sntp_init();
         sntpInited = true;
     } else {

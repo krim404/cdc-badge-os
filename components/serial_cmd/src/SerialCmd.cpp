@@ -21,6 +21,7 @@
 #include "cdc_hal/IPowerManager.h"
 #include "cdc_os_ui/AppUi.h"
 #include "cdc_os_ui/WifiHandlers.h"
+#include "cdc_os_ui/FirmwareCheck.h"
 #include "cdc_log.h"
 #include "cdc_views/RenderHelpers.h"
 #include "cdc_views/T9InputView.h"
@@ -438,13 +439,20 @@ static void cmdPing(const char* args) {
 }
 
 /**
- * \brief Prints the firmware version and the plugin host API level.
+ * \brief Prints the firmware version, the plugin host API level and the last
+ *        upstream firmware-check result (if any).
  * \param args Unused command arguments.
  */
 static void cmdVersion(const char* args) {
     (void)args;
     Console::printf("Firmware: %s\r\n", APP_VERSION);
     Console::printf("API level: %s\r\n", HOST_API_LEVEL_STR);
+    char last[64];
+    if (cdc::ui::firmwareCheckLastResult(last, sizeof(last))) {
+        Console::printf("Latest: %s\r\n", last);
+    } else {
+        Console::printf("Latest: not checked yet\r\n");
+    }
     Console::flush();
 }
 

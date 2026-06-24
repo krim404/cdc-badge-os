@@ -63,7 +63,8 @@ indicator appears on the lock screen while connected.
 
 - This step **requires Wi-Fi.** You need either an active connection or a saved
   network configuration. If the badge is not connected, it connects first.
-- The badge queries `pool.ntp.org` and `time.google.com`, waiting up to about
+- The badge queries `time.krim.dev` (a fully non-logging hardware NTP server),
+  falling back to `pool.ntp.org` and then `time.google.com`, waiting up to about
   10 seconds.
 - On success the badge confirms the time was synced and marks its clock as set;
   on failure it reports a sync timeout.
