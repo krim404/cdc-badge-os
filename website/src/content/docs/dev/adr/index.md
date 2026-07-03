@@ -25,6 +25,7 @@ the context, the decision, its status, and its consequences. New ADRs use the MA
 | ADR-0010 | CP437 display pipeline (no `gfx->print` for i18n text) | spec 015/016 |
 | ADR-0011 | Attestation-signed PIN record in R-Memory slot 0 | spec 002 |
 | ADR-0012 | Secure-serial gate + `DEBUG_MODE` build profiles (real defaults) | reverse-spec D1/D3 |
+| ADR-0013 | Off-device plugin emulator re-hosts firmware sources (HAL-factory backends) | spec 022 |
 
 ADR files (`NNNN-title.md`) are added by the US2 tasks in
 `specs/001-current-system-spec/tasks.md`. This index is updated as each ADR lands.
