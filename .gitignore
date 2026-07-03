@@ -69,7 +69,8 @@ CLAUDE.local.md
 *.transcript.md
 *.session.md
 
-# Local spec drafting artifacts
-specs/**/.scratch/
-specs/**/notes.md
-specs/**/research.local.md
+# Spec-driven design artifacts (kept local, not tracked)
+specs/
+
+# Local plan draft (not tracked)
+SPLAN.MD
