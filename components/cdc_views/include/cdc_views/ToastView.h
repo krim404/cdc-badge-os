@@ -57,6 +57,7 @@ private:
     Icon icon_ = Icon::NONE;
     uint16_t durationMs_ = 1500;
     uint32_t startMs_ = 0;
+    bool started_ = false;
     bool expired_ = false;
     bool dismissible_ = true;
 };

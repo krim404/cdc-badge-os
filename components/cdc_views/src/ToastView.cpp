@@ -35,6 +35,7 @@ void ToastView::init(const char* message, Icon icon, uint16_t durationMs, bool d
     durationMs_ = durationMs;
     dismissible_ = dismissible;
     startMs_ = 0;
+    started_ = false;
     expired_ = false;
     dirty_ = true;
 }
@@ -45,7 +46,9 @@ void ToastView::init(const char* message, Icon icon, uint16_t durationMs, bool d
  * \return void
  */
 void ToastView::onTick(uint32_t nowMs) {
-    if (startMs_ == 0 || expired_) return;
+    // started_ (not startMs_ == 0) marks "first render happened": a toast
+    // rendered at uptime 0 would otherwise never arm its auto-dismiss.
+    if (!started_ || expired_) return;
     if (durationMs_ == 0) return;
     if (nowMs < startMs_) return;
     static constexpr uint32_t MIN_DISPLAY_MS = 1000;
@@ -79,7 +82,8 @@ InputResult ToastView::onKey(char key) {
 void ToastView::render(bool partial) {
     (void)partial;
 
-    if (startMs_ == 0) {
+    if (!started_) {
+        started_ = true;
         startMs_ = esp_timer_get_time() / 1000;
     }
 
