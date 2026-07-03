@@ -44,6 +44,7 @@ This repository is the canonical source of the plugin host API. The Rust plugin 
 | --- | --- | --- |
 | cdc-badge-os (this) | Firmware and canonical `host_api.h` | Source of truth |
 | cdc-badge-plugins | Rust plugin SDK, examples, web installer | Consumes a copy of `host_api.h` |
+| cdc-badge-development | Plugin dev environment + [off-device emulator](/dev/plugin-emulator/) | Compiles the firmware host-API surface read-only |
 
 The canonical header is `components/plugin_manager/include/plugin_manager/host_api.h`. The SDK copy must stay byte-identical to it, so any change to the host API surface (signatures, error codes, level constants) has to be committed in both repositories together. The firmware repository's `upstream` remote is `ssh://git@codeberg.org/Krim/cdc-badge-os.git`.
 
@@ -52,6 +53,7 @@ The canonical header is `components/plugin_manager/include/plugin_manager/host_a
 - [Architecture](/dev/architecture/): the component model, module isolation, and the `IModule` lifecycle.
 - [Build and flash](/dev/build-system/): the PlatformIO build, the MODULES-list mechanism, partition layout, and the memory model.
 - [Host API](/api/): the C ABI that plugins call into.
+- [Plugin emulator](/dev/plugin-emulator/): run and regression-test plugins on a desktop, no badge needed.
 - [Architecture Decision Records](/dev/adr/): the load-bearing technical decisions (PSRAM-first, module isolation, slot map, the two-KDF PIN hashing, plugin sandbox, and more).
 
 ## Testing
