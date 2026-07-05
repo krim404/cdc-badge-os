@@ -15,17 +15,19 @@
 #include "cdc_core/EventBus.h"
 #include "cdc_hal/IDisplay.h"
 #include "cdc_log.h"
-#include <cstring>
 
 static const char* TAG = "ViewStack";
 
 namespace cdc::ui {
 
 /**
- * \brief Checks whether a view is a `ListView` by runtime name.
+ * \brief Returns the stronger of two refresh modes.
+ *
+ * RefreshMode is declared strongest-first (FULL=0 ... PARTIAL_LIGHT=3), so the
+ * smaller underlying value wins.
  */
-static bool isListView(const IView* view) {
-    return view && (std::strcmp(view->getName(), "ListView") == 0);
+static hal::RefreshMode strongerRefresh(hal::RefreshMode a, hal::RefreshMode b) {
+    return static_cast<uint8_t>(a) < static_cast<uint8_t>(b) ? a : b;
 }
 
 /**
@@ -69,6 +71,10 @@ private:
 // Unlocked helpers. Caller MUST hold mutex_.
 // ---------------------------------------------------------------------------
 
+void ViewStack::escalatePending_unlocked(hal::RefreshMode mode) {
+    pendingRefresh_ = strongerRefresh(pendingRefresh_, mode);
+}
+
 void ViewStack::push_unlocked(IView* view, void* context) {
     if (!view) {
         LOG_W(TAG, "Attempted to push null view");
@@ -89,7 +95,9 @@ void ViewStack::push_unlocked(IView* view, void* context) {
     }
     stack_[depth_++] = view;
     view->onEnter(context);
-    needsFullRefresh_ = !(isListView(view) && isListView(depth_ > 1 ? stack_[depth_ - 2] : nullptr));
+    // Transitions render as partials by default; ghosting is bounded by the
+    // HAL escalation chain. The entering view may request a stronger mode.
+    escalatePending_unlocked(view->preferredEnterRefresh());
 
     LOG_D(TAG, "Pushed view '%s' (depth=%d)", view->getName(), depth_);
 }
@@ -116,8 +124,9 @@ void ViewStack::pop_unlocked() {
 
     if (depth_ > 0 && stack_[depth_ - 1]) {
         stack_[depth_ - 1]->onResume();
+        // The revealed view repaints over the popped one; honor its preference.
+        escalatePending_unlocked(stack_[depth_ - 1]->preferredEnterRefresh());
     }
-    needsFullRefresh_ = !(isListView(stack_[depth_ - 1]) && isListView(top));
 }
 
 void ViewStack::hideModal_unlocked() {
@@ -128,9 +137,11 @@ void ViewStack::hideModal_unlocked() {
     LOG_D(TAG, "Hiding modal '%s' (depth=%d)", top->getName(), modalDepth_);
     top->onExit();
 
-    // The dismissed modal must be erased and whatever it covered repainted, so
-    // force a full composite of the base view plus any modals still beneath.
-    needsFullRefresh_ = true;
+    // The dismissed modal must be erased and whatever it covered repainted:
+    // rebuild the framebuffer composite bottom-up. A partial flush covers the
+    // whole panel, so erasure is correct without a full refresh; ghost residue
+    // is bounded by the HAL escalation chain.
+    needsCompositeRepaint_ = true;
     if (modalDepth_ > 0) {
         modals_[modalDepth_ - 1]->markDirty();
     } else {
@@ -138,6 +149,7 @@ void ViewStack::hideModal_unlocked() {
         if (view) {
             view->onResume();
             view->markDirty();
+            escalatePending_unlocked(view->preferredEnterRefresh());
         }
     }
 }
@@ -158,7 +170,7 @@ void ViewStack::removeModal_unlocked(IView* modal) {
     modalDepth_--;
     modals_[modalDepth_] = nullptr;
 
-    needsFullRefresh_ = true;
+    needsCompositeRepaint_ = true;
     if (modalDepth_ > 0) {
         modals_[modalDepth_ - 1]->markDirty();
     } else {
@@ -166,6 +178,7 @@ void ViewStack::removeModal_unlocked(IView* modal) {
         if (view) {
             view->onResume();
             view->markDirty();
+            escalatePending_unlocked(view->preferredEnterRefresh());
         }
     }
 }
@@ -209,7 +222,7 @@ void ViewStack::replace(IView* view, void* context) {
 
     stack_[depth_ - 1] = view;
     view->onEnter(context);
-    needsFullRefresh_ = !(isListView(view) && isListView(top));
+    escalatePending_unlocked(view->preferredEnterRefresh());
 
     LOG_D(TAG, "Replaced with view '%s'", view->getName());
 }
@@ -274,7 +287,7 @@ void ViewStack::dispatchKey(char key) {
     }
 }
 
-void ViewStack::dispatchLongPress(char key) {
+InputResult ViewStack::dispatchLongPress(char key) {
     cdc::core::EventBus::instance().publish(cdc::core::EventType::KEY_LONG_PRESS,
                                             static_cast<uint8_t>(key));
     StackLock lock(mutex_);
@@ -287,12 +300,12 @@ void ViewStack::dispatchLongPress(char key) {
             (key == 'N' && result != InputResult::CONSUMED)) {
             hideModal_unlocked();
         }
-        return;
+        return result;
     }
 
     IView* view = (depth_ == 0) ? nullptr : stack_[depth_ - 1];
     if (!view) {
-        return;
+        return InputResult::IGNORED;
     }
     InputResult result = view->onLongPress(key);
     // 'N' is the universal back/cancel gesture: pop unless the view consumed it
@@ -302,6 +315,7 @@ void ViewStack::dispatchLongPress(char key) {
         (key == 'N' && result != InputResult::CONSUMED && depth_ > 1)) {
         pop_unlocked();
     }
+    return result;
 }
 
 void ViewStack::dispatchTick(uint32_t nowMs) {
@@ -326,7 +340,7 @@ void ViewStack::render(bool synchronous) {
 
     if (modalDepth_ > 0) {
         // Modals own the screen and stack on top of the base view. Repaint the
-        // base first (when dirty or on a forced full refresh, e.g. after a modal
+        // base first (when dirty or on a composite repaint, e.g. after a modal
         // was dismissed) and then draw every modal bottom-to-top in the same
         // pass, so the composite stays correct and nothing of a gone modal lingers.
         bool baseDirty = view->needsRender();
@@ -334,10 +348,10 @@ void ViewStack::render(bool synchronous) {
         for (uint8_t i = 0; i < modalDepth_; ++i) {
             if (modals_[i]->needsRender()) { anyModalDirty = true; break; }
         }
-        if (!baseDirty && !anyModalDirty && !needsFullRefresh_) {
+        if (!baseDirty && !anyModalDirty && !needsCompositeRepaint_) {
             return;
         }
-        if (baseDirty || needsFullRefresh_) {
+        if (baseDirty || needsCompositeRepaint_) {
             view->render(false);
             view->clearDirty();
         }
@@ -346,15 +360,14 @@ void ViewStack::render(bool synchronous) {
             modals_[i]->clearDirty();
         }
         if (display) {
-            // A dirty base under a still-visible modal repaints the composite in
-            // the framebuffer; PARTIAL suffices. FULL is reserved for modal
-            // stack changes (needsFullRefresh_) to erase a dismissed modal.
-            hal::RefreshMode mode = needsFullRefresh_
-                ? hal::RefreshMode::FULL : hal::RefreshMode::PARTIAL;
+            // The composite repaint fixes the framebuffer; the flush itself
+            // stays PARTIAL unless something escalated pendingRefresh_.
+            hal::RefreshMode mode = strongerRefresh(pendingRefresh_, hal::RefreshMode::PARTIAL);
             if (synchronous) display->flushSync(mode);
             else             display->flush(mode);
         }
-        needsFullRefresh_ = false;
+        needsCompositeRepaint_ = false;
+        pendingRefresh_ = hal::RefreshMode::PARTIAL_LIGHT;
         return;
     }
 
@@ -364,14 +377,14 @@ void ViewStack::render(bool synchronous) {
     view->render(false);
     view->clearDirty();
 
-    hal::RefreshMode mode = needsFullRefresh_
-        ? hal::RefreshMode::FULL
-        : (view->prefersLightRefresh() ? hal::RefreshMode::PARTIAL_LIGHT : hal::RefreshMode::PARTIAL);
+    hal::RefreshMode mode = strongerRefresh(
+        pendingRefresh_,
+        view->prefersLightRefresh() ? hal::RefreshMode::PARTIAL_LIGHT : hal::RefreshMode::PARTIAL);
     if (display) {
         if (synchronous) display->flushSync(mode);
         else             display->flush(mode);
     }
-    needsFullRefresh_ = false;
+    pendingRefresh_ = hal::RefreshMode::PARTIAL_LIGHT;
 }
 
 bool ViewStack::needsRender() const {
@@ -409,10 +422,10 @@ void ViewStack::showModal(IView* modal) {
         modalDepth_--;
     }
 
-    // Stacking on top of an existing modal needs a full composite so a smaller
-    // new modal does not leave the previous one's edges showing around it. The
-    // first modal over the base view stays a partial (no toast-refresh regress).
-    if (modalDepth_ > 0) needsFullRefresh_ = true;
+    // Stacking on top of an existing modal repaints the composite bottom-up so
+    // the layering in the framebuffer stays correct. The flush itself remains
+    // a partial; ghost hygiene comes from the HAL escalation chain.
+    if (modalDepth_ > 0) needsCompositeRepaint_ = true;
 
     if (modalDepth_ > 0) {
         modals_[modalDepth_ - 1]->onPause();
@@ -433,6 +446,18 @@ void ViewStack::hideModal() {
 void ViewStack::removeModal(IView* modal) {
     StackLock lock(mutex_);
     removeModal_unlocked(modal);
+}
+
+void ViewStack::forceRefresh(hal::RefreshMode mode) {
+    StackLock lock(mutex_);
+    escalatePending_unlocked(mode);
+    // Make the request self-sufficient: mark the top-most visible surface
+    // dirty so the next render pass actually flushes.
+    if (modalDepth_ > 0) {
+        modals_[modalDepth_ - 1]->markDirty();
+    } else if (depth_ > 0 && stack_[depth_ - 1]) {
+        stack_[depth_ - 1]->markDirty();
+    }
 }
 
 void ViewStack::setInactivityTimeout(InactivityCallback callback, uint32_t timeoutMs) {

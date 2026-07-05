@@ -106,6 +106,10 @@ public:
     void onExit() override;
     const char* getName() const override       { return "CanvasView"; }
 
+    /// Plugin free-draw surfaces accumulate churn; a single-flash FAST refresh
+    /// gives them a mostly clean base without the full multi-flash waveform.
+    hal::RefreshMode preferredEnterRefresh() const override { return hal::RefreshMode::FAST; }
+
 private:
     enum class CmdType : uint8_t {
         Text, TextAligned, Rect, HLine, VLine,

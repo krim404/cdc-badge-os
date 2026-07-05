@@ -36,6 +36,9 @@ public:
     const char* getName() const override { return "ImageView"; }
     const char* getFooterHint() const override;
 
+    /// Dithered images ghost badly over prior content; demand a clean base.
+    hal::RefreshMode preferredEnterRefresh() const override { return hal::RefreshMode::FULL; }
+
 private:
     enum class Mode : uint8_t { Fit, Actual };
     static constexpr uint16_t MAX_TITLE_LEN = 64;

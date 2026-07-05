@@ -98,8 +98,10 @@ public:
     /**
      * Dispatch long press to current view
      * @param key Key character
+     * @return Result reported by the receiving view (IGNORED if no view
+     *         handled the press), so callers can wire global fallbacks.
      */
-    void dispatchLongPress(char key);
+    InputResult dispatchLongPress(char key);
 
     /**
      * Dispatch tick to current view and modal
@@ -159,10 +161,21 @@ public:
     IView* getModal() const { return modalDepth_ > 0 ? modals_[modalDepth_ - 1] : nullptr; }
 
     /**
-     * Force next render to use FULL refresh
-     * (called automatically after view changes)
+     * Force the next render to use FULL refresh (manual anti-ghosting).
      */
-    void forceFullRefresh() { needsFullRefresh_ = true; }
+    void forceFullRefresh() { forceRefresh(hal::RefreshMode::FULL); }
+
+    /**
+     * \brief Escalates the refresh mode of the next render.
+     * \param mode Minimum refresh mode to use; a stronger already-pending mode
+     *        wins. FULL/FAST reset the HAL ghost-escalation counters as defined
+     *        in EpaperDisplay. Any view may call this at any time (e.g. games
+     *        or other high-churn content that wants a clean panel).
+     *
+     * Also marks the current view dirty so the request takes effect on the
+     * next render pass without requiring a separate markDirty().
+     */
+    void forceRefresh(hal::RefreshMode mode);
 
     // === Exclusive lock (e.g. for FIDO2 prompts) ===
 
@@ -224,7 +237,15 @@ private:
     uint8_t modalDepth_ = 0;
     IView* pendingPush_ = nullptr;
     void* pendingContext_ = nullptr;
-    bool needsFullRefresh_ = true;  // True after view changes
+    // Strongest refresh mode requested for the next flush. Starts at FULL so
+    // the very first render after boot fully cleans the panel; afterwards it
+    // resets to PARTIAL_LIGHT ("no extra requirement") and transitions or
+    // views escalate it as needed.
+    hal::RefreshMode pendingRefresh_ = hal::RefreshMode::FULL;
+    // The framebuffer composite (base view + modal stack) must be repainted
+    // from the bottom up, e.g. after a modal was dismissed so nothing of it
+    // lingers. Independent of the refresh waveform above.
+    bool needsCompositeRepaint_ = false;
     const void* exclusiveOwner_ = nullptr;
     SemaphoreHandle_t mutex_ = nullptr;
 
@@ -235,6 +256,7 @@ private:
     void pop_unlocked();
     void hideModal_unlocked();
     void removeModal_unlocked(IView* modal);
+    void escalatePending_unlocked(hal::RefreshMode mode);
 
     // Inactivity timeout
     InactivityCallback inactivityCallback_ = nullptr;

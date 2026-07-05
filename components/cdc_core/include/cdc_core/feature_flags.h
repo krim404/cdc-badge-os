@@ -61,6 +61,36 @@
 #define FEATURE_MARKDOWN 1
 #endif
 
+// ============================================================================
+// Display / E-Paper Refresh Policy
+// ============================================================================
+// The panel escalates refreshes to bound ghosting while minimising visible
+// flashing: after FEATURE_EPD_MAX_PARTIALS_BEFORE_FAST consecutive partial
+// updates the next refresh is promoted to FAST (single flash cycle), and after
+// FEATURE_EPD_MAX_FASTS_BEFORE_FULL fast refreshes the next one is promoted to
+// FULL (multi-flash OTP waveform, complete clean). PARTIAL_LIGHT updates never
+// count. A long-press on key '5' forces a manual FULL refresh at any time.
+
+// Escalate to a FAST refresh after this many consecutive PARTIAL updates.
+#ifndef FEATURE_EPD_MAX_PARTIALS_BEFORE_FAST
+#define FEATURE_EPD_MAX_PARTIALS_BEFORE_FAST 50
+#endif
+
+// Escalate to a FULL refresh after this many FAST refreshes.
+#ifndef FEATURE_EPD_MAX_FASTS_BEFORE_FULL
+#define FEATURE_EPD_MAX_FASTS_BEFORE_FULL 10
+#endif
+
+// Enable the hardware FAST refresh waveform. 0 = FAST requests fall back to FULL.
+#ifndef FEATURE_EPD_FAST_REFRESH
+#define FEATURE_EPD_FAST_REFRESH 1
+#endif
+
+// Long-press key '5' triggers a manual FULL refresh (anti-ghosting).
+#ifndef FEATURE_EPD_LONGPRESS_FULL_REFRESH
+#define FEATURE_EPD_LONGPRESS_FULL_REFRESH 1
+#endif
+
 // Debug Mode (disables lockouts, useful for development)
 #ifndef DEBUG_MODE
 #define DEBUG_MODE 1

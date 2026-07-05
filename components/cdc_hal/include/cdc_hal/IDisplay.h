@@ -9,9 +9,12 @@ namespace cdc::hal {
  * Display refresh modes
  */
 enum class RefreshMode : uint8_t {
-    FULL,          // Full display refresh (slow, no ghosting)
-    PARTIAL,       // Partial refresh (fast, may ghost); periodically promoted to FULL to clear ghosting
-    PARTIAL_LIGHT  // Partial refresh never promoted to FULL; for tiny low-churn updates (e.g. lock-screen clock)
+    FULL,          // Full display refresh (multi-flash OTP waveform, slow, no ghosting)
+    FAST,          // Full-screen refresh with the short waveform (single flash); clears most ghosting.
+                   // Escalated to FULL after FEATURE_EPD_MAX_FASTS_BEFORE_FULL fast refreshes.
+    PARTIAL,       // Partial refresh (fast, may ghost); escalated to FAST after
+                   // FEATURE_EPD_MAX_PARTIALS_BEFORE_FAST consecutive partials
+    PARTIAL_LIGHT  // Partial refresh never promoted; for tiny low-churn updates (e.g. lock-screen clock)
 };
 
 /**

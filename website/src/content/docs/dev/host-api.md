@@ -143,6 +143,16 @@ The "Capability" column reflects what is enforced at the host-call boundary
 | Pixel strip | `pixel_strip` | `host_pixel_strip_init`, `host_pixel_strip_set`, `host_pixel_strip_fill`, `host_pixel_strip_refresh` |
 | Lockscreen quick-action | none (requires an active plugin) | `host_lockscreen_register_action`, `host_lockscreen_alert` |
 
+:::note[Display refresh modes]
+`host_display_flush(refresh_mode)` accepts `0` = full (multi-flash OTP waveform,
+cleans all ghosting), `1` = partial (no flash, may ghost) and `2` = fast
+(single-flash waveform, clears most ghosting); unknown values behave like `0`.
+Ordinary partial flushes are subject to the firmware's ghost-escalation chain
+(see [ADR-0014](/dev/adr/0014-epaper-refresh-escalation/)); an explicit full or
+fast flush resets its counters, so high-churn plugins such as games can manage
+their own panel hygiene.
+:::
+
 :::note[HTTP and WiFi]
 The HTTP and WiFi families document a required `http` / `wifi` capability, but
 their host functions do not perform a per-call `HOST_ERR_NO_CAPABILITY` check.

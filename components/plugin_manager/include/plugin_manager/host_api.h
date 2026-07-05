@@ -1233,6 +1233,9 @@ int      host_display_draw_text (int16_t x, int16_t y, const char* text, uint8_t
                                  uint16_t color);
 
 /// \brief Push the framebuffer to the panel using the given refresh mode.
+/// \param refresh_mode 0 = full (multi-flash, cleans all ghosting), 1 = partial
+///        (no flash, may ghost), 2 = fast (single flash, clears most ghosting).
+///        Unknown values behave like 0.
 int      host_display_flush     (uint8_t refresh_mode);
 
 /// \brief True while the panel is processing a previous refresh.

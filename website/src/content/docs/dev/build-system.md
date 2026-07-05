@@ -62,6 +62,20 @@ Key settings from `platformio.ini`:
 
 Three pre-build scripts run before compilation: a Python dependency installer, a submodule fetcher, and a component manager (`tools/pio_python_deps.py`, `tools/pio_submodules.py`, `tools/pio_component_manager.py`).
 
+## Compile-time feature flags
+
+`components/cdc_core/include/cdc_core/feature_flags.h` holds `#ifndef`-guarded
+compile-time toggles; any of them can be overridden with a `-D` compile
+definition without editing the header. The display refresh policy is tuned
+there (see [ADR-0014](/dev/adr/0014-epaper-refresh-escalation/)):
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `FEATURE_EPD_MAX_PARTIALS_BEFORE_FAST` | 50 | Consecutive partial refreshes before the next one is promoted to FAST |
+| `FEATURE_EPD_MAX_FASTS_BEFORE_FULL` | 10 | FAST refreshes before the next one is promoted to FULL |
+| `FEATURE_EPD_FAST_REFRESH` | 1 | Enable the hardware FAST waveform; 0 maps FAST requests to FULL |
+| `FEATURE_EPD_LONGPRESS_FULL_REFRESH` | 1 | Long-press key 5 triggers a manual FULL refresh |
+
 ## The MODULES list and generated registration
 
 Feature modules are added in exactly one place: the `MODULES` list in `main/CMakeLists.txt`.

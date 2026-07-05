@@ -19,6 +19,7 @@
 #include "cdc_os_ui/HardwareInfo.h"
 #include "cdc_core/PinManager.h"
 #include "cdc_core/FactoryReset.h"
+#include "cdc_core/feature_flags.h"
 #include "cdc_core/TropicSlotMap.h"
 #include "cdc_core/TropicStorage.h"
 #include "cdc_core/UsbManager.h"
@@ -840,7 +841,16 @@ void ui_init(const UiDeps& deps) {
         s_deps.keypad->setLongPressEnabled(true, 800);
         s_deps.keypad->setLongPressCallback([](hal::Key key) {
             char keyChar = static_cast<char>(key);
-            ViewStack::instance().dispatchLongPress(keyChar);
+            InputResult result = ViewStack::instance().dispatchLongPress(keyChar);
+#if FEATURE_EPD_LONGPRESS_FULL_REFRESH
+            // Global anti-ghosting gesture: long-press '5' forces a manual FULL
+            // refresh when no view claimed the press (T9 input etc. keep priority).
+            if (keyChar == '5' && result == ui::InputResult::IGNORED) {
+                ViewStack::instance().forceFullRefresh();
+            }
+#else
+            (void)result;
+#endif
         });
         s_deps.keypad->setPanicChordCallback([]() {
             s_antiBlockLockRequested.store(true, std::memory_order_relaxed);

@@ -65,10 +65,14 @@ animates or updates every tick must call `markDirty()` itself in `onTick()`
 | `popToDepth(n)` | Pop until depth is at most `n` | `ViewStack.cpp:230` |
 | `current()` / `at(i)` / `depth()` | Inspect the stack | `ViewStack.cpp:237`, `ViewStack.cpp:243`, `ViewStack.h:83` |
 
-`pop()` refuses to remove the last view (`ViewStack.cpp:95-98`). On push/pop the
-stack decides whether the next paint is a full refresh: a list-to-list
-transition stays partial, everything else forces a full refresh
-(`ViewStack.cpp:89`, `ViewStack.cpp:117`).
+`pop()` refuses to remove the last view (`ViewStack.cpp:95-98`). Transitions
+render as partials by default; ghosting is bounded by the HAL escalation chain
+(see [ADR-0014](/dev/adr/0014-epaper-refresh-escalation/)). On push/pop/replace
+the stack escalates the pending refresh with the entering (or revealed) view's
+`preferredEnterRefresh()` — the default is `PARTIAL`, `ImageView` demands `FULL`
+and `CanvasView` demands `FAST` for a clean first paint. Any view can escalate
+the next render at any time with `ViewStack::forceRefresh(mode)` or
+`forceFullRefresh()`.
 
 The stack is guarded by a FreeRTOS **recursive** mutex because it is touched
 from multiple tasks (UI task, USB CTAP-HID task, BLE callback task) and because
@@ -105,9 +109,10 @@ Key behaviours:
 - `hasModal()` / `getModal()` report and return the top input-receiving modal
   (`ViewStack.h:154`, `ViewStack.h:159`).
 
-Stacking or dismissing a modal forces a full composite so a smaller new modal
-does not leave the previous one's edges showing, and a dismissed modal is fully
-erased (`ViewStack.cpp:409-412`, `ViewStack.cpp:128-130`).
+Stacking or dismissing a modal triggers a composite repaint (base view plus the
+remaining modals, bottom-to-top) so a dismissed modal is fully erased from the
+framebuffer. The flush itself stays partial - the whole-screen partial covers
+the erasure - and ghost hygiene comes from the HAL escalation chain.
 
 ## Input dispatch
 
@@ -190,35 +195,48 @@ digit buffer), since ASCII is below the corrupting range.
 
 ## E-paper refresh modes
 
-The display HAL defines three refresh modes
+The display HAL defines four refresh modes
 (`components/cdc_hal/include/cdc_hal/IDisplay.h:11`):
 
-| Mode | Meaning | Source |
-| --- | --- | --- |
-| `FULL` | Full refresh, slow, no ghosting | `IDisplay.h:12` |
-| `PARTIAL` | Fast partial refresh; may ghost; periodically promoted to FULL to clear ghosting | `IDisplay.h:13` |
-| `PARTIAL_LIGHT` | Partial refresh that is never promoted to FULL; for tiny low-churn updates | `IDisplay.h:14` |
+| Mode | Meaning |
+| --- | --- |
+| `FULL` | Full refresh, multi-flash OTP waveform, slow, no ghosting |
+| `FAST` | Full-screen refresh with the short waveform (single flash); clears most ghosting |
+| `PARTIAL` | Fast partial refresh; may ghost; escalated via FAST to FULL by the HAL |
+| `PARTIAL_LIGHT` | Partial refresh that is never promoted; for tiny low-churn updates |
 
 `flush(mode)` (async) and `flushSync(mode)` (blocking) both default to `PARTIAL`
 (`IDisplay.h:33`, `IDisplay.h:39`).
 
-The `ViewStack::render()` path chooses the mode (`ViewStack.cpp:315`):
+The HAL escalates centrally in `resolveRefresh()`
+(`components/cdc_hal/src/EpaperDisplay.cpp`): after
+`FEATURE_EPD_MAX_PARTIALS_BEFORE_FAST` (default 50) consecutive partials the
+next refresh is promoted to `FAST`, and after
+`FEATURE_EPD_MAX_FASTS_BEFORE_FULL` (default 10) fast refreshes the next one is
+promoted to `FULL`. Both thresholds, the fast-waveform enable
+(`FEATURE_EPD_FAST_REFRESH`) and the long-press-5 manual full refresh
+(`FEATURE_EPD_LONGPRESS_FULL_REFRESH`) are build-time flags in
+`components/cdc_core/include/cdc_core/feature_flags.h`. See
+[ADR-0014](/dev/adr/0014-epaper-refresh-escalation/).
 
-- After a view change (push/pop/replace/modal change) the stack sets
-  `needsFullRefresh_`, so the next paint is `FULL`
-  (`ViewStack.cpp:364-366`, `ViewStack.cpp:89`, `ViewStack.cpp:117`).
-- Otherwise, for a plain repaint the mode is `PARTIAL_LIGHT` when the current
-  view returns `prefersLightRefresh() == true`, else `PARTIAL`
-  (`ViewStack.cpp:364-366`).
-- When a modal is shown, a dirty base under a still-visible modal repaints with
-  `PARTIAL`; `FULL` is reserved for modal-stack changes so a dismissed modal is
-  erased (`ViewStack.cpp:347-353`).
+The `ViewStack::render()` path chooses the requested mode:
+
+- Transitions (push/pop/replace, modal dismiss) escalate the pending mode with
+  the entering or revealed view's `preferredEnterRefresh()` (default `PARTIAL`).
+- For a plain repaint the mode is `PARTIAL_LIGHT` when the current view returns
+  `prefersLightRefresh() == true`, else `PARTIAL`; a stronger pending mode wins.
+- With modals shown, the composite repaint flushes with `PARTIAL` unless
+  something escalated the pending mode.
 
 `prefersLightRefresh()` defaults to false (`IView.h:79`). The lock-screen view
 overrides it to true so its once-a-minute clock update is never promoted to a
 flickering full refresh while the badge sits idle
 (`components/cdc_os_ui/include/cdc_os_ui/views/LockScreenView.h:120`,
-`IView.h:73-79`). A full refresh still happens on the next view change.
+`IView.h:73-79`).
+
+A long-press on key `5` (when the active view does not consume it) forces a
+manual `FULL` refresh as the user-facing anti-ghosting gesture
+(`AppUi.cpp`, `FEATURE_EPD_LONGPRESS_FULL_REFRESH`).
 
 `render(synchronous)` flushes via `flushSync` when synchronous and `flush`
 otherwise; the main UI tick calls the async path

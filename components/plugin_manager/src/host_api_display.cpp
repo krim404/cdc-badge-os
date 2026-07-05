@@ -106,12 +106,19 @@ int host_display_draw_text(int16_t x, int16_t y, const char* text, uint8_t size,
     return HOST_OK;
 }
 
+// refresh_mode: 0 = FULL, 1 = PARTIAL, 2 = FAST (single-flash waveform).
+// Plugins choose per flush; explicit FULL/FAST also reset the HAL ghost
+// escalation counters, so high-churn apps (e.g. games) can keep their own
+// panel hygiene. Unknown values map to FULL for backward compatibility.
 int host_display_flush(uint8_t refresh_mode)
 {
     if (!allowed()) return HOST_ERR_NO_CAPABILITY;
     auto* d = disp();
     if (!d) return HOST_ERR_GENERIC;
-    d->flush(refresh_mode == 1 ? cdc::hal::RefreshMode::PARTIAL : cdc::hal::RefreshMode::FULL);
+    cdc::hal::RefreshMode mode = cdc::hal::RefreshMode::FULL;
+    if (refresh_mode == 1) mode = cdc::hal::RefreshMode::PARTIAL;
+    else if (refresh_mode == 2) mode = cdc::hal::RefreshMode::FAST;
+    d->flush(mode);
     return HOST_OK;
 }
 

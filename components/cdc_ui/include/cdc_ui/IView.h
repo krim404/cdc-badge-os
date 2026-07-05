@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cdc_hal/IDisplay.h"
 #include <cstdint>
 
 namespace cdc::ui {
@@ -83,6 +84,16 @@ public:
      * refresh still happens on the next view change.
      */
     virtual bool prefersLightRefresh() const { return false; }
+
+    /**
+     * Refresh mode requested when this view is revealed by a stack transition
+     * (push/pop/replace or a modal being dismissed over it). The default
+     * PARTIAL keeps transitions flash-free; ghosting is bounded by the HAL
+     * escalation chain (see feature_flags.h). Views that render dithered
+     * grayscale or large dark regions can return FAST or FULL to get a clean
+     * base for their first paint.
+     */
+    virtual hal::RefreshMode preferredEnterRefresh() const { return hal::RefreshMode::PARTIAL; }
 
     // === Input ===
 

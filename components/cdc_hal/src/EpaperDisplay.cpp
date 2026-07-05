@@ -9,6 +9,7 @@
 #include "cdc_hal/IDisplay.h"
 #include "cdc_hal/hw_config.h"
 #include "cdc_core/Raii.h"
+#include "cdc_core/feature_flags.h"
 #include "cdc_log.h"
 #include "driver/ledc.h"
 #include "nvs_flash.h"
@@ -72,37 +73,83 @@ static volatile RefreshMode s_renderMode = RefreshMode::PARTIAL;
 static SemaphoreHandle_t s_panelMutex = nullptr;
 
 // The SSD1680 accumulates ghosting across consecutive partial updates and
-// eventually stops applying new partials cleanly. After this many partials a
-// refresh is promoted to a FULL update to reset the panel. Guarded by
-// s_panelMutex.
-static uint16_t s_partialsSinceFull = 0;
-static constexpr uint16_t kMaxPartialsBeforeFull = 60;
+// eventually stops applying new partials cleanly. Refreshes escalate in two
+// stages to bound ghosting with minimal visible flashing: after
+// FEATURE_EPD_MAX_PARTIALS_BEFORE_FAST partials the next refresh is promoted
+// to FAST (single flash), and after FEATURE_EPD_MAX_FASTS_BEFORE_FULL fast
+// refreshes the next one is promoted to FULL (multi-flash OTP waveform).
+// Both counters are guarded by s_panelMutex.
+static_assert(FEATURE_EPD_MAX_PARTIALS_BEFORE_FAST > 0, "partial threshold must be positive");
+static_assert(FEATURE_EPD_MAX_FASTS_BEFORE_FULL > 0, "fast threshold must be positive");
+static uint16_t s_partialsSinceFast = 0;
+static uint16_t s_fastsSinceFull = 0;
+static constexpr uint16_t kMaxPartialsBeforeFast = FEATURE_EPD_MAX_PARTIALS_BEFORE_FAST;
+static constexpr uint16_t kMaxFastsBeforeFull = FEATURE_EPD_MAX_FASTS_BEFORE_FULL;
 
-// Decide the effective refresh mode, promoting to FULL periodically to clear
-// ghosting. Caller must hold s_panelMutex.
-static bool resolveFullRefresh(RefreshMode mode) {
+// Decide the effective refresh mode, escalating PARTIAL -> FAST -> FULL to
+// clear ghosting. Caller must hold s_panelMutex.
+static RefreshMode resolveRefresh(RefreshMode mode) {
     // Light partials (e.g. the lock-screen clock) never promote and do not
-    // advance the ghost counter; they stay PARTIAL until a real FULL clears them.
+    // advance the ghost counters; they stay partial until a FAST/FULL clears them.
     if (mode == RefreshMode::PARTIAL_LIGHT) {
-        return false;
+        return mode;
     }
-    if (mode == RefreshMode::FULL || s_partialsSinceFull >= kMaxPartialsBeforeFull) {
-        s_partialsSinceFull = 0;
-        return true;
+    if (mode == RefreshMode::PARTIAL) {
+        if (s_partialsSinceFast < kMaxPartialsBeforeFast) {
+            ++s_partialsSinceFast;
+            return mode;
+        }
+        mode = RefreshMode::FAST; // falls through to the FAST accounting below
     }
-    ++s_partialsSinceFull;
-    return false;
+    if (mode == RefreshMode::FAST) {
+        s_partialsSinceFast = 0;
+        if (s_fastsSinceFull < kMaxFastsBeforeFull) {
+            // A FAST refresh does not fully DC-balance the film, so it does
+            // not reset the full-refresh counter.
+            ++s_fastsSinceFull;
+#if FEATURE_EPD_FAST_REFRESH
+            return mode;
+#else
+            return RefreshMode::FULL; // hardware fast waveform disabled
+#endif
+        }
+        mode = RefreshMode::FULL;
+    }
+    s_partialsSinceFast = 0;
+    s_fastsSinceFull = 0;
+    return RefreshMode::FULL;
 }
 
 // Coalescing rank for queued async refreshes: when several flush() calls
-// collapse into one render, the stronger mode wins. FULL > PARTIAL > PARTIAL_LIGHT.
+// collapse into one render, the stronger mode wins.
+// FULL > FAST > PARTIAL > PARTIAL_LIGHT.
 static int refreshStrength(RefreshMode mode) {
     switch (mode) {
-        case RefreshMode::FULL:          return 2;
+        case RefreshMode::FULL:          return 3;
+        case RefreshMode::FAST:          return 2;
         case RefreshMode::PARTIAL:       return 1;
         case RefreshMode::PARTIAL_LIGHT: return 0;
     }
     return 1;
+}
+
+// Drive the panel with the already-resolved refresh mode. Caller must hold
+// s_panelMutex.
+static void driveRefresh(RefreshMode resolved) {
+    switch (resolved) {
+        case RefreshMode::FULL:
+            s_epd_display->update();
+            break;
+        case RefreshMode::FAST:
+            s_epd_display->updateFast();
+            break;
+        default:
+            // updateWindow takes physical coordinates (128 x 296). HAL
+            // WIDTH/HEIGHT are logical post-rotation values; swap them and
+            // pass using_rotation=false.
+            s_epd_display->updateWindow(0, 0, HEIGHT, WIDTH, false);
+            break;
+    }
 }
 
 /**
@@ -159,14 +206,7 @@ static void renderTask(void* arg) {
 
         if (s_epd_display) {
             cdc::core::MutexGuard guard(s_panelMutex);
-            if (resolveFullRefresh(mode)) {
-                s_epd_display->update();
-            } else {
-                // updateWindow takes physical coordinates (128 x 296). HAL
-                // WIDTH/HEIGHT are logical post-rotation values; swap them
-                // and pass using_rotation=false.
-                s_epd_display->updateWindow(0, 0, HEIGHT, WIDTH, false);
-            }
+            driveRefresh(resolveRefresh(mode));
         }
     }
 }
@@ -359,13 +399,7 @@ void EpaperDisplay::flush(RefreshMode mode) {
 void EpaperDisplay::flushSync(RefreshMode mode) {
     if (!s_epd_display) return;
     cdc::core::MutexGuard guard(s_panelMutex);
-    if (resolveFullRefresh(mode)) {
-        s_epd_display->update();
-    } else {
-        // updateWindow takes physical coordinates (128 x 296). HAL WIDTH/HEIGHT
-        // are logical post-rotation values; swap them and pass using_rotation=false.
-        s_epd_display->updateWindow(0, 0, HEIGHT, WIDTH, false);
-    }
+    driveRefresh(resolveRefresh(mode));
 }
 
 /**

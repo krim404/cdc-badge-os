@@ -1,0 +1,83 @@
+--- a/models/goodisplay/gdey029T94.cpp	2026-07-05 20:58:04.123738287 +0200
++++ b/models/goodisplay/gdey029T94.cpp	2026-07-05 20:58:48.863783093 +0200
+@@ -173,6 +173,67 @@
+   _sleep();
+ }
+ 
++// Fast full-screen refresh (single flash, ~1.5s). Follows the official
++// Good Display demo (EPD_HW_Init_Fast / EPD_Update_Fast for SSD1680):
++// load the sensed temperature, override the temperature register with 0x64
++// (100 degC) to select the fast OTP waveform, reload the LUT, then trigger
++// a Display Mode 1 update with 0xC7. B/W mode only; 4-gray falls back to a
++// normal full update. Note: the temperature override bypasses the panel's
++// temperature compensation, so contrast may degrade in cold environments.
++void Gdey029T94::updateFast()
++{
++  if (!_mono_mode) {
++    update();
++    return;
++  }
++  _using_partial_mode = false;
++  uint64_t startTime = esp_timer_get_time();
++
++  _wakeUp();
++
++  IO.cmd(0x22);  // Load temperature value from the built-in sensor
++  IO.data(0xB1);
++  IO.cmd(0x20);
++  _waitBusy("load temperature");
++
++  IO.cmd(0x1A);  // Write to temperature register: 0x64 selects the fast waveform
++  IO.data(0x64);
++  IO.data(0x00);
++
++  IO.cmd(0x22);  // Load LUT for the written temperature
++  IO.data(0x91);
++  IO.cmd(0x20);
++  _waitBusy("load waveform");
++
++  uint8_t xLineBytes = GDEY029T94_WIDTH/8;
++  uint8_t x1buf[xLineBytes];
++
++  IO.cmd(0x24); // write RAM1 for black(0)/white (1)
++  for (int y = GDEY029T94_HEIGHT; y >= 0; y--) {
++    for (uint16_t x = 0; x < xLineBytes; x++)
++    {
++      uint16_t idx = y * xLineBytes + x;
++      x1buf[x] = (idx < sizeof(_mono_buffer)) ? _mono_buffer[idx] : 0x00;
++
++      if (x==xLineBytes-1) { // Flush the X line buffer to SPI
++            IO.data(x1buf,sizeof(x1buf));
++          }
++    }
++  }
++  uint64_t endTime = esp_timer_get_time();
++
++  IO.cmd(0x22);        // Display Update Control
++  IO.data(0xC7);
++  IO.cmd(0x20);        // Update sequence
++  _waitBusy("update fast");
++  uint64_t powerOnTime = esp_timer_get_time();
++
++  printf("\n\nFAST STATS (ms)\n%llu _wakeUp settings+send Buffer\n%llu _powerOn\n%llu total time in millis\n",
++  (endTime-startTime)/1000, (powerOnTime-endTime)/1000, (powerOnTime-startTime)/1000);
++
++  _sleep();
++}
++
+ void Gdey029T94::updateWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool using_rotation)
+ {
+   //ESP_LOGE("PARTIAL", "update is not implemented x:%d y:%d\n", (int)x, (int)y);
+--- a/include/goodisplay/gdey029T94.h	2026-07-05 20:58:04.123738287 +0200
++++ b/include/goodisplay/gdey029T94.h	2026-07-05 20:58:48.863783093 +0200
+@@ -46,6 +46,10 @@
+     void setMonoMode(bool mode);
+     void fillScreen(uint16_t color);
+     void update();
++    // Fast full-screen refresh (single flash) using the temperature-override
++    // waveform from the Good Display demo. B/W mode only; 4-gray falls back
++    // to update().
++    void updateFast();
+     void eraseDisplay(bool using_partial_update = false);
+ 
+     // Partial update test status please check repository Wiki

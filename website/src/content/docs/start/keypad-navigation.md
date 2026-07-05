@@ -46,6 +46,16 @@ The context menu (opened with <kbd>3</kbd>) is a small popup. Move with
 <kbd>2</kbd>/<kbd>8</kbd>, choose with <kbd>Y</kbd>, and dismiss with
 <kbd>N</kbd>. It closes itself automatically after 60 seconds of inactivity.
 
+## Display refresh (anti-ghosting)
+
+To spare the e-paper panel, the badge avoids the flashing full refresh wherever
+possible: navigation uses quiet partial updates, and the firmware inserts a
+stronger cleaning refresh automatically every so often. Faint shadows of
+previous screens ("ghosting") can therefore build up temporarily.
+
+**Hold <kbd>5</kbd>** on any screen that does not use the key itself to trigger
+a manual full refresh and wipe the panel clean.
+
 ## Anti-block instant lock
 
 If a screen ever becomes stuck, **hold <kbd>N</kbd> and <kbd>Y</kbd> together**.
