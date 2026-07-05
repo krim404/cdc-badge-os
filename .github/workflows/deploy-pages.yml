@@ -155,6 +155,26 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
+      - name: Delete stale github-pages artifacts from prior attempts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            for (const artifact of artifacts.data.artifacts) {
+              if (artifact.name === 'github-pages') {
+                core.info(`Deleting stale artifact ${artifact.id} from prior attempt`);
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id,
+                });
+              }
+            }
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
