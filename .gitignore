@@ -54,6 +54,9 @@ doxygen_output/
 # **/AGENTS.md
 skill/
 
+# PI subagent artifacts
+.pi-subagents/
+
 # AI assistant local state
 CLAUDE.md
 agents.md
