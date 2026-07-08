@@ -170,8 +170,6 @@ void ContextMenuView::render(bool partial) {
     int16_t x1, y1;
     uint16_t maxLabelWidth = 0;
 
-    gfx->setTextSize(1);
-
     // Find widest label
     for (uint8_t i = 0; i < itemCount_; i++) {
         if (items_[i].label) {

@@ -56,6 +56,8 @@ static int gattcReadCb(uint16_t connHandle, const struct ble_gatt_error* error,
                         struct ble_gatt_attr* attr, void* arg);
 static int gattcWriteCb(uint16_t connHandle, const struct ble_gatt_error* error,
                           struct ble_gatt_attr* attr, void* arg);
+static int gattcDscDiscCb(uint16_t connHandle, const struct ble_gatt_error* error,
+                           uint16_t chr_val_handle, const struct ble_gatt_dsc* dsc, void* arg);
 
 /**
  * \brief Internal limits for dynamic GATT service registration.
@@ -299,6 +301,7 @@ public:
                              bool withResponse) override;
     bool readCharacteristic(uint16_t connHandle, uint16_t attrHandle) override;
     bool enableNotifications(uint16_t connHandle, uint16_t cccdHandle) override;
+    bool subscribeToCharacteristic(uint16_t connHandle, uint16_t valueHandle) override;
     void disconnectHandle(uint16_t connHandle) override;
     ListenerToken addServiceDiscoveryCallback(ServiceDiscoveryCallback cb) override;
     ListenerToken addCharacteristicReadCallback(CharacteristicReadCallback cb) override;
@@ -453,6 +456,10 @@ private:
     uint16_t discoverSvcStart_ = 0;
     uint16_t discoverSvcEnd_ = 0;
 
+    /** \brief Pending subscribeToCharacteristic() descriptor search state. */
+    uint16_t pendingSubValueHandle_ = 0;
+    uint16_t pendingSubCccdHandle_ = 0;
+
     // Manufacturer data for advertising
     uint8_t mfgData_[31] = {};
     uint16_t mfgDataLen_ = 0;
@@ -472,6 +479,8 @@ public:
                             struct ble_gatt_attr*, void*);
     friend int gattcWriteCb(uint16_t, const struct ble_gatt_error*,
                               struct ble_gatt_attr*, void*);
+    friend int gattcDscDiscCb(uint16_t, const struct ble_gatt_error*,
+                               uint16_t, const struct ble_gatt_dsc*, void*);
 };
 
 /**
@@ -2345,6 +2354,74 @@ bool BluetoothController::enableNotifications(uint16_t connHandle, uint16_t cccd
     }
 
     LOG_I(TAG, "Notifications enabled (cccd=%d)", cccdHandle);
+    return true;
+}
+
+/**
+ * \brief Descriptor discovery callback for subscribeToCharacteristic().
+ *
+ * Collects the CCCD (0x2902) handle; on completion writes it via
+ * enableNotifications(), falling back to valueHandle + 1 when the search
+ * found no CCCD.
+ * \param connHandle Connection handle.
+ * \param error NimBLE discovery status.
+ * \param chr_val_handle Value handle the descriptor belongs to.
+ * \param dsc Discovered descriptor (valid while status == 0).
+ * \param arg Optional user argument (unused).
+ * \return `0` to continue callback processing.
+ */
+int gattcDscDiscCb(uint16_t connHandle, const struct ble_gatt_error* error,
+                    uint16_t chr_val_handle, const struct ble_gatt_dsc* dsc, void* arg) {
+    (void)arg;
+    (void)chr_val_handle;
+    auto* ctrl = BluetoothController::instance_;
+    if (!ctrl) return 0;
+
+    if (error->status == 0 && dsc) {
+        if (dsc->uuid.u.type == BLE_UUID_TYPE_16 && dsc->uuid.u16.value == 0x2902 &&
+            ctrl->pendingSubCccdHandle_ == 0) {
+            ctrl->pendingSubCccdHandle_ = dsc->handle;
+        }
+        return 0;
+    }
+
+    // Discovery finished (BLE_HS_EDONE) or failed: write whatever we found.
+    uint16_t cccd = ctrl->pendingSubCccdHandle_;
+    if (cccd == 0) {
+        cccd = static_cast<uint16_t>(ctrl->pendingSubValueHandle_ + 1);
+        LOG_W(TAG, "No CCCD found for handle %d, falling back to %d",
+              ctrl->pendingSubValueHandle_, cccd);
+    }
+    ctrl->pendingSubValueHandle_ = 0;
+    ctrl->pendingSubCccdHandle_ = 0;
+    ctrl->enableNotifications(connHandle, cccd);
+    return 0;
+}
+
+/**
+ * \brief Subscribes to notifications on a characteristic by value handle.
+ * \param connHandle Connection handle.
+ * \param valueHandle Characteristic value handle from discovery.
+ * \return `true` if the descriptor search (or fallback write) was initiated.
+ */
+bool BluetoothController::subscribeToCharacteristic(uint16_t connHandle, uint16_t valueHandle) {
+    if (!enabled_ || valueHandle == 0) return false;
+
+    // The descriptor range ends where the last-discovered service ends; without
+    // a prior service discovery there is no bound, so use the +1 heuristic.
+    if (discoverSvcEnd_ == 0 || valueHandle >= discoverSvcEnd_) {
+        return enableNotifications(connHandle, static_cast<uint16_t>(valueHandle + 1));
+    }
+
+    pendingSubValueHandle_ = valueHandle;
+    pendingSubCccdHandle_ = 0;
+    int rc = ble_gattc_disc_all_dscs(connHandle, valueHandle, discoverSvcEnd_,
+                                     gattcDscDiscCb, nullptr);
+    if (rc != 0) {
+        LOG_E(TAG, "ble_gattc_disc_all_dscs failed: %d", rc);
+        pendingSubValueHandle_ = 0;
+        return enableNotifications(connHandle, static_cast<uint16_t>(valueHandle + 1));
+    }
     return true;
 }
 

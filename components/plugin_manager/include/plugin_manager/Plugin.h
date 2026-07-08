@@ -117,6 +117,12 @@ public:
     // by PluginManager on exit. Stored as opaque prerequisite names for now.
     std::vector<std::string> acquired_prereqs;
 
+    /// Whether the plugin has asked (via host_set_resident) to stay loaded in
+    /// the background. A `background`/`autoload` capability is only permission;
+    /// the plugin must set this to actually remain resident. Default false.
+    [[nodiscard]] bool residentRequested() const noexcept { return resident_requested_; }
+    void setResidentRequested(bool on) noexcept { resident_requested_ = on; }
+
 private:
     struct OverlayEntry {
         std::string key;
@@ -139,6 +145,7 @@ private:
     std::set<std::string>     missingExports_;
 
     bool last_call_trapped_ = false;
+    bool resident_requested_ = false;
     char last_trap_[160]    = {0};
 };
 

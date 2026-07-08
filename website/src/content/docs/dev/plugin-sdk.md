@@ -223,6 +223,56 @@ The input views that fire on both confirm and cancel pop themselves before the
 action fires; read committed text with `host_ui_consume_input_text` and integers
 with `host_ui_consume_input_int` (`host_api.h:804-856`).
 
+## System events
+
+Subscribe to system-wide events with
+`host_event_subscribe(event_mask, action_id)`, where `event_mask` is a bitwise
+OR of the `EVENT_*` flags below. When a subscribed event fires, the host calls
+`plugin_on_action(action_id, idx, user_data)` with `idx` = the event's ordinal
+(the bit position) and `user_data` = the event payload. Background-capable
+plugins receive events even when off screen. Cancel with
+`host_event_unsubscribe(id)`; `host_event_publish(subtype, value)` broadcasts an
+`EVENT_MODULE_EVENT` to other plugins.
+
+Each flag is `(1u << ordinal)` of the matching core `EventType`, which is the
+single source of truth (a `static_assert` in the firmware guards the match), so
+the plugin-facing bits are contiguous.
+
+| Event | Bit | Payload (`user_data`) |
+| --- | --- | --- |
+| `EVENT_KEY_PRESSED` | 0 | ASCII key code (`'0'..'9'`, `'Y'`=89, `'N'`=78) |
+| `EVENT_KEY_RELEASED` | 1 | ASCII key code |
+| `EVENT_KEY_LONG_PRESS` | 2 | ASCII key code |
+| `EVENT_POWER_USB_CONN` | 3 | - |
+| `EVENT_POWER_USB_DISCONN` | 4 | - |
+| `EVENT_POWER_CHARGING` | 5 | - |
+| `EVENT_POWER_BATT_LOW` | 6 | - |
+| `EVENT_POWER_BATT_CRIT` | 7 | - |
+| `EVENT_SYSTEM_UNLOCK` | 8 | - |
+| `EVENT_SYSTEM_LOCK` | 9 | - |
+| `EVENT_SYSTEM_SLEEP` | 10 | - |
+| `EVENT_SYSTEM_WAKE` | 11 | - |
+| `EVENT_BLE_CONNECTED` | 12 | - |
+| `EVENT_BLE_DISCONNECTED` | 13 | - |
+| `EVENT_TIMER_TICK` | 14 | - |
+| `EVENT_MODULE_EVENT` | 15 | module-defined sub-type |
+| `EVENT_DISPLAY_REFRESH` | 16 | `1` at begin, `0` at end |
+
+`EVENT_DISPLAY_REFRESH` fires around a FAST or FULL e-paper refresh (the visible
+multi-flash), during which the panel is unreadable; PARTIAL refreshes stay
+silent. Subscribe to pause animation or game logic between begin and end - the
+snake plugin uses it to hold its step so the snake never moves unseen:
+
+```rust
+// plugin_on_enter
+event::subscribe(event::DISPLAY_REFRESH, ACT_REFRESH)?;
+
+// plugin_on_action(action_id, idx, user_data)
+if action_id == ACT_REFRESH {
+    refresh_busy = user_data != 0;   // 1 = pause, 0 = resume
+}
+```
+
 ## Building and installing
 
 Plugins are stored on the plugins FAT partition as a `<id>.wasm` payload plus a

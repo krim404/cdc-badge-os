@@ -85,6 +85,8 @@ uint8_t  s_cur_write_buf[BLE_MAX_PAYLOAD];
 
 // --- central (GATT client) state ---
 struct NotifyEvt { uint16_t value_handle; uint16_t len; uint8_t data[BLE_MAX_PAYLOAD]; };
+struct WcEvt { uint16_t attr; int16_t status; };
+constexpr uint8_t WC_RING = 4;
 struct {
     void*    plugin = nullptr;
     bool     listeners_registered = false;
@@ -95,6 +97,11 @@ struct {
     uint32_t discover_action_id = 0;
     uint32_t read_action_id     = 0;
     uint32_t notify_action_id   = 0;
+    uint32_t write_action_id    = 0;
+
+    // write-completion ring (drop-oldest keeps the latest status visible)
+    WcEvt    wcring[WC_RING];
+    uint8_t  wc_head = 0, wc_tail = 0;
 
     // discovery result stash
     ble_remote_char_t disc[MAX_DISC_CHARS];
@@ -196,6 +203,20 @@ void on_notification(uint16_t, uint16_t attr, const uint8_t* data, uint16_t len)
     s_cen.n_head = next;
 }
 
+void on_write_complete(uint16_t connHandle, uint16_t attr, int status) {
+    Guard g;
+    if (connHandle != s_cen.conn) return;  // not our central op
+    uint8_t next = static_cast<uint8_t>((s_cen.wc_head + 1) % WC_RING);
+    if (next == s_cen.wc_tail) {
+        // ring full: drop the oldest so the newest status survives
+        s_cen.wc_tail = static_cast<uint8_t>((s_cen.wc_tail + 1) % WC_RING);
+    }
+    WcEvt& e = s_cen.wcring[s_cen.wc_head];
+    e.attr = attr;
+    e.status = static_cast<int16_t>(status);
+    s_cen.wc_head = next;
+}
+
 void ensure_central_listeners() {
     if (s_cen.listeners_registered) return;
     auto* b = ble();
@@ -203,6 +224,7 @@ void ensure_central_listeners() {
     b->addServiceDiscoveryCallback(on_discovery);
     b->addCharacteristicReadCallback(on_char_read);
     b->addNotificationCallback(on_notification);
+    b->addWriteCompleteCallback(on_write_complete);
     s_cen.listeners_registered = true;
 }
 
@@ -462,6 +484,33 @@ int host_ble_subscribe(uint32_t conn, uint16_t cccd_handle, uint32_t action_id) 
         ? HOST_OK : HOST_ERR_GENERIC;
 }
 
+int host_ble_subscribe_char(uint32_t conn, uint16_t value_handle, uint32_t action_id) {
+    if (!ble_allowed()) return HOST_ERR_NO_CAPABILITY;
+    auto* b = ble();
+    if (!b) return HOST_ERR_NOT_FOUND;
+    s_cen.plugin = plg_get_active_plugin();
+    s_cen.conn = static_cast<uint16_t>(conn);
+    s_cen.notify_action_id = action_id;
+    ensure_central_listeners();
+    return b->subscribeToCharacteristic(static_cast<uint16_t>(conn), value_handle)
+        ? HOST_OK : HOST_ERR_GENERIC;
+}
+
+uint16_t host_ble_get_mtu(uint32_t conn) {
+    (void)conn;  // single connection today; kept for forward compatibility
+    if (!ble_allowed()) return 0;
+    auto* b = ble();
+    return b ? b->getMtu() : 0;
+}
+
+int host_ble_on_write_complete(uint32_t action_id) {
+    if (!ble_allowed()) return HOST_ERR_NO_CAPABILITY;
+    s_cen.plugin = plg_get_active_plugin();
+    s_cen.write_action_id = action_id;
+    if (action_id) ensure_central_listeners();
+    return HOST_OK;
+}
+
 int host_ble_consume_notification(uint16_t* value_handle_out, uint8_t* buf, size_t buf_size) {
     if (!value_handle_out || !buf || buf_size == 0) return HOST_ERR_INVALID_ARG;
     Guard g;
@@ -519,6 +568,21 @@ void plg_ble_pump(void) {
     if (fd && s_cen.discover_action_id) mgr.dispatchActionTo(pl, s_cen.discover_action_id, 0, 0);
     if (fr && s_cen.read_action_id)     mgr.dispatchActionTo(pl, s_cen.read_action_id, 0, 0);
     if (have_notif && s_cen.notify_action_id) mgr.dispatchActionTo(pl, s_cen.notify_action_id, 0, 0);
+
+    // Write completions: one action per event, status in user_data, attr in idx.
+    while (s_cen.write_action_id) {
+        uint16_t attr; int16_t status;
+        {
+            Guard g;
+            if (s_cen.wc_tail == s_cen.wc_head) break;
+            WcEvt& e = s_cen.wcring[s_cen.wc_tail];
+            attr = e.attr;
+            status = e.status;
+            s_cen.wc_tail = static_cast<uint8_t>((s_cen.wc_tail + 1) % WC_RING);
+        }
+        mgr.dispatchActionTo(pl, s_cen.write_action_id, attr,
+                             static_cast<uint32_t>(static_cast<int32_t>(status)));
+    }
 }
 
 // Drop any BLE resources owned by a plugin that is being unloaded.
@@ -531,6 +595,9 @@ void plg_ble_on_unload(void* plugin) {
     if (s_cen.plugin == plugin) {
         s_cen.plugin = nullptr;
         s_cen.discover_action_id = s_cen.read_action_id = s_cen.notify_action_id = 0;
+        s_cen.write_action_id = 0;
+        Guard g;
+        s_cen.wc_tail = s_cen.wc_head;
     }
 }
 

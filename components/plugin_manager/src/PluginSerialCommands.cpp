@@ -550,6 +550,23 @@ void cmdLangReload(const char*)
     else send("ERR reload_failed");
 }
 
+void cmdFeatures(const char*)
+{
+    auto& mgr = PluginManager::instance();
+    size_t count = 0;
+    for (const auto& id : mgr.listInstalledIds()) {
+        auto mf = mgr.getManifest(id);
+        if (!mf) continue;
+        for (const auto& feat : mf->capabilities.provides) {
+            sendf("%s %s%s%s", feat.c_str(), id.c_str(),
+                  mgr.isPluginDisabled(id) ? " [disabled]" : "",
+                  mgr.isLoaded(id) ? " [loaded]" : "");
+            ++count;
+        }
+    }
+    if (count == 0) send("(no features provided by installed plugins)");
+}
+
 const cdc::serial::SubCommand kPluginSubs[] = {
     {"LIST",        "",                              "List installed plugins (JSON)",                     cmdList},
     {"INFO",        "<id>",                          "Show manifest details for one plugin",              cmdInfo},
@@ -565,6 +582,7 @@ const cdc::serial::SubCommand kPluginSubs[] = {
     {"UPLOAD_LANG", "<id> <size> <crc32_hex>",       "Upload .lang payload (binary stream)",              cmdUploadLang},
     {"ABORT",       "",                              "Abort an active upload session",                    cmdAbort},
     {"DEBUG",       "",                              "Toggle verbose plugin/host_* logging",              cmdDebug},
+    {"FEATURES",    "",                              "List external features provided by installed plugins", cmdFeatures},
     {nullptr, nullptr, nullptr, nullptr},
 };
 void cmdPluginDispatch(const char* args) {
@@ -599,8 +617,11 @@ void registerPluginSerialCommands()
 {
     auto& reg = cdc::serial::getCommandRegistry();
     reg.registerCommand({"PLUGIN",
-                         "Plugin manager: LIST/INFO/START/STOP/ENABLE/DISABLE/DELETE/UPLOAD/UPLOAD_META/UPLOAD_LANG/ABORT/DEBUG",
+                         "Plugin manager: LIST/INFO/START/STOP/ENABLE/DISABLE/DELETE/UPLOAD/UPLOAD_META/UPLOAD_LANG/ABORT/DEBUG/FEATURES",
                          cmdPluginDispatch, CMD_MODULE, true, kPluginSubs});
+    reg.registerCommand({"FEATURE_LIST",
+                         "List external features provided by installed plugins",
+                         cmdFeatures, CMD_MODULE, true, nullptr});
     reg.registerCommand({"LANG",
                          "i18n overlay: INFO/RELOAD",
                          cmdLangDispatch, CMD_MODULE, true, kLangSubs});

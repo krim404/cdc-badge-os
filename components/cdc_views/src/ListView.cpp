@@ -249,10 +249,7 @@ void ListView::render(bool partial) {
         gfx->fillScreen(EPD_WHITE);
     }
 
-    gfx->setFont(nullptr);  // 6x8 built-in (CP437): never inherit a leaked GFX font
-    gfx->setTextColor(EPD_BLACK);
-    gfx->setTextSize(1);
-    gfx->setTextWrap(false);
+    gfx->setTextWrap(false);  // font/size/color reset centrally in ViewStack::render
 
     // Title + underline
     render::drawHeaderLeft(gfx, title_, ITEM_PADDING_X, TITLE_Y, width);

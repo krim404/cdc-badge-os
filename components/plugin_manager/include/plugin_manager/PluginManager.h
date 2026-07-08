@@ -60,6 +60,11 @@ public:
     ///        MIME type, so its message handler becomes live. Must run on the
     ///        plugin tick task. \return true if a handling plugin is now loaded.
     bool activateForMessageType(const char* mime);
+    /// \brief True if any installed plugin's manifest `provides` this external
+    ///        feature. Reads the cached index (same mutex as the MIME index).
+    [[nodiscard]] bool featureInstalled(const char* feature) const;
+    /// \brief Installed plugin id providing this external feature, or empty.
+    [[nodiscard]] std::string featureProviderId(const char* feature) const;
     [[nodiscard]] bool                         isPluginDisabled(const std::string& id) const;
     bool                                       setPluginDisabled(const std::string& id,
                                                                  bool disabled);
@@ -211,6 +216,10 @@ private:
     void*                    msg_index_mutex_ = nullptr;  // FreeRTOS SemaphoreHandle_t
     std::vector<std::string> msg_index_mime_;
     std::vector<std::string> msg_index_id_;
+    // External-feature -> plugin-id index, rebuilt together with the MIME index
+    // and guarded by the same mutex. Parallel arrays.
+    std::vector<std::string> feat_index_name_;
+    std::vector<std::string> feat_index_id_;
     std::string              installed_sig_;
     uint32_t                 last_index_refresh_ms_ = 0;
 };

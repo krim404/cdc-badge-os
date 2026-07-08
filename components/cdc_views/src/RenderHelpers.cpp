@@ -20,7 +20,7 @@ namespace {
  *        0xD4), which corrupts our CP437 text. write() routes straight to
  *        Epd::write(uint8_t) -> drawChar with no transform.
  */
-void writeRaw(Gdey029T94* gfx, const char* text) {
+void writeRaw(Adafruit_GFX* gfx, const char* text) {
     for (const uint8_t* p = reinterpret_cast<const uint8_t*>(text); *p; ++p) {
         gfx->write(*p);
     }
@@ -37,7 +37,7 @@ void writeRaw(Gdey029T94* gfx, const char* text) {
  * \param underlineOffset Vertical offset for underline.
  * \return void
  */
-void printTruncated(Gdey029T94* gfx, const char* text, int maxWidthPx) {
+void printTruncated(Adafruit_GFX* gfx, const char* text, int maxWidthPx) {
     if (!gfx || !text || maxWidthPx <= 0) return;
 
     int16_t x1, y1;
@@ -418,14 +418,14 @@ void decodeWebText(const char* in, char* out, size_t out_size,
     }
 }
 
-void drawCp437Text(Gdey029T94* gfx, const char* text) {
+void drawCp437Text(Adafruit_GFX* gfx, const char* text) {
     if (!gfx || !text) return;
     for (const uint8_t* p = reinterpret_cast<const uint8_t*>(text); *p; ++p) {
         gfx->write(cp437ToLatin1(*p));
     }
 }
 
-void drawText(Gdey029T94* gfx, const char* text, const GFXfont* font) {
+void drawText(Adafruit_GFX* gfx, const char* text, const GFXfont* font) {
     if (!gfx || !text) return;
     // Make the active font match the encoding chosen below: the built-in
     // glcdfont (font == nullptr) is CP437-indexed and gets raw bytes; Latin-1
@@ -439,13 +439,13 @@ void drawText(Gdey029T94* gfx, const char* text, const GFXfont* font) {
     }
 }
 
-void printText(Gdey029T94* gfx, const char* text) {
+void printText(Adafruit_GFX* gfx, const char* text) {
     if (!gfx || !text) return;
     gfx->setFont(nullptr);  // built-in glcdfont (CP437-indexed)
     writeRaw(gfx, text);
 }
 
-void measureText(Gdey029T94* gfx, const char* text, const GFXfont* font,
+void measureText(Adafruit_GFX* gfx, const char* text, const GFXfont* font,
                  int16_t x0, int16_t y0, int16_t* x1, int16_t* y1,
                  uint16_t* w, uint16_t* h) {
     if (!gfx || !text) {
@@ -463,7 +463,7 @@ void measureText(Gdey029T94* gfx, const char* text, const GFXfont* font,
     }
 }
 
-const GFXfont* pickFontThatFits(Gdey029T94* gfx,
+const GFXfont* pickFontThatFits(Adafruit_GFX* gfx,
                                 const char* text,
                                 int maxWidthPx,
                                 const GFXfont* const* candidates,
@@ -496,7 +496,7 @@ const GFXfont* pickFontThatFits(Gdey029T94* gfx,
     return selected;
 }
 
-void measureCp437Text(Gdey029T94* gfx, const char* text, int16_t x0, int16_t y0,
+void measureCp437Text(Adafruit_GFX* gfx, const char* text, int16_t x0, int16_t y0,
                       int16_t* x1, int16_t* y1, uint16_t* w, uint16_t* h) {
     if (!gfx || !text) {
         if (x1) *x1 = x0;
@@ -512,6 +512,127 @@ void measureCp437Text(Gdey029T94* gfx, const char* text, int16_t x0, int16_t y0,
     }
     buf[i] = '\0';
     gfx->getTextBounds(buf, x0, y0, x1, y1, w, h);
+}
+
+namespace {
+// Ordered-dither threshold matrix (8x8 Bayer, 64 levels) used to fake grey
+// fills on 1-bpp targets.
+constexpr uint8_t kBayer8[8][8] = {
+    {  0, 32,  8, 40,  2, 34, 10, 42 },
+    { 48, 16, 56, 24, 50, 18, 58, 26 },
+    { 12, 44,  4, 36, 14, 46,  6, 38 },
+    { 60, 28, 52, 20, 62, 30, 54, 22 },
+    {  3, 35, 11, 43,  1, 33,  9, 41 },
+    { 51, 19, 59, 27, 49, 17, 57, 25 },
+    { 15, 47,  7, 39, 13, 45,  5, 37 },
+    { 63, 31, 55, 23, 61, 29, 53, 21 },
+};
+}  // namespace
+
+bool ditherOn(int16_t x, int16_t y, uint8_t shade) {
+    uint8_t level = static_cast<uint8_t>(shade >> 2);  // 0..63 ink threshold
+    return level > kBayer8[y & 7][x & 7];
+}
+
+void fillRectDither(Adafruit_GFX* gfx, int16_t x, int16_t y, int16_t w, int16_t h,
+                    uint8_t shade, uint16_t color) {
+    for (int16_t yy = 0; yy < h; ++yy) {
+        for (int16_t xx = 0; xx < w; ++xx) {
+            if (ditherOn(x + xx, y + yy, shade)) gfx->drawPixel(x + xx, y + yy, color);
+        }
+    }
+}
+
+void drawBitmapMasked(Adafruit_GFX* gfx, int16_t x, int16_t y,
+                      const uint8_t* data, int16_t w, int16_t h,
+                      const BlitOpts& opts, uint16_t fg, uint16_t bg) {
+    if (!gfx || !data || w <= 0 || h <= 0) return;
+    const int16_t stride = static_cast<int16_t>((w + 7) / 8);
+    const uint8_t scale  = (opts.scale >= 1 && opts.scale <= 4) ? opts.scale : 1;
+
+    // Output box before scaling; a horizontal source window narrows it and
+    // disables rotation/flips (only the marquee uses windows).
+    const bool windowed = opts.srcW != 0;
+    int16_t outW = windowed ? static_cast<int16_t>(opts.srcW)
+                            : (opts.rot90 ? h : w);
+    int16_t outH = opts.rot90 && !windowed ? w : h;
+
+    for (int16_t oy = 0; oy < outH * scale; ++oy) {
+        int16_t ly = static_cast<int16_t>(oy / scale);
+        for (int16_t ox = 0; ox < outW * scale; ++ox) {
+            int16_t lx = static_cast<int16_t>(ox / scale);
+            int16_t sx, sy;
+            if (windowed) {
+                uint32_t sxu = static_cast<uint32_t>(lx) + opts.srcX;
+                if (opts.srcSpan != 0) sxu %= opts.srcSpan;
+                if (sxu >= static_cast<uint32_t>(w)) continue;  // wrap gap
+                sx = static_cast<int16_t>(sxu);
+                sy = ly;
+            } else {
+                if (opts.rot90) {
+                    // 90 deg clockwise: dest (lx, ly) reads src (ly, h-1-lx)
+                    // in the h x w output box.
+                    sx = ly;
+                    sy = static_cast<int16_t>(h - 1 - lx);
+                } else {
+                    sx = lx;
+                    sy = ly;
+                }
+                if (opts.flipH) sx = static_cast<int16_t>(w - 1 - sx);
+                if (opts.flipV) sy = static_cast<int16_t>(h - 1 - sy);
+            }
+            const uint8_t* row = data + static_cast<int32_t>(sy) * stride;
+            uint8_t bit = static_cast<uint8_t>(0x80 >> (sx & 7));
+            bool set    = row[sx >> 3] & bit;
+            if (opts.mask) {
+                const uint8_t* mrow = opts.mask + static_cast<int32_t>(sy) * stride;
+                if (!(mrow[sx >> 3] & bit)) continue;
+                gfx->drawPixel(x + ox, y + oy, set ? fg : bg);
+            } else if (set) {
+                gfx->drawPixel(x + ox, y + oy, fg);
+            } else if (opts.opaque) {
+                gfx->drawPixel(x + ox, y + oy, bg);
+            }
+        }
+    }
+}
+
+void fillCircleDither(Adafruit_GFX* gfx, int16_t cx, int16_t cy, int16_t r,
+                      uint8_t shade, uint16_t color) {
+    int32_t r2 = static_cast<int32_t>(r) * r;
+    for (int16_t dy = -r; dy <= r; ++dy) {
+        for (int16_t dx = -r; dx <= r; ++dx) {
+            if (static_cast<int32_t>(dx) * dx + static_cast<int32_t>(dy) * dy <= r2 &&
+                ditherOn(cx + dx, cy + dy, shade)) {
+                gfx->drawPixel(cx + dx, cy + dy, color);
+            }
+        }
+    }
+}
+
+void fillTriangleDither(Adafruit_GFX* gfx, int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                        int16_t x2, int16_t y2, uint8_t shade, uint16_t color) {
+    if (y0 > y1) { std::swap(y0, y1); std::swap(x0, x1); }
+    if (y1 > y2) { std::swap(y1, y2); std::swap(x1, x2); }
+    if (y0 > y1) { std::swap(y0, y1); std::swap(x0, x1); }
+    if (y2 == y0) {
+        int16_t a = std::min(x0, std::min(x1, x2));
+        int16_t b = std::max(x0, std::max(x1, x2));
+        for (int16_t xx = a; xx <= b; ++xx)
+            if (ditherOn(xx, y0, shade)) gfx->drawPixel(xx, y0, color);
+        return;
+    }
+    for (int16_t y = y0; y <= y2; ++y) {
+        bool upper = (y < y1);
+        int32_t xa = x0 + static_cast<int32_t>(x2 - x0) * (y - y0) / (y2 - y0);
+        int32_t xb = upper
+            ? ((y1 == y0) ? x1 : x0 + static_cast<int32_t>(x1 - x0) * (y - y0) / (y1 - y0))
+            : ((y2 == y1) ? x2 : x1 + static_cast<int32_t>(x2 - x1) * (y - y1) / (y2 - y1));
+        int16_t left = static_cast<int16_t>(xa < xb ? xa : xb);
+        int16_t right = static_cast<int16_t>(xa < xb ? xb : xa);
+        for (int16_t xx = left; xx <= right; ++xx)
+            if (ditherOn(xx, y, shade)) gfx->drawPixel(xx, y, color);
+    }
 }
 
 } // namespace cdc::ui::render

@@ -20,6 +20,29 @@ extern "C" void  plg_log_warn(const char* msg);
 
 namespace {
 
+// The public EVENT_* bits (host_api.h) MUST equal 1u << the matching core
+// EventType ordinal, because on_bus_event matches subscriptions with
+// `1u << evt.type`. cdc::core::EventType is the single source of truth; these
+// asserts fail the build if the enum is ever reordered out from under the
+// public constants (instead of silently breaking plugin subscriptions).
+static_assert(EVENT_KEY_PRESSED       == cdc::core::EventBus::eventMask(cdc::core::EventType::KEY_PRESSED), "EVENT_* drift");
+static_assert(EVENT_KEY_RELEASED      == cdc::core::EventBus::eventMask(cdc::core::EventType::KEY_RELEASED), "EVENT_* drift");
+static_assert(EVENT_KEY_LONG_PRESS    == cdc::core::EventBus::eventMask(cdc::core::EventType::KEY_LONG_PRESS), "EVENT_* drift");
+static_assert(EVENT_POWER_USB_CONN    == cdc::core::EventBus::eventMask(cdc::core::EventType::POWER_USB_CONNECTED), "EVENT_* drift");
+static_assert(EVENT_POWER_USB_DISCONN == cdc::core::EventBus::eventMask(cdc::core::EventType::POWER_USB_DISCONNECTED), "EVENT_* drift");
+static_assert(EVENT_POWER_CHARGING    == cdc::core::EventBus::eventMask(cdc::core::EventType::POWER_CHARGING), "EVENT_* drift");
+static_assert(EVENT_POWER_BATT_LOW    == cdc::core::EventBus::eventMask(cdc::core::EventType::POWER_BATTERY_LOW), "EVENT_* drift");
+static_assert(EVENT_POWER_BATT_CRIT   == cdc::core::EventBus::eventMask(cdc::core::EventType::POWER_BATTERY_CRITICAL), "EVENT_* drift");
+static_assert(EVENT_SYSTEM_UNLOCK     == cdc::core::EventBus::eventMask(cdc::core::EventType::SYSTEM_UNLOCK), "EVENT_* drift");
+static_assert(EVENT_SYSTEM_LOCK       == cdc::core::EventBus::eventMask(cdc::core::EventType::SYSTEM_LOCK), "EVENT_* drift");
+static_assert(EVENT_SYSTEM_SLEEP      == cdc::core::EventBus::eventMask(cdc::core::EventType::SYSTEM_SLEEP), "EVENT_* drift");
+static_assert(EVENT_SYSTEM_WAKE       == cdc::core::EventBus::eventMask(cdc::core::EventType::SYSTEM_WAKE), "EVENT_* drift");
+static_assert(EVENT_BLE_CONNECTED     == cdc::core::EventBus::eventMask(cdc::core::EventType::BLE_CONNECTED), "EVENT_* drift");
+static_assert(EVENT_BLE_DISCONNECTED  == cdc::core::EventBus::eventMask(cdc::core::EventType::BLE_DISCONNECTED), "EVENT_* drift");
+static_assert(EVENT_TIMER_TICK        == cdc::core::EventBus::eventMask(cdc::core::EventType::TIMER_TICK), "EVENT_* drift");
+static_assert(EVENT_MODULE_EVENT      == cdc::core::EventBus::eventMask(cdc::core::EventType::MODULE_EVENT), "EVENT_* drift");
+static_assert(EVENT_DISPLAY_REFRESH   == cdc::core::EventBus::eventMask(cdc::core::EventType::DISPLAY_REFRESH), "EVENT_* drift");
+
 struct PluginSubscription {
     void*    plugin     = nullptr;
     uint32_t action_id  = 0;

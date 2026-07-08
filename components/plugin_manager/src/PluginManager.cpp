@@ -29,6 +29,11 @@ extern "C" void plg_ble_on_unload(void* plugin);
 extern "C" void plg_msg_pump(void);
 extern "C" void plg_msg_on_unload(void* plugin);
 extern "C" void plg_msg_init(void);
+extern "C" void plg_ext_feature_pump(void);
+extern "C" void plg_ext_feature_on_unload(void* plugin);
+extern "C" void plg_surface_on_unload(void* plugin);
+extern "C" void plg_net_pump(void);
+extern "C" void plg_net_on_unload(void* plugin);
 extern "C" void plg_gpio_on_unload(void* plugin);
 extern "C" void plg_http_on_unload(void* plugin);
 extern "C" void plg_socket_on_unload(void* plugin);
@@ -213,7 +218,7 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
 
     if (active_) {
         (void)active_->callI("plugin_on_exit");
-        if (active_->manifest().capabilities.background) {
+        if (active_->manifest().capabilities.background && active_->residentRequested()) {
             background_.push_back(std::move(active_));
         } else {
             teardownPlugin(*active_, /*runWasmDeinit=*/true);
@@ -359,9 +364,9 @@ bool PluginManager::stopActivePlugin()
     }
     PluginUiState::instance().resetForPluginStop();
 
-    // If the plugin is also a background service, demote it back instead of
-    // unloading.
-    if (active_->manifest().capabilities.background) {
+    // If the plugin is a background service AND asked to stay resident, demote
+    // it back instead of unloading. Capability alone is only permission.
+    if (active_->manifest().capabilities.background && active_->residentRequested()) {
         background_.push_back(std::move(active_));
         active_.reset();
         return true;
@@ -440,6 +445,9 @@ void PluginManager::teardownPlugin(Plugin& p, bool runWasmDeinit)
     clearLockscreenRegistrationFor(&p);
     plg_ble_on_unload(&p);
     plg_msg_on_unload(&p);
+    plg_ext_feature_on_unload(&p);
+    plg_surface_on_unload(&p);
+    plg_net_on_unload(&p);
     plg_gpio_on_unload(&p);
     plg_http_on_unload(&p);
     plg_socket_on_unload(&p);
@@ -547,7 +555,19 @@ void PluginManager::loadAutoloadPlugins()
             continue;
         }
         if (loadIntoBackground(id, *mf)) {
-            LOG_I(TAG, "autoloaded plugin %s (resident)", id.c_str());
+            // Autoload is opt-in: plugin_init ran (its chance to call
+            // host_set_resident(true)); keep it resident only if it did.
+            // Autoload residency does NOT require the `background` capability -
+            // an autoload plugin is a headless boot resident by definition,
+            // unlike the foreground-exit demotion path (stopActivePlugin),
+            // which needs `background && residentRequested()`.
+            if (!background_.empty() && background_.back()->residentRequested()) {
+                LOG_I(TAG, "autoloaded plugin %s (resident)", id.c_str());
+            } else {
+                LOG_I(TAG, "autoload %s: no set_resident(true), not staying resident",
+                      id.c_str());
+                unloadFromRam(id);
+            }
         } else {
             LOG_W(TAG, "autoload of %s failed", id.c_str());
         }
@@ -557,6 +577,7 @@ void PluginManager::loadAutoloadPlugins()
 void PluginManager::rebuildMessageIndex()
 {
     std::vector<std::string> mimes, mids;
+    std::vector<std::string> feats, fids;
     for (const auto& id : PluginStorage::listPluginIds()) {
         if (isPluginDisabled(id)) continue;  // a disabled plugin can't be activated
         auto mf = getManifest(id);
@@ -565,11 +586,26 @@ void PluginManager::rebuildMessageIndex()
             mimes.push_back(mt);
             mids.push_back(id);
         }
+        for (const auto& feat : mf->capabilities.provides) {
+            bool duplicate = false;
+            for (size_t i = 0; i < feats.size(); ++i) {
+                if (feats[i] == feat) { duplicate = true;
+                    LOG_W(TAG, "feature '%s' already provided by %s, ignoring %s",
+                          feat.c_str(), fids[i].c_str(), id.c_str());
+                    break;
+                }
+            }
+            if (duplicate) continue;
+            feats.push_back(feat);
+            fids.push_back(id);
+        }
     }
     auto* m = static_cast<SemaphoreHandle_t>(msg_index_mutex_);
     if (m) xSemaphoreTake(m, portMAX_DELAY);
     msg_index_mime_.swap(mimes);
     msg_index_id_.swap(mids);
+    feat_index_name_.swap(feats);
+    feat_index_id_.swap(fids);
     if (m) xSemaphoreGive(m);
 }
 
@@ -598,6 +634,36 @@ bool PluginManager::messageTypeInstalled(const char* mime) const
     }
     if (m) xSemaphoreGive(m);
     return found;
+}
+
+bool PluginManager::featureInstalled(const char* feature) const
+{
+    if (!feature) return false;
+    auto* m = static_cast<SemaphoreHandle_t>(msg_index_mutex_);
+    if (m && xSemaphoreTake(m, pdMS_TO_TICKS(20)) != pdTRUE) return false;
+    bool found = false;
+    for (const auto& name : feat_index_name_) {
+        if (name == feature) { found = true; break; }
+    }
+    if (m) xSemaphoreGive(m);
+    return found;
+}
+
+std::string PluginManager::featureProviderId(const char* feature) const
+{
+    if (!feature) return {};
+    std::string id;
+    auto* m = static_cast<SemaphoreHandle_t>(msg_index_mutex_);
+    // Same bounded, fail-closed policy as featureInstalled(): the two run
+    // back-to-back on the same path, so both must use the 20 ms timeout or a
+    // caller could see "available" then "no provider". On contention return
+    // no provider (empty id), matching the not-found result.
+    if (m && xSemaphoreTake(m, pdMS_TO_TICKS(20)) != pdTRUE) return {};
+    for (size_t i = 0; i < feat_index_name_.size(); ++i) {
+        if (feat_index_name_[i] == feature) { id = feat_index_id_[i]; break; }
+    }
+    if (m) xSemaphoreGive(m);
+    return id;
 }
 
 bool PluginManager::activateForMessageType(const char* mime)
@@ -768,6 +834,8 @@ void PluginManager::dispatchTick(uint64_t uptime_ms)
     for (size_t i = 0; i < n_trapped; ++i) handleTrap(*trapped[i], "plugin_on_tick");
     plg_ble_pump();
     plg_msg_pump();
+    plg_ext_feature_pump();
+    plg_net_pump();
 }
 
 void PluginManager::dispatchEventAll(uint32_t event_type, uint32_t value)

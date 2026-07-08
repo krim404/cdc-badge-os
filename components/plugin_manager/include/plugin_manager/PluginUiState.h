@@ -171,6 +171,7 @@ private:
     static void onCanvasKey      (char key, uint32_t focused_widget);
     static void onCanvasLongPress(char key);
     static void onCanvasWidget   (uint32_t widget_id, cdc::ui::CanvasView::WidgetEvent event);
+    static void onCanvasAnim     (uint32_t action_id, uint32_t handle, uint32_t ref_id);
 
     /// Grow the active list's capacity arrays (and re-point the view) so an
     /// insert has room. Returns false on OOM. Caller must hold listEditMutex.

@@ -26,8 +26,8 @@ extern "C" {
 /* ------------------------------------------------------------------------- */
 
 #define HOST_API_LEVEL_MAJOR  0
-#define HOST_API_LEVEL_MINOR  7
-#define HOST_API_LEVEL_STR    "0.7"
+#define HOST_API_LEVEL_MINOR  8
+#define HOST_API_LEVEL_STR    "0.8"
 #define HOST_API_LEVEL_PACKED (((uint32_t)HOST_API_LEVEL_MAJOR << 16) | HOST_API_LEVEL_MINOR)
 
 /* ------------------------------------------------------------------------- */
@@ -408,6 +408,60 @@ int host_socket_close(int handle);
 /** \} */
 
 /**
+ * \defgroup net Inbound TCP listener (server)
+ * \brief Accept inbound TCP connections on a plugin-chosen port.
+ *
+ * The client socket API is outbound-only; this adds the server side. The plugin
+ * picks the port; the firmware binds/listens/accepts on a dedicated task and
+ * fires `action_id` while connections wait. The handler calls
+ * \ref host_net_accept to take the next connection as a socket handle, then
+ * drives it with the normal \ref host_socket_read / \ref host_socket_write /
+ * \ref host_socket_close (no extra `socket` capability needed for an accepted
+ * connection). Requires manifest capability "net_listen". WiFi must be up
+ * (host_wifi_request) for clients to reach the badge; the listener itself binds
+ * regardless and simply waits. One listener per plugin. The listen socket is
+ * transparently re-opened after a network drop across light sleep.
+ * \{
+ */
+
+/// \brief Start a TCP listener on `port`; fires `action_id` while clients wait.
+/// \return HOST_OK, HOST_ERR_NO_CAPABILITY, HOST_ERR_INVALID_ARG, HOST_ERR_BUSY,
+///         HOST_ERR_NO_MEMORY.
+int host_net_listen(uint16_t port, uint32_t action_id);
+
+/// \brief Take the next accepted connection as a socket handle for
+///        host_socket_read/write/close.
+/// \return Socket handle (>= 1), or HOST_ERR_NOT_FOUND when none is pending.
+int host_net_accept(void);
+
+/// \brief Stop the listener (pass 0 or the listening port). Closes pending
+///        un-accepted connections.
+/// \return HOST_OK or HOST_ERR_NOT_FOUND.
+int host_net_close(uint16_t port);
+
+/** \} */
+
+/**
+ * \defgroup lifecycle Plugin lifecycle
+ * \brief Opt-in background residency.
+ *
+ * The `background` and `autoload` capabilities only grant permission to stay
+ * resident; they do not by themselves keep the plugin loaded. A plugin must
+ * call host_set_resident(true) to actually remain in the background (typically
+ * in plugin_init for an autoload service, or while running for a background
+ * one). Without it, the plugin is torn down when the user leaves it, and an
+ * autoload plugin is unloaded right after boot init. Pass false to opt back out.
+ * \{
+ */
+
+/// \brief Request (true) or drop (false) background residency. Needs the
+///        `background` or `autoload` capability to have any effect.
+/// \return HOST_OK, or HOST_ERR_GENERIC if called with no active plugin.
+int host_set_resident(bool resident);
+
+/** \} */
+
+/**
  * \defgroup wifi WiFi
  * \brief Request WiFi STA mode and inspect connection state.
  *
@@ -613,9 +667,22 @@ int     host_ble_write_char       (uint32_t conn, uint16_t value_handle,
 /**
  * \brief Subscribe to notifications on a peer characteristic (by CCCD handle).
  *        Each notification fires `action_id`; read it with
- *        host_ble_consume_notification().
+ *        host_ble_consume_notification(). Low-level variant: the caller must
+ *        already know the CCCD handle. Prefer \ref host_ble_subscribe_char,
+ *        which resolves the CCCD via descriptor discovery.
  */
 int     host_ble_subscribe        (uint32_t conn, uint16_t cccd_handle, uint32_t action_id);
+
+/**
+ * \brief Subscribe to notifications on a peer characteristic by VALUE handle.
+ *
+ * Discovers the characteristic's CCCD descriptor host-side and writes it
+ * (falling back to value_handle + 1 when the peer exposes no 0x2902).
+ * Call after host_ble_discover() on the same connection - the last discovered
+ * service bounds the descriptor search. Each notification fires `action_id`;
+ * read it with host_ble_consume_notification().
+ */
+int     host_ble_subscribe_char   (uint32_t conn, uint16_t value_handle, uint32_t action_id);
 
 /**
  * \brief Pull the next queued inbound notification.
@@ -623,6 +690,24 @@ int     host_ble_subscribe        (uint32_t conn, uint16_t cccd_handle, uint32_t
  * \return Bytes copied (>= 0), or a negative HOST_ERR_* code.
  */
 int     host_ble_consume_notification(uint16_t* value_handle_out, uint8_t* buf, size_t buf_size);
+
+/**
+ * \brief Usable ATT payload of the current connection (negotiated MTU - 3).
+ * \param conn Connection handle (currently ignored - single connection).
+ * \return Payload bytes per write/notification, or 0 when not connected /
+ *         no capability.
+ */
+uint16_t host_ble_get_mtu         (uint32_t conn);
+
+/**
+ * \brief Register an action fired on every completed central write.
+ *
+ * Fires `plugin_on_action(action_id, attr_handle, status)` per completed
+ * write (both with-response completions and CCCD writes; status 0 = success).
+ * Use it to pace chunked transfers instead of writing blind. Pass 0 to
+ * unregister.
+ */
+int     host_ble_on_write_complete(uint32_t action_id);
 
 /** \} */
 
@@ -1032,8 +1117,27 @@ int host_view_canvas_get_body_size (uint16_t* w, uint16_t* h);
 /// \brief Override the footer hint of the canvas.
 int host_view_canvas_set_footer    (const char* hint);
 
-/// \brief Clear all draw state and widgets.
+/// \brief Clear all draw state and widgets. Equals host_view_canvas_clear_ex(0).
 int host_view_canvas_clear         (void);
+
+/* Flags for host_view_canvas_clear_ex(). */
+#define HOST_CANVAS_CLEAR_KEEP_SPRITES 0x01 /**< Sprite assets survive the clear. */
+
+/**
+ * \brief Clear with options: like \ref host_view_canvas_clear, but
+ *        HOST_CANVAS_CLEAR_KEEP_SPRITES keeps the sprite store intact.
+ *
+ * Kept sprites retain frames, masks, flags, scale and the current frame
+ * index, so a plugin can create its sheets once and rebuild screens around
+ * them. Their PLAYBACK is stopped (an orphaned loop such as a marquee's
+ * backing sprite would otherwise keep the animation clock and the panel
+ * busy with nothing to show) - call \ref host_sprite_play again after
+ * re-recording the new screen. Elements, tweens and widgets are dropped
+ * either way.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG (unknown flag),
+ *         HOST_ERR_NOT_FOUND (no canvas).
+ */
+int host_view_canvas_clear_ex      (uint32_t flags);
 
 /// \brief Set text size multiplier (Adafruit-GFX semantics).
 int host_view_canvas_set_text_size (uint8_t size);
@@ -1146,6 +1250,165 @@ int host_view_canvas_vline         (int16_t x, int16_t y, int16_t h);
  */
 int host_view_canvas_commit        (bool full_refresh);
 
+/**
+ * \brief Start recording draw calls under element `elem_id`.
+ *
+ * Elements group draw commands so they can later be moved, hidden or removed
+ * without rebuilding the whole display list. They are the building block for
+ * animations: record an element once, then per frame adjust its offset and
+ * call \ref host_view_canvas_commit. The element is created on first use;
+ * calling begin again with the same id appends further commands to it.
+ * Element ids live in their own namespace (unrelated to widget ids); at most
+ * 16 elements can exist at once. \ref host_view_canvas_clear drops all
+ * elements together with the display list.
+ *
+ * \param elem_id Non-zero element id chosen by the plugin.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG (id 0), HOST_ERR_NO_MEMORY (element
+ *         table full), HOST_ERR_NOT_FOUND (no canvas).
+ */
+int host_view_canvas_elem_begin    (uint32_t elem_id);
+
+/**
+ * \brief Stop recording draw calls into an element.
+ *
+ * Subsequent draw calls are untagged (static background). Ending is implicit
+ * when \ref host_view_canvas_elem_begin switches to another element.
+ */
+int host_view_canvas_elem_end      (void);
+
+/**
+ * \brief Set an element's replay offset relative to its recorded coordinates.
+ *
+ * The offset is applied when the display list is replayed; call
+ * \ref host_view_canvas_commit afterwards to show the change. (0, 0) restores
+ * the recorded position.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (unknown element or no canvas).
+ */
+int host_view_canvas_elem_set_offset(uint32_t elem_id, int16_t ox, int16_t oy);
+
+/**
+ * \brief Shift an element's replay offset by a delta.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (unknown element or no canvas).
+ */
+int host_view_canvas_elem_move     (uint32_t elem_id, int16_t dx, int16_t dy);
+
+/**
+ * \brief Show or hide an element (hidden elements are skipped on replay).
+ *
+ * Hiding keeps the element's draw commands recorded, so it can be shown again
+ * cheaply (blink patterns). Call \ref host_view_canvas_commit afterwards.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (unknown element or no canvas).
+ */
+int host_view_canvas_elem_show     (uint32_t elem_id, bool visible);
+
+/**
+ * \brief Remove an element and all draw commands recorded under it.
+ *
+ * Display-list slots and arena bytes are reclaimed, so elements can be
+ * removed and re-recorded repeatedly (sprite whose content changes). Call
+ * \ref host_view_canvas_commit afterwards.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (unknown element or no canvas).
+ */
+int host_view_canvas_elem_remove   (uint32_t elem_id);
+
+/**
+ * \brief Drop only an element's recorded draw commands, keeping the element.
+ *
+ * Offset, visibility, z layer and running tweens survive; follow with
+ * \ref host_view_canvas_elem_begin plus draw calls to re-record the content
+ * in place (live counters, changing labels). Arena bytes are reclaimed.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (unknown element or no canvas).
+ */
+int host_view_canvas_elem_clear    (uint32_t elem_id);
+
+/**
+ * \brief Set an element's replay layer (z-order).
+ *
+ * Layers draw in ascending order; untagged draw commands and untouched
+ * elements live in layer 0. Ties keep recording order, so existing plugins
+ * are unaffected until they opt in.
+ * \param z Layer, -128..127 (default 0).
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (unknown element or no canvas).
+ */
+int host_view_canvas_elem_set_z    (uint32_t elem_id, int8_t z);
+
+/// \brief Read an element's current replay offset.
+int host_view_canvas_elem_get_offset(uint32_t elem_id, int16_t* ox, int16_t* oy);
+
+/**
+ * \brief Bounding box of an element's recorded commands, offset applied.
+ *
+ * Body-local pixels; useful for edge/collision checks while animating.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (unknown/empty element or no canvas).
+ */
+int host_view_canvas_elem_get_bounds(uint32_t elem_id, int16_t* x, int16_t* y,
+                                     uint16_t* w, uint16_t* h);
+
+/* Animation refresh policies for host_view_canvas_set_anim_policy(). */
+#define HOST_CANVAS_ANIM_REFRESH_AUTO  0 /* flash-free while running, one FAST
+                                            cleanup ~1 s after going idle    */
+#define HOST_CANVAS_ANIM_REFRESH_LIGHT 1 /* never clean up automatically;
+                                            plugin manages ghosting itself   */
+
+/**
+ * \brief Configure host-driven animation pacing for the current canvas.
+ *
+ * While tweens or sprite playback are active the host advances them, commits
+ * the canvas automatically and keeps partial refreshes flash-free (no
+ * escalation mid-motion). Under AUTO (default) the panel gets one FAST
+ * cleanup refresh about a second after the last animation ends, and endless
+ * animations get a rare hygiene FAST to bound ghosting.
+ * \param refresh_policy One of HOST_CANVAS_ANIM_REFRESH_*.
+ * \param max_fps Animation step-rate cap 1..5 (0 = default 4). The panel's
+ *        partial waveform (~250 ms) makes ~5 the physical ceiling; steps are
+ *        computed from elapsed time, so slow refreshes drop frames instead of
+ *        slowing motion down. Think in tween durations of 500 ms and up.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG, HOST_ERR_NOT_FOUND (no canvas).
+ */
+int host_view_canvas_set_anim_policy(uint8_t refresh_policy, uint8_t max_fps);
+
+/**
+ * \brief Record a draw of a sprite's current frame at (x, y).
+ *
+ * Draw-by-reference: one display-list slot, no pixel copy; frame changes from
+ * \ref host_sprite_play or \ref host_sprite_set_frame replay automatically.
+ * Record it inside an element to move, hide, layer or tween the sprite.
+ * Destroying the sprite later leaves the command recorded but skipped.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (unknown sprite or no canvas),
+ *         HOST_ERR_NO_MEMORY (display list full).
+ */
+int host_view_canvas_draw_sprite   (int16_t x, int16_t y, uint32_t sprite);
+
+/**
+ * \brief Draw subsequent shapes in white instead of black.
+ *
+ * Applies to rects, circles, triangles, round-rects, lines and pixels
+ * recorded afterwards - an eraser for wipe transitions and cut-outs over
+ * previously drawn content (dither shades erase dithered). Text keeps its
+ * own \ref host_view_canvas_set_text_color. Reset by
+ * \ref host_view_canvas_clear.
+ * \param white 1 = white ink, 0 = black (default).
+ */
+int host_view_canvas_set_ink       (bool white);
+
+/**
+ * \brief Record a host-driven text marquee (ticker).
+ *
+ * The text is rendered once with the current font/size into an internal
+ * sprite; a `window_w`-wide window then scrolls through it seamlessly on the
+ * host clock (content + a window-sized gap, wrap-around). No per-frame
+ * plugin code and no display-list churn. Record inside an element to move,
+ * hide or layer the ticker.
+ * \param step_px Pixels advanced per animation beat (pair with the beat
+ *        duration `frame_ms`, floored at 50).
+ * \return Backing sprite handle >= 1 (pause via host_sprite_stop, remove via
+ *         host_sprite_destroy), HOST_ERR_INVALID_ARG, HOST_ERR_NO_MEMORY,
+ *         HOST_ERR_NOT_FOUND (no canvas).
+ */
+int host_view_canvas_marquee       (int16_t x, int16_t y, int16_t window_w,
+                                    const char* text, uint16_t step_px,
+                                    uint16_t frame_ms);
+
 /// \brief Add an integer slider widget bound to `widget_id`.
 int host_view_canvas_add_slider    (uint32_t widget_id, int32_t min, int32_t max,
                                     int32_t initial, int32_t step);
@@ -1198,6 +1461,113 @@ int host_view_canvas_set_long_press_action(uint32_t action_id);
 /** \} */
 
 /**
+ * \defgroup canvas_anim UI - Canvas animation
+ * \brief Host-driven tweens on canvas elements.
+ *
+ * A tween animates an element's replay offset over time with an easing curve;
+ * the host advances it on its own clock, commits the canvas and fires
+ * `plugin_on_action(done_action_id, anim_handle, elem_id)` on completion - no
+ * per-frame plugin code needed. Sequencing is expressed with `delay_ms`
+ * (parallel staggering) and `start_after` (chains); repetition with `repeat`
+ * and the YOYO flag. See \ref host_view_canvas_set_anim_policy for pacing and
+ * refresh behavior. No capability required.
+ * \{
+ */
+
+/// Maximum concurrently live tweens per canvas.
+#define HOST_ANIM_MAX            16
+/// `repeat` value meaning "repeat forever".
+#define HOST_ANIM_REPEAT_FOREVER 0xFFFF
+
+/* Easing curves (fixed-point Penner subset). */
+#define HOST_EASE_LINEAR        0
+#define HOST_EASE_QUAD_IN       1
+#define HOST_EASE_QUAD_OUT      2
+#define HOST_EASE_QUAD_IN_OUT   3
+#define HOST_EASE_CUBIC_IN      4
+#define HOST_EASE_CUBIC_OUT     5
+#define HOST_EASE_CUBIC_IN_OUT  6
+#define HOST_EASE_OVERSHOOT     7  /* back-out: overshoots, then settles  */
+#define HOST_EASE_BOUNCE        8  /* bounce-out: ball-drop rebound       */
+#define HOST_EASE_STEP          9  /* holds the start, jumps at the end   */
+#define HOST_EASE_ELASTIC      10  /* elastic-out: springy overshoot wobble */
+
+/* Tween flags. */
+#define HOST_ANIM_FLAG_FROM_CURRENT 0x01 /* ignore from_x/y, start at the
+                                            element's live offset          */
+#define HOST_ANIM_FLAG_YOYO         0x02 /* each repeat alternates direction */
+#define HOST_ANIM_FLAG_HIDE_DONE    0x04 /* hide the element on completion   */
+#define HOST_ANIM_FLAG_SHOW_START   0x08 /* show the element when the delay
+                                            elapses                        */
+
+/** \brief Tween description for host_anim_start(); zero-init unused fields. */
+typedef struct {
+    uint32_t elem_id;        /**< Target element (must exist).                */
+    int16_t  from_x;         /**< Start offset (see FLAG_FROM_CURRENT).       */
+    int16_t  from_y;
+    int16_t  to_x;           /**< End offset.                                 */
+    int16_t  to_y;
+    uint16_t duration_ms;    /**< Active time per run, 1..60000.              */
+    uint16_t delay_ms;       /**< Wait before the first run, 0..60000.        */
+    uint16_t repeat;         /**< Extra runs: 0 = play once,
+                                  HOST_ANIM_REPEAT_FOREVER = endless.         */
+    uint8_t  easing;         /**< HOST_EASE_*.                                */
+    uint8_t  flags;          /**< HOST_ANIM_FLAG_*.                           */
+    uint32_t done_action_id; /**< plugin_on_action(id, handle, elem_id) when a
+                                  finite tween completes; 0 = none.           */
+    uint32_t start_after;    /**< Live tween handle to chain behind; 0 = start
+                                  immediately. Cancelling the predecessor
+                                  cancels the whole chain.                    */
+} host_anim_t;
+
+/**
+ * \brief Start (or queue, when `start_after` != 0) a tween on an element.
+ * \return Tween handle >= 1, HOST_ERR_NOT_FOUND (element/predecessor/canvas),
+ *         HOST_ERR_INVALID_ARG, HOST_ERR_NO_MEMORY (all slots live).
+ */
+int host_anim_start(const host_anim_t* cfg);
+
+/**
+ * \brief Cancel a tween and its chained successors; handle 0 cancels all of
+ *        the canvas's tweens. Elements keep their current offset; no
+ *        completion actions fire.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND.
+ */
+int host_anim_cancel(uint32_t handle);
+
+/// \brief Pause (paused != 0) or resume a tween; delay time freezes too.
+int host_anim_pause(uint32_t handle, bool paused);
+
+/* Tween states returned by host_anim_state(). */
+#define HOST_ANIM_STATE_DELAYED 0
+#define HOST_ANIM_STATE_RUNNING 1
+#define HOST_ANIM_STATE_PAUSED  2
+
+/**
+ * \brief Query a tween's state.
+ * \return HOST_ANIM_STATE_*, or HOST_ERR_NOT_FOUND once completed/cancelled
+ *         (handles are recycled after completion).
+ */
+int host_anim_state(uint32_t handle);
+
+/// \brief Number of live tweens plus playing sprites (>= 0).
+int host_anim_active_count(void);
+
+/**
+ * \brief Convenience: blink an element.
+ *
+ * Toggles visibility every `period_ms` for `count` on/off cycles
+ * (HOST_ANIM_REPEAT_FOREVER = endless), ending visible. Occupies one tween
+ * slot; `done_action_id` fires as in \ref host_anim_start.
+ * \return Blink handle >= 1 (cancel/pause like a tween), HOST_ERR_NOT_FOUND,
+ *         HOST_ERR_INVALID_ARG, HOST_ERR_NO_MEMORY.
+ */
+int host_anim_blink(uint32_t elem_id, uint16_t period_ms, uint16_t count,
+                    uint32_t done_action_id);
+
+/** \} */
+
+/**
  * \defgroup ui_lowlevel UI - Low-Level GFX
  * \brief Direct framebuffer drawing for advanced plugins.
  *
@@ -1241,6 +1611,14 @@ int      host_display_flush     (uint8_t refresh_mode);
 /// \brief True while the panel is processing a previous refresh.
 bool     host_display_is_busy   (void);
 
+/// \brief Set the display backlight level (0 = off .. panel maximum, e.g. 1023).
+///        Applied live; NOT persisted to NVS and NOT gated on display_lowlevel.
+/// \return HOST_OK, or HOST_ERR_GENERIC if no display is available.
+int      host_display_set_backlight(uint16_t level);
+
+/// \brief Current backlight level (0 when no display is available).
+uint16_t host_display_get_backlight(void);
+
 /** \} */
 
 /**
@@ -1279,10 +1657,12 @@ uint8_t  host_i18n_current_language(void);
  *
  * Subscriptions are dispatched as plugin actions. Background-capable
  * plugins receive events even when not on screen. The action fires with
- * idx = the event-type ordinal (the bit position of the matching EVENT_*
- * flag: EVENT_KEY_PRESSED -> 0, EVENT_KEY_RELEASED -> 1, ...) and
- * user_data = the event payload. For key events user_data is the ASCII key
- * code ('0'..'9', 'Y' = 89, 'N' = 78).
+ * idx = the event-type ordinal and user_data = the event payload. Each
+ * EVENT_* flag is defined as (1u << ordinal), where the ordinal is the value
+ * of the matching cdc::core::EventType enumerator - that enum is the single
+ * source of truth (a static_assert in host_api_event.cpp guards the match).
+ * Plugin-facing events sit first in that enum, so these bits are contiguous.
+ * For key events user_data is the ASCII key code ('0'..'9', 'Y' = 89, 'N' = 78).
  * \{
  */
 
@@ -1301,8 +1681,11 @@ uint8_t  host_i18n_current_language(void);
 #define EVENT_BLE_CONNECTED     (1u << 12)
 #define EVENT_BLE_DISCONNECTED  (1u << 13)
 #define EVENT_TIMER_TICK        (1u << 14)
-#define EVENT_LANGUAGE_CHANGED  (1u << 15)
-#define EVENT_MODULE_EVENT      (1u << 16)
+#define EVENT_MODULE_EVENT      (1u << 15)
+/// A FAST or FULL e-paper refresh is in progress: user_data = 1 at begin,
+/// 0 at end. Subscribe to pause animation/game logic while the panel is
+/// unreadable.
+#define EVENT_DISPLAY_REFRESH   (1u << 16)
 
 /**
  * \brief Subscribe to one or more events.
@@ -1508,6 +1891,560 @@ int host_msg_send_interactive(const char* mime_type, const uint8_t* data, size_t
  */
 int host_msg_send(const uint8_t addr[6], uint8_t addr_type, const char* mime_type,
                   const uint8_t* data, size_t len, uint32_t flags);
+
+/** \} */
+
+/**
+ * \defgroup ext_feature External features (inter-plugin)
+ * \brief Invoke a named feature provided by another installed plugin.
+ *
+ * A provider plugin declares `provides: ["thermo_print"]` under manifest
+ * capabilities and registers a handler for each declared feature in
+ * `plugin_init` via \ref host_ext_feature_register_handler. A caller invokes
+ * the feature with \ref host_ext_feature_use: the firmware stashes the payload,
+ * switches the provider plugin to the FOREGROUND (like "Open with"), fires the
+ * provider's handler action, and the provider pulls the bytes with
+ * \ref host_ext_feature_consume. When done, the provider reports the outcome
+ * once via \ref host_ext_feature_result, which fires the caller's
+ * `status_action_id` with the status code in `user_data`.
+ *
+ * Lifecycle: HOST_OK from host_ext_feature_use means *job accepted*, not done.
+ * The foreground switch unloads a caller without `background: true`
+ * (plugin_on_exit + teardown) - its status action is then silently dropped.
+ * Callers that need the result must declare `background: true`. Calling a
+ * feature requires no capability; providing one requires the manifest
+ * `provides` entry. If no installed plugin provides the feature, the firmware
+ * shows a "no plugin provides this feature" modal and returns
+ * HOST_ERR_NOT_FOUND.
+ * \{
+ */
+
+/// Maximum external-feature name length including the NUL.
+#define HOST_EXT_FEATURE_NAME_MAX 33
+/// Maximum payload a caller may hand to a provider in one job.
+#define HOST_EXT_FEATURE_PAYLOAD_MAX 32768
+/// Provider status: job completed successfully.
+#define HOST_EXT_FEATURE_STATUS_DONE 0
+/// Provider status: generic failure. Provider-defined codes are >= 1.
+#define HOST_EXT_FEATURE_STATUS_ERROR 1
+
+/**
+ * \brief Check whether an installed plugin provides `feature`.
+ * \param feature NUL-terminated feature name, [a-z][a-z0-9_]*.
+ * \return HOST_OK if a provider is installed (and enabled),
+ *         HOST_ERR_NOT_FOUND otherwise, HOST_ERR_INVALID_ARG on a bad name.
+ */
+int host_ext_feature_available(const char* feature);
+
+/**
+ * \brief Invoke `feature` with a payload; the provider runs in the foreground.
+ *
+ * Returns immediately after stashing the job. The provider plugin is switched
+ * to the foreground on the next tick, receives its registered handler action
+ * and consumes the payload. The final outcome arrives later as
+ * `plugin_on_action(status_action_id, 0, status)` - only if this caller is
+ * still loaded at that time (see group docs for the background requirement).
+ * \param feature NUL-terminated feature name.
+ * \param data Payload bytes (may be NULL when len == 0).
+ * \param len Payload length, at most HOST_EXT_FEATURE_PAYLOAD_MAX.
+ * \param status_action_id Caller action fired with the provider's status code
+ *        in `user_data` (HOST_EXT_FEATURE_STATUS_*). Pass 0 for fire-and-forget.
+ * \return HOST_OK (job accepted), HOST_ERR_INVALID_ARG (bad name/args or
+ *         self-call), HOST_ERR_NOT_FOUND (no provider installed - a modal was
+ *         shown), HOST_ERR_BUSY (another job is still pending),
+ *         HOST_ERR_NO_MEMORY.
+ */
+int host_ext_feature_use(const char* feature, const uint8_t* data, size_t len,
+                         uint32_t status_action_id);
+
+/**
+ * \brief Register this plugin as the live handler for a feature it provides.
+ *
+ * Call from `plugin_init` for every manifest `provides` entry. On an incoming
+ * job the firmware fires `plugin_on_action(action_id, 0, len)`; the handler
+ * pulls the payload with \ref host_ext_feature_consume. The handler firing
+ * right after plugin_on_enter is what distinguishes "opened for a job" from
+ * "opened by the user".
+ * \param feature NUL-terminated feature name; must be declared in `provides`.
+ * \param action_id Plugin action fired when a job arrives.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG, HOST_ERR_NO_CAPABILITY (feature not
+ *         in this plugin's `provides`), HOST_ERR_NO_MEMORY.
+ */
+int host_ext_feature_register_handler(const char* feature, uint32_t action_id);
+
+/**
+ * \brief Pull the payload of the job that fired the current handler action.
+ *
+ * Valid only during that action dispatch, mirroring \ref host_msg_consume.
+ * \param buf Destination for payload bytes.
+ * \param buf_size Capacity of `buf`.
+ * \param feature_out Destination for the NUL-terminated feature name (may be NULL).
+ * \param feature_size Capacity of `feature_out`.
+ * \return Bytes copied into `buf` (>= 0), or a negative HOST_ERR_* code.
+ */
+int host_ext_feature_consume(uint8_t* buf, size_t buf_size,
+                             char* feature_out, size_t feature_size);
+
+/**
+ * \brief Report the outcome of the job this provider is currently handling.
+ *
+ * Fires the caller's `status_action_id` (if the caller is still loaded) and
+ * frees the job slot. Call exactly once per received job.
+ * \param status_code HOST_EXT_FEATURE_STATUS_DONE or a provider-defined
+ *        error code >= 1.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (no job owned by this plugin).
+ */
+int host_ext_feature_result(int32_t status_code);
+
+/** \} */
+
+/**
+ * \defgroup vcard vCard store
+ * \brief Read and manage the badge's own vCard and received vCards.
+ *
+ * Requires the manifest capability `vcard: true`. All strings are vCard 4.0
+ * UTF-8 text as stored; display strings are the parsed formatted names used
+ * by the firmware's own contact list. Received cards are addressed by their
+ * sorted position (the order the firmware lists them in), 0-based; write
+ * operations re-sort, so re-read positions after any mutation.
+ * \{
+ */
+
+/// Maximum length of a single vCard text including the NUL.
+#define HOST_VCARD_MAX_LEN 768
+
+/**
+ * \brief Copy the badge's own vCard text into `out`.
+ * \param out Caller buffer; the result is NUL-terminated.
+ * \param out_size Capacity of `out` (HOST_VCARD_MAX_LEN + 1 always fits).
+ * \return Bytes copied (> 0), HOST_ERR_NOT_FOUND when no own card is set,
+ *         HOST_ERR_INVALID_ARG, HOST_ERR_NO_CAPABILITY.
+ */
+int host_vcard_get_own(char* out, size_t out_size);
+
+/**
+ * \brief Number of received vCards in the store.
+ * \return Count >= 0, or HOST_ERR_NO_CAPABILITY.
+ */
+int host_vcard_received_count(void);
+
+/**
+ * \brief Copy the received vCard at sorted position `index` into `out`.
+ * \param index 0-based sorted position, < host_vcard_received_count().
+ * \param out Caller buffer; the result is NUL-terminated.
+ * \param out_size Capacity of `out`.
+ * \return Bytes copied (> 0), HOST_ERR_NOT_FOUND on a bad index,
+ *         HOST_ERR_INVALID_ARG, HOST_ERR_NO_CAPABILITY.
+ */
+int host_vcard_received_get(uint16_t index, char* out, size_t out_size);
+
+/**
+ * \brief Copy the display name of the received vCard at sorted position
+ *        `index` into `out` (for list rows).
+ * \return Bytes copied (> 0), HOST_ERR_NOT_FOUND on a bad index,
+ *         HOST_ERR_INVALID_ARG, HOST_ERR_NO_CAPABILITY.
+ */
+int host_vcard_received_display(uint16_t index, char* out, size_t out_size);
+
+/**
+ * \brief Set / replace the badge's own vCard.
+ * \param vcard vCard 4.0 UTF-8 text, at most HOST_VCARD_MAX_LEN - 1 bytes.
+ * \param len Text length.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG (validation failed - see log),
+ *         HOST_ERR_NO_CAPABILITY.
+ */
+int host_vcard_set_own(const char* vcard, size_t len);
+
+/**
+ * \brief Store a new received vCard.
+ * \param vcard vCard 4.0 UTF-8 text, at most HOST_VCARD_MAX_LEN - 1 bytes.
+ * \param len Text length.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG (validation failed),
+ *         HOST_ERR_BUSY (duplicate already stored), HOST_ERR_NO_MEMORY
+ *         (store full), HOST_ERR_NO_CAPABILITY.
+ */
+int host_vcard_received_add(const char* vcard, size_t len);
+
+/**
+ * \brief Overwrite the received vCard at sorted position `index`.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND on a bad index, HOST_ERR_INVALID_ARG
+ *         (validation failed), HOST_ERR_NO_CAPABILITY.
+ */
+int host_vcard_received_update(uint16_t index, const char* vcard, size_t len);
+
+/**
+ * \brief Delete the received vCard at sorted position `index`.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND on a bad index, HOST_ERR_NO_CAPABILITY.
+ */
+int host_vcard_received_delete(uint16_t index);
+
+/** \} */
+
+/**
+ * \defgroup qr QR encoding
+ * \brief Encode text into a 1-bpp packed QR raster (no capability required).
+ *
+ * Pure compute on caller memory. The output layout matches the surface and
+ * image APIs: packed rows, MSB-first, a set bit is black. Blit the result
+ * onto a surface with host_surface_draw_bitmap or send it to a printer.
+ * \{
+ */
+
+/**
+ * \brief Measure the QR module count for `data` without rendering.
+ * \param data NUL-terminated payload text.
+ * \param max_version Maximum QR version 1..20 (0 = 20).
+ * \param ecc ECC level 0..3 (LOW, MED, QUART, HIGH).
+ * \param out_modules Receives the side length in modules.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG, HOST_ERR_GENERIC (data too long).
+ */
+int host_qr_measure(const char* data, uint8_t max_version, uint8_t ecc,
+                    uint16_t* out_modules);
+
+/**
+ * \brief Encode `data` into a packed 1-bpp QR raster.
+ *
+ * Side length is `(modules + 2 * quiet_modules) * scale` pixels, capped at
+ * 1024. The quiet zone renders white.
+ * \param data NUL-terminated payload text.
+ * \param max_version Maximum QR version 1..20 (0 = 20).
+ * \param ecc ECC level 0..3.
+ * \param scale Pixels per module (0 counts as 1).
+ * \param quiet_modules Quiet-zone width in modules per edge.
+ * \param out Caller buffer for packed rows.
+ * \param out_size Capacity of `out` in bytes.
+ * \param out_stride_bytes Receives the row stride in bytes.
+ * \param out_height_px Receives the side length in pixels.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG (bad args or side > 1024),
+ *         HOST_ERR_NO_MEMORY (`out` too small), HOST_ERR_GENERIC.
+ */
+int host_qr_render_bitmap(const char* data, uint8_t max_version, uint8_t ecc,
+                          uint8_t scale, uint8_t quiet_modules,
+                          uint8_t* out, size_t out_size,
+                          uint16_t* out_stride_bytes, uint16_t* out_height_px);
+
+/** \} */
+
+/**
+ * \defgroup image Image decoding
+ * \brief Decode PNG/JPEG bytes into a dithered 1-bpp raster (no capability).
+ *
+ * Pure compute on caller memory. Output layout matches the QR and surface
+ * APIs: packed rows, MSB-first, a set bit is black. Decoding uses the same
+ * engine as the firmware image viewer (max ~1 megapixel input).
+ * \{
+ */
+
+/**
+ * \brief Decode only the image header to get its dimensions.
+ * \param data Encoded PNG or JPEG bytes.
+ * \param len Byte length.
+ * \param out_w Receives the native width in pixels.
+ * \param out_h Receives the native height in pixels.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG, HOST_ERR_GENERIC (unsupported or
+ *         corrupt image, too many pixels).
+ */
+int host_image_info(const uint8_t* data, size_t len, uint16_t* out_w, uint16_t* out_h);
+
+/**
+ * \brief Decode, scale to `target_w` (aspect preserved) and dither to 1-bpp.
+ * \param data Encoded PNG or JPEG bytes.
+ * \param len Byte length.
+ * \param target_w Output width in pixels, 1..1024 (e.g. 384 for thermal print).
+ * \param out Caller buffer for packed rows.
+ * \param out_size Capacity of `out` in bytes.
+ * \param out_stride_bytes Receives the row stride `(target_w + 7) / 8`.
+ * \param out_height_px Receives the scaled height.
+ * \return HOST_OK, HOST_ERR_INVALID_ARG, HOST_ERR_NO_MEMORY (`out` too small
+ *         or allocation failed), HOST_ERR_GENERIC (decode failure).
+ */
+int host_image_render(const uint8_t* data, size_t len, uint16_t target_w,
+                      uint8_t* out, size_t out_size,
+                      uint16_t* out_stride_bytes, uint16_t* out_height_px);
+
+/** \} */
+
+/**
+ * \defgroup surface Offscreen surfaces
+ * \brief Compose 1-bpp images of arbitrary size with the canvas primitives.
+ *
+ * A surface is an offscreen render target independent of the view stack -
+ * e.g. 384 px wide for a thermal print band while the display is only
+ * 296x128. The draw API mirrors the canvas view (same fonts, shades and
+ * primitives); coordinates are raw surface pixels with no header offset.
+ * Export yields packed rows (MSB-first, set bit = black - the same layout
+ * as the QR and image APIs) or an encoded grayscale JPEG.
+ *
+ * No capability required: pure compute with a hard memory cap. A plugin can
+ * hold at most 2 surfaces of up to 64 KiB pixel data each; all surfaces are
+ * freed when the plugin unloads.
+ * \{
+ */
+
+/// Maximum surfaces a plugin may hold at once.
+#define HOST_SURFACE_MAX_PER_PLUGIN 2
+/// Maximum packed pixel bytes per surface (stride * height).
+#define HOST_SURFACE_MAX_BYTES 65536
+
+/**
+ * \brief Create a `w x h` surface, cleared to white.
+ * \param w Width in pixels, 1..1024.
+ * \param h Height in pixels, 1..2048; `((w+7)/8) * h` <= HOST_SURFACE_MAX_BYTES.
+ * \return Surface handle >= 1, HOST_ERR_INVALID_ARG, HOST_ERR_NO_MEMORY
+ *         (allocation failed or too many surfaces).
+ */
+int host_surface_create(uint16_t w, uint16_t h);
+
+/// \brief Destroy a surface and free its memory.
+int host_surface_destroy(uint32_t surface);
+
+/// \brief Clear a surface to white.
+int host_surface_clear(uint32_t surface);
+
+/// \brief Select the font for subsequent text calls (HOST_FONT_* id).
+int host_surface_set_font(uint32_t surface, uint8_t font_id);
+
+/// \brief Set the integer text scale (1..4) for subsequent text calls.
+int host_surface_set_text_size(uint32_t surface, uint8_t size);
+
+/// \brief Draw text white-on-black (inverted != 0) or black-on-white.
+int host_surface_set_text_color(uint32_t surface, uint8_t inverted);
+
+/// \brief Set the fill shade for filled shapes: 0 white .. 255 solid black.
+int host_surface_set_shade(uint32_t surface, uint8_t shade);
+
+/// \brief Draw UTF-8 text with the current font/size at (x, y) baseline-top.
+int host_surface_draw_text(uint32_t surface, int16_t x, int16_t y, const char* text);
+
+/**
+ * \brief Draw UTF-8 text aligned within a `w`-wide box starting at x.
+ * \param align 0 = left, 1 = center, 2 = right.
+ */
+int host_surface_draw_text_aligned(uint32_t surface, int16_t x, int16_t y, int16_t w,
+                                   const char* text, uint8_t align);
+
+/**
+ * \brief Measure UTF-8 text with the surface's current font/size.
+ * \param out_w Receives the rendered width in pixels.
+ * \param out_h Receives the rendered height in pixels.
+ */
+int host_surface_measure_text(uint32_t surface, const char* text,
+                              uint16_t* out_w, uint16_t* out_h);
+
+/// \brief Draw a pixel (current shade decides ink: shade > 0 draws black).
+int host_surface_draw_pixel(uint32_t surface, int16_t x, int16_t y);
+
+/// \brief Draw a line.
+int host_surface_draw_line(uint32_t surface, int16_t x0, int16_t y0, int16_t x1, int16_t y1);
+
+/// \brief Draw a rectangle; filled ones use the current shade.
+int host_surface_draw_rect(uint32_t surface, int16_t x, int16_t y, int16_t w, int16_t h,
+                           uint8_t filled);
+
+/// \brief Draw a circle centered at (x, y); filled ones use the current shade.
+int host_surface_draw_circle(uint32_t surface, int16_t x, int16_t y, int16_t r,
+                             uint8_t filled);
+
+/// \brief Draw a triangle; filled ones use the current shade.
+int host_surface_draw_triangle(uint32_t surface, int16_t x0, int16_t y0,
+                               int16_t x1, int16_t y1, int16_t x2, int16_t y2,
+                               uint8_t filled);
+
+/// \brief Draw a rounded rectangle with corner radius r.
+int host_surface_draw_round_rect(uint32_t surface, int16_t x, int16_t y,
+                                 int16_t w, int16_t h, int16_t r, uint8_t filled);
+
+/// \brief Draw a horizontal line of width w.
+int host_surface_hline(uint32_t surface, int16_t x, int16_t y, int16_t w);
+
+/// \brief Draw a vertical line of height h.
+int host_surface_vline(uint32_t surface, int16_t x, int16_t y, int16_t h);
+
+/**
+ * \brief Blit a packed 1-bpp bitmap (MSB-first, set bit = black) at (x, y).
+ * \param len Must be at least `((w + 7) / 8) * h`.
+ */
+int host_surface_draw_bitmap(uint32_t surface, int16_t x, int16_t y,
+                             int16_t w, int16_t h, const uint8_t* data, uint32_t len);
+
+/**
+ * \brief Copy the surface's packed pixel rows into `out`.
+ * \param out_stride_bytes Receives the row stride `(width + 7) / 8`.
+ * \return Bytes copied (> 0), HOST_ERR_NO_MEMORY when `out` is too small,
+ *         HOST_ERR_INVALID_ARG, HOST_ERR_NOT_FOUND.
+ */
+int host_surface_export(uint32_t surface, uint8_t* out, size_t out_size,
+                        uint16_t* out_stride_bytes);
+
+/**
+ * \brief Encode the surface as a grayscale JPEG.
+ * \param quality 1..100 (0 = 85).
+ * \param out_len Receives the encoded size; on HOST_ERR_NO_MEMORY it holds
+ *        the required buffer size instead.
+ * \return HOST_OK, HOST_ERR_NO_MEMORY (`out` too small), HOST_ERR_GENERIC,
+ *         HOST_ERR_INVALID_ARG, HOST_ERR_NOT_FOUND.
+ */
+int host_surface_export_jpg(uint32_t surface, uint8_t quality,
+                            uint8_t* out, size_t out_size, uint32_t* out_len);
+
+/**
+ * \brief Stamp a sprite's current frame onto a surface at (x, y).
+ *
+ * Composition helper: honors the sprite's mask and flip flags. Unlike
+ * \ref host_view_canvas_draw_sprite this is an immediate pixel copy, not a
+ * reference.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND (unknown surface/sprite).
+ */
+int host_surface_draw_sprite(uint32_t surface, int16_t x, int16_t y, uint32_t sprite);
+
+/** \} */
+
+/**
+ * \defgroup sprites Sprites
+ * \brief Multi-frame 1-bpp resources with host-driven frame playback.
+ *
+ * A sprite is a frame sheet: `frame_count` frames of `w x h` pixels stacked
+ * vertically, packed rows MSB-first, set bit = black - the same layout as the
+ * surface, QR and image APIs, so \ref host_image_render output slices
+ * straight into frames. Draw it into the canvas by reference with
+ * \ref host_view_canvas_draw_sprite (inside an element for movement/z/tweens)
+ * and let \ref host_sprite_play advance frames on the host clock.
+ *
+ * Transparency: by default set bits paint black and unset bits are
+ * transparent. HOST_SPRITE_FLAG_OPAQUE paints unset bits white. A mask plane
+ * (\ref host_sprite_set_mask) gives per-pixel control: mask bit set = pixel
+ * painted (black or white per the data bit), unset = transparent.
+ *
+ * Sprites live in the canvas: they are freed when the canvas is popped or
+ * cleared, and creating them requires an open canvas view. To create sheets
+ * once and reuse them across screen rebuilds, clear with
+ * \ref host_view_canvas_clear_ex (HOST_CANVAS_CLEAR_KEEP_SPRITES) - assets
+ * survive, playback stops. No capability required - pure compute with a
+ * hard memory cap.
+ * \{
+ */
+
+/// Maximum sprites per canvas.
+#define HOST_SPRITE_MAX_PER_CANVAS 8
+/// Maximum frames per sprite.
+#define HOST_SPRITE_MAX_FRAMES     32
+/// Shared pixel arena for all sprite data (frames + masks + durations).
+#define HOST_SPRITE_ARENA_BYTES    65536
+
+/* Playback modes. */
+#define HOST_SPRITE_ONCE      0  /* play to the last frame and hold it     */
+#define HOST_SPRITE_LOOP      1  /* wrap around; finite runs hold the last */
+#define HOST_SPRITE_PING_PONG 2  /* forward then backward per cycle        */
+
+/* Sprite flags. */
+#define HOST_SPRITE_FLAG_OPAQUE 0x01 /* unset data bits paint white         */
+#define HOST_SPRITE_FLAG_FLIP_H 0x02 /* mirror horizontally when drawn      */
+#define HOST_SPRITE_FLAG_FLIP_V 0x04 /* mirror vertically when drawn        */
+#define HOST_SPRITE_FLAG_ROT_90 0x08 /* rotate 90 deg clockwise (before the
+                                        flips; combine for 180/270). The
+                                        drawn box becomes h x w.            */
+
+/**
+ * \brief Create a sprite from a packed 1-bpp frame sheet in plugin memory.
+ *
+ * The data is copied into the host's sprite arena; the buffer may be reused.
+ * \param frame_w Frame width in pixels, >= 1.
+ * \param frame_h Frame height in pixels, >= 1.
+ * \param frame_count 1..HOST_SPRITE_MAX_FRAMES.
+ * \param frames Sheet bytes, frames stacked vertically.
+ * \param len Must be >= `((frame_w + 7) / 8) * frame_h * frame_count`.
+ * \return Sprite handle >= 1, HOST_ERR_INVALID_ARG, HOST_ERR_NO_MEMORY
+ *         (slots or arena exhausted), HOST_ERR_NOT_FOUND (no canvas).
+ */
+int host_sprite_create(uint16_t frame_w, uint16_t frame_h, uint16_t frame_count,
+                       const uint8_t* frames, uint32_t len);
+
+/**
+ * \brief Create a sprite by slicing a surface into a row-major grid of
+ *        `frame_w x frame_h` cells.
+ *
+ * Compose frames with text, shapes or decoded PNGs on a surface first, then
+ * snapshot it. Pixels are copied; the surface may be destroyed afterwards.
+ * \param frame_count Cells taken from the grid, left-to-right, top-to-bottom.
+ * \return Sprite handle >= 1, HOST_ERR_NOT_FOUND (surface/canvas),
+ *         HOST_ERR_INVALID_ARG (grid does not fit), HOST_ERR_NO_MEMORY.
+ */
+int host_sprite_create_from_surface(uint32_t surface, uint16_t frame_w,
+                                    uint16_t frame_h, uint16_t frame_count);
+
+/**
+ * \brief Attach a transparency mask plane (same sheet layout and size as the
+ *        frame data). Mask bit set = pixel painted; overrides
+ *        HOST_SPRITE_FLAG_OPAQUE.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND, HOST_ERR_INVALID_ARG (short buffer),
+ *         HOST_ERR_NO_MEMORY.
+ */
+int host_sprite_set_mask(uint32_t sprite, const uint8_t* mask, uint32_t len);
+
+/**
+ * \brief Create a sprite straight from an encoded PNG/JPEG.
+ *
+ * The image is decoded, scaled to `target_w` (aspect preserved), dithered to
+ * 1-bpp (the \ref host_image_render pipeline) and sliced vertically into
+ * frames of `frame_h` pixels; a partial last frame is dropped. Compose the
+ * source as one tall filmstrip.
+ * \return Sprite handle >= 1, HOST_ERR_INVALID_ARG, HOST_ERR_GENERIC
+ *         (decode failed), HOST_ERR_NO_MEMORY, HOST_ERR_NOT_FOUND (no canvas).
+ */
+int host_sprite_create_from_image(const uint8_t* data, uint32_t len,
+                                  uint16_t target_w, uint16_t frame_h);
+
+/// \brief Replace the sprite's flag set (HOST_SPRITE_FLAG_*).
+int host_sprite_set_flags(uint32_t sprite, uint8_t flags);
+
+/**
+ * \brief Integer upscale factor applied whenever the sprite is drawn.
+ * \param scale 1..4; the drawn box becomes `w*scale x h*scale`. Lossless on
+ *        1-bpp - pixels just get fatter.
+ */
+int host_sprite_set_scale(uint32_t sprite, uint8_t scale);
+
+/// \brief Jump to a frame. A running playback continues from it.
+int host_sprite_set_frame(uint32_t sprite, uint16_t frame);
+
+/// \brief Read the currently displayed frame index.
+int host_sprite_get_frame(uint32_t sprite, uint16_t* out);
+
+/**
+ * \brief Optional per-frame durations in milliseconds.
+ * \param count Must equal the sprite's frame count; 0 reverts to the global
+ *        `frame_ms` given to \ref host_sprite_play.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND, HOST_ERR_INVALID_ARG,
+ *         HOST_ERR_NO_MEMORY.
+ */
+int host_sprite_set_frame_durations(uint32_t sprite, const uint16_t* ms,
+                                    uint16_t count);
+
+/**
+ * \brief Start host-driven playback from frame 0.
+ *
+ * The canvas is committed automatically while playback runs (see
+ * \ref host_view_canvas_set_anim_policy).
+ * \param mode HOST_SPRITE_ONCE / LOOP / PING_PONG.
+ * \param frame_ms Per-frame duration, floored at 50 ms (overridden by
+ *        \ref host_sprite_set_frame_durations).
+ * \param repeat Extra cycles: 0 = one pass, HOST_ANIM_REPEAT_FOREVER =
+ *        endless. A PING_PONG cycle is one full there-and-back.
+ * \param done_action_id plugin_on_action(id, sprite, final_frame) when a
+ *        finite playback completes; 0 = none.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND, HOST_ERR_INVALID_ARG.
+ */
+int host_sprite_play(uint32_t sprite, uint8_t mode, uint16_t frame_ms,
+                     uint16_t repeat, uint32_t done_action_id);
+
+/// \brief Stop playback, keeping the current frame on screen.
+int host_sprite_stop(uint32_t sprite);
+
+/**
+ * \brief Destroy a sprite and reclaim its arena bytes. Recorded draw-sprite
+ *        commands referencing it are skipped from then on.
+ */
+int host_sprite_destroy(uint32_t sprite);
 
 /** \} */
 

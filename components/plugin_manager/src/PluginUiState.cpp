@@ -31,6 +31,15 @@ SemaphoreHandle_t listEditMutex()
     return m;
 }
 
+// Same idea for the plugin canvas: host calls on the plg_tick task mutate the
+// display list and arenas while the UI task replays them in render(). One
+// process-lifetime lock, since only one plugin canvas exists at a time.
+SemaphoreHandle_t canvasEditMutex()
+{
+    static SemaphoreHandle_t m = xSemaphoreCreateRecursiveMutex();
+    return m;
+}
+
 }  // namespace
 
 PluginUiState& PluginUiState::instance() noexcept
@@ -295,6 +304,15 @@ void PluginUiState::onCanvasWidget(uint32_t widget_id, cdc::ui::CanvasView::Widg
     if (action) {
         PluginManager::instance().dispatchAction(
             action, widget_id, static_cast<uint32_t>(event));
+    }
+}
+
+void PluginUiState::onCanvasAnim(uint32_t action_id, uint32_t handle, uint32_t ref_id)
+{
+    // The action id was supplied per tween/sprite playback (done_action_id),
+    // so it goes out verbatim: plugin_on_action(action_id, handle, ref_id).
+    if (action_id) {
+        PluginManager::instance().dispatchAction(action_id, handle, ref_id);
     }
 }
 
@@ -682,9 +700,11 @@ int PluginUiState::pushCanvas(const char* title, uint32_t key_action_id,
     canvas_.key_action_id    = key_action_id;
     canvas_.widget_action_id = widget_action_id;
     canvas_.view             = std::make_unique<cdc::ui::CanvasView>();
+    canvas_.view->setEditMutex(canvasEditMutex());
     canvas_.view->init(canvas_.title_buf.get());
     canvas_.view->setKeyCallback(&PluginUiState::onCanvasKey);
     canvas_.view->setWidgetCallback(&PluginUiState::onCanvasWidget);
+    canvas_.view->setAnimCallback(&PluginUiState::onCanvasAnim);
 
     cdc::ui::ViewStack::instance().push(canvas_.view.get());
     return HOST_OK;

@@ -9,6 +9,7 @@
 #include "cdc_hal/IDisplay.h"
 #include "cdc_hal/hw_config.h"
 #include "cdc_core/Raii.h"
+#include "cdc_core/EventBus.h"
 #include "cdc_core/feature_flags.h"
 #include "cdc_log.h"
 #include "driver/ledc.h"
@@ -206,7 +207,21 @@ static void renderTask(void* arg) {
 
         if (s_epd_display) {
             cdc::core::MutexGuard guard(s_panelMutex);
-            driveRefresh(resolveRefresh(mode));
+            const RefreshMode resolved = resolveRefresh(mode);
+            // A FAST/FULL waveform leaves the panel unreadable for its whole
+            // duration; bracket it with a DISPLAY_REFRESH begin/end so plugins
+            // can pause. PARTIAL refreshes are transparent and stay silent.
+            const bool heavy =
+                (resolved == RefreshMode::FULL || resolved == RefreshMode::FAST);
+            if (heavy) {
+                cdc::core::EventBus::instance().publish(
+                    cdc::core::EventType::DISPLAY_REFRESH, 1);
+            }
+            driveRefresh(resolved);
+            if (heavy) {
+                cdc::core::EventBus::instance().publish(
+                    cdc::core::EventType::DISPLAY_REFRESH, 0);
+            }
         }
     }
 }

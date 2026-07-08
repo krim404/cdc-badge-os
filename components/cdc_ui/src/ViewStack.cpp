@@ -31,6 +31,23 @@ static hal::RefreshMode strongerRefresh(hal::RefreshMode a, hal::RefreshMode b) 
 }
 
 /**
+ * \brief Reset the shared GFX text state to the defaults before a view renders.
+ *
+ * All views draw onto the same display singleton, so a view that leaves a large
+ * font or an inverted color set (e.g. a plugin canvas replaying its display list
+ * at 24 pt) would otherwise leak that state into the next view rendered on top
+ * (the T9 editor, a menu, a toast). Resetting here once means individual views no
+ * longer need their own defensive reset.
+ */
+static void resetTextState(hal::IDisplay* display) {
+    if (!display) return;
+    constexpr uint16_t kBlack = 0x0000;  // EPD_BLACK
+    display->setFont(nullptr);           // built-in 6x8 glcdfont
+    display->setTextSize(1);
+    display->setTextColor(kBlack);
+}
+
+/**
  * \brief Returns singleton view-stack instance.
  */
 ViewStack& ViewStack::instance() {
@@ -352,10 +369,12 @@ void ViewStack::render(bool synchronous) {
             return;
         }
         if (baseDirty || needsCompositeRepaint_) {
+            resetTextState(display);
             view->render(false);
             view->clearDirty();
         }
         for (uint8_t i = 0; i < modalDepth_; ++i) {
+            resetTextState(display);
             modals_[i]->render(true);
             modals_[i]->clearDirty();
         }
@@ -374,6 +393,7 @@ void ViewStack::render(bool synchronous) {
     if (!view->needsRender()) {
         return;
     }
+    resetTextState(display);
     view->render(false);
     view->clearDirty();
 

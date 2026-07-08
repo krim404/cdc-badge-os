@@ -8,7 +8,14 @@ namespace cdc::core {
 /**
  * Event types for system-wide communication
  */
+// The ordinal of each enumerator IS the wire value: EventBus::eventMask and
+// the plugin host API expose events as (1u << ordinal). Plugin-facing events
+// come FIRST so their public EVENT_* bits (host_api.h) stay contiguous with no
+// gaps; internal-only events (never surfaced to plugins) follow. Keep this
+// split when adding events - a static_assert in host_api_event.cpp locks the
+// public bits to these ordinals.
 enum class EventType : uint8_t {
+    // --- Plugin-facing events (mirrored by EVENT_* in host_api.h) ---
     // Input events
     KEY_PRESSED,
     KEY_RELEASED,
@@ -26,14 +33,10 @@ enum class EventType : uint8_t {
     SYSTEM_LOCK,
     SYSTEM_SLEEP,
     SYSTEM_WAKE,
-    SYSTEM_SLEEP_INCOMING,
 
     // Bluetooth events
     BLE_CONNECTED,
     BLE_DISCONNECTED,
-    BLE_PAIRING_REQUEST,
-    BLE_CONSENT_REQUEST,
-    BLE_EXCHANGE_COMPLETE,
 
     // Timer
     TIMER_TICK,
@@ -41,6 +44,15 @@ enum class EventType : uint8_t {
     // Custom module events (use data.value for sub-type)
     MODULE_EVENT,
 
+    // Display refresh in progress (data.value = 1 begin, 0 end); published
+    // by the e-paper driver for FAST/FULL refreshes so plugins can pause.
+    DISPLAY_REFRESH,
+
+    // --- Internal-only events (no public EVENT_* bit) ---
+    SYSTEM_SLEEP_INCOMING,
+    BLE_PAIRING_REQUEST,
+    BLE_CONSENT_REQUEST,
+    BLE_EXCHANGE_COMPLETE,
     // Module error (data.ptr = module name, data.value = index)
     MODULE_ERROR,
 

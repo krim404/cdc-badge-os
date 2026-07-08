@@ -260,6 +260,9 @@ static int32_t w_host_view_canvas_set_footer(wasm_exec_env_t, const char* hint)
 static int32_t w_host_view_canvas_clear(wasm_exec_env_t)
 { return host_view_canvas_clear(); }
 
+static int32_t w_host_view_canvas_clear_ex(wasm_exec_env_t, uint32_t flags)
+{ return host_view_canvas_clear_ex(flags); }
+
 static int32_t w_host_view_canvas_set_text_size(wasm_exec_env_t, uint32_t size)
 { return host_view_canvas_set_text_size(static_cast<uint8_t>(size)); }
 
@@ -343,6 +346,151 @@ static int32_t w_host_view_canvas_vline(wasm_exec_env_t, int32_t x, int32_t y, i
 
 static int32_t w_host_view_canvas_commit(wasm_exec_env_t, uint32_t full_refresh)
 { return host_view_canvas_commit(full_refresh != 0); }
+
+static int32_t w_host_view_canvas_elem_begin(wasm_exec_env_t, uint32_t elem_id)
+{ return host_view_canvas_elem_begin(elem_id); }
+
+static int32_t w_host_view_canvas_elem_end(wasm_exec_env_t)
+{ return host_view_canvas_elem_end(); }
+
+static int32_t w_host_view_canvas_elem_set_offset(wasm_exec_env_t, uint32_t elem_id,
+                                                  int32_t ox, int32_t oy)
+{ return host_view_canvas_elem_set_offset(elem_id, static_cast<int16_t>(ox),
+                                          static_cast<int16_t>(oy)); }
+
+static int32_t w_host_view_canvas_elem_move(wasm_exec_env_t, uint32_t elem_id,
+                                            int32_t dx, int32_t dy)
+{ return host_view_canvas_elem_move(elem_id, static_cast<int16_t>(dx),
+                                    static_cast<int16_t>(dy)); }
+
+static int32_t w_host_view_canvas_elem_show(wasm_exec_env_t, uint32_t elem_id,
+                                            uint32_t visible)
+{ return host_view_canvas_elem_show(elem_id, visible != 0); }
+
+static int32_t w_host_view_canvas_elem_remove(wasm_exec_env_t, uint32_t elem_id)
+{ return host_view_canvas_elem_remove(elem_id); }
+
+static int32_t w_host_view_canvas_elem_clear(wasm_exec_env_t, uint32_t elem_id)
+{ return host_view_canvas_elem_clear(elem_id); }
+
+static int32_t w_host_view_canvas_elem_set_z(wasm_exec_env_t, uint32_t elem_id, int32_t z)
+{ return host_view_canvas_elem_set_z(elem_id, static_cast<int8_t>(z)); }
+
+static int32_t w_host_view_canvas_elem_get_offset(wasm_exec_env_t exec_env, uint32_t elem_id,
+                                                  int16_t* ox, int16_t* oy)
+{
+    if (!wbuf_ok(exec_env, ox, sizeof(int16_t)) || !wbuf_ok(exec_env, oy, sizeof(int16_t))) {
+        return HOST_ERR_INVALID_ARG;
+    }
+    return host_view_canvas_elem_get_offset(elem_id, ox, oy);
+}
+
+static int32_t w_host_view_canvas_elem_get_bounds(wasm_exec_env_t exec_env, uint32_t elem_id,
+                                                  int16_t* x, int16_t* y,
+                                                  uint16_t* w, uint16_t* h)
+{
+    if (!wbuf_ok(exec_env, x, sizeof(int16_t)) || !wbuf_ok(exec_env, y, sizeof(int16_t))
+        || !wbuf_ok(exec_env, w, sizeof(uint16_t)) || !wbuf_ok(exec_env, h, sizeof(uint16_t))) {
+        return HOST_ERR_INVALID_ARG;
+    }
+    return host_view_canvas_elem_get_bounds(elem_id, x, y, w, h);
+}
+
+static int32_t w_host_view_canvas_set_anim_policy(wasm_exec_env_t, uint32_t policy, uint32_t max_fps)
+{ return host_view_canvas_set_anim_policy(static_cast<uint8_t>(policy),
+                                          static_cast<uint8_t>(max_fps)); }
+
+static int32_t w_host_view_canvas_draw_sprite(wasm_exec_env_t, int32_t x, int32_t y, uint32_t sprite)
+{ return host_view_canvas_draw_sprite(static_cast<int16_t>(x), static_cast<int16_t>(y), sprite); }
+
+// -- Sprites --
+static int32_t w_host_sprite_create(wasm_exec_env_t, uint32_t w, uint32_t h, uint32_t frames,
+                                    const uint8_t* data, uint32_t len)
+{ return host_sprite_create(static_cast<uint16_t>(w), static_cast<uint16_t>(h),
+                            static_cast<uint16_t>(frames), data, len); }
+
+static int32_t w_host_sprite_create_from_surface(wasm_exec_env_t, uint32_t surface, uint32_t w,
+                                                 uint32_t h, uint32_t frames)
+{ return host_sprite_create_from_surface(surface, static_cast<uint16_t>(w),
+                                         static_cast<uint16_t>(h), static_cast<uint16_t>(frames)); }
+
+static int32_t w_host_sprite_set_mask(wasm_exec_env_t, uint32_t sprite, const uint8_t* mask,
+                                      uint32_t len)
+{ return host_sprite_set_mask(sprite, mask, len); }
+
+static int32_t w_host_sprite_set_flags(wasm_exec_env_t, uint32_t sprite, uint32_t flags)
+{ return host_sprite_set_flags(sprite, static_cast<uint8_t>(flags)); }
+
+static int32_t w_host_sprite_set_scale(wasm_exec_env_t, uint32_t sprite, uint32_t scale)
+{ return host_sprite_set_scale(sprite, static_cast<uint8_t>(scale)); }
+
+static int32_t w_host_sprite_create_from_image(wasm_exec_env_t, const uint8_t* data, uint32_t len,
+                                               uint32_t target_w, uint32_t frame_h)
+{ return host_sprite_create_from_image(data, len, static_cast<uint16_t>(target_w),
+                                       static_cast<uint16_t>(frame_h)); }
+
+static int32_t w_host_view_canvas_set_ink(wasm_exec_env_t, uint32_t white)
+{ return host_view_canvas_set_ink(white != 0); }
+
+static int32_t w_host_view_canvas_marquee(wasm_exec_env_t, int32_t x, int32_t y, int32_t window_w,
+                                          const char* text, uint32_t step_px, uint32_t frame_ms)
+{ return host_view_canvas_marquee(static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                  static_cast<int16_t>(window_w), text,
+                                  static_cast<uint16_t>(step_px), static_cast<uint16_t>(frame_ms)); }
+
+static int32_t w_host_sprite_set_frame(wasm_exec_env_t, uint32_t sprite, uint32_t frame)
+{ return host_sprite_set_frame(sprite, static_cast<uint16_t>(frame)); }
+
+static int32_t w_host_sprite_get_frame(wasm_exec_env_t exec_env, uint32_t sprite, uint16_t* out)
+{
+    if (!wbuf_ok(exec_env, out, sizeof(uint16_t))) return HOST_ERR_INVALID_ARG;
+    return host_sprite_get_frame(sprite, out);
+}
+
+static int32_t w_host_sprite_set_frame_durations(wasm_exec_env_t exec_env, uint32_t sprite,
+                                                 const uint16_t* ms, uint32_t count)
+{
+    if (count != 0
+        && !wbuf_ok(exec_env, ms, static_cast<uint64_t>(count) * sizeof(uint16_t))) {
+        return HOST_ERR_INVALID_ARG;
+    }
+    return host_sprite_set_frame_durations(sprite, ms, static_cast<uint16_t>(count));
+}
+
+static int32_t w_host_sprite_play(wasm_exec_env_t, uint32_t sprite, uint32_t mode,
+                                  uint32_t frame_ms, uint32_t repeat, uint32_t done_aid)
+{ return host_sprite_play(sprite, static_cast<uint8_t>(mode), static_cast<uint16_t>(frame_ms),
+                          static_cast<uint16_t>(repeat), done_aid); }
+
+static int32_t w_host_sprite_stop(wasm_exec_env_t, uint32_t sprite)
+{ return host_sprite_stop(sprite); }
+
+static int32_t w_host_sprite_destroy(wasm_exec_env_t, uint32_t sprite)
+{ return host_sprite_destroy(sprite); }
+
+// -- Canvas tweens --
+static int32_t w_host_anim_start(wasm_exec_env_t exec_env, const host_anim_t* cfg)
+{
+    if (!wbuf_ok(exec_env, cfg, sizeof(host_anim_t))) return HOST_ERR_INVALID_ARG;
+    return host_anim_start(cfg);
+}
+
+static int32_t w_host_anim_cancel(wasm_exec_env_t, uint32_t handle)
+{ return host_anim_cancel(handle); }
+
+static int32_t w_host_anim_pause(wasm_exec_env_t, uint32_t handle, uint32_t paused)
+{ return host_anim_pause(handle, paused != 0); }
+
+static int32_t w_host_anim_state(wasm_exec_env_t, uint32_t handle)
+{ return host_anim_state(handle); }
+
+static int32_t w_host_anim_active_count(wasm_exec_env_t)
+{ return host_anim_active_count(); }
+
+static int32_t w_host_anim_blink(wasm_exec_env_t, uint32_t elem_id, uint32_t period_ms,
+                                 uint32_t count, uint32_t done_aid)
+{ return host_anim_blink(elem_id, static_cast<uint16_t>(period_ms),
+                         static_cast<uint16_t>(count), done_aid); }
 
 static int32_t w_host_view_canvas_add_slider(wasm_exec_env_t, uint32_t widget_id,
                                               int32_t min, int32_t max, int32_t initial, int32_t step)
@@ -529,6 +677,16 @@ static int32_t w_host_socket_read(wasm_exec_env_t, int32_t h, uint8_t* out,
 
 static int32_t w_host_socket_close(wasm_exec_env_t, int32_t h) { return host_socket_close(h); }
 
+// -- Inbound TCP listener ---------------------------------------------------
+static int32_t w_host_net_listen(wasm_exec_env_t, uint32_t port, uint32_t action_id)
+{ return host_net_listen(static_cast<uint16_t>(port), action_id); }
+static int32_t w_host_net_accept(wasm_exec_env_t) { return host_net_accept(); }
+static int32_t w_host_net_close(wasm_exec_env_t, uint32_t port)
+{ return host_net_close(static_cast<uint16_t>(port)); }
+
+static int32_t w_host_set_resident(wasm_exec_env_t, int32_t resident)
+{ return host_set_resident(resident != 0); }
+
 // -- WiFi -------------------------------------------------------------------
 
 static int32_t w_host_wifi_request(wasm_exec_env_t, uint32_t t) { return host_wifi_request(t); }
@@ -668,6 +826,171 @@ static int32_t w_host_msg_send(wasm_exec_env_t exec_env, const uint8_t* addr, ui
     if (!wbuf_ok(exec_env, addr, 6)) return HOST_ERR_INVALID_ARG;
     return host_msg_send(addr, static_cast<uint8_t>(addr_type), mime, data, len, flags);
 }
+
+// -- vCard store (read-only) --
+static int32_t w_host_vcard_get_own(wasm_exec_env_t, char* out, uint32_t out_size)
+{ return host_vcard_get_own(out, out_size); }
+static int32_t w_host_vcard_received_count(wasm_exec_env_t)
+{ return host_vcard_received_count(); }
+static int32_t w_host_vcard_received_get(wasm_exec_env_t, uint32_t index, char* out, uint32_t out_size)
+{ return host_vcard_received_get(static_cast<uint16_t>(index), out, out_size); }
+static int32_t w_host_vcard_received_display(wasm_exec_env_t, uint32_t index, char* out, uint32_t out_size)
+{ return host_vcard_received_display(static_cast<uint16_t>(index), out, out_size); }
+static int32_t w_host_vcard_set_own(wasm_exec_env_t, const char* vcard, uint32_t len)
+{ return host_vcard_set_own(vcard, len); }
+static int32_t w_host_vcard_received_add(wasm_exec_env_t, const char* vcard, uint32_t len)
+{ return host_vcard_received_add(vcard, len); }
+static int32_t w_host_vcard_received_update(wasm_exec_env_t, uint32_t index, const char* vcard, uint32_t len)
+{ return host_vcard_received_update(static_cast<uint16_t>(index), vcard, len); }
+static int32_t w_host_vcard_received_delete(wasm_exec_env_t, uint32_t index)
+{ return host_vcard_received_delete(static_cast<uint16_t>(index)); }
+
+// -- QR encoding --
+static int32_t w_host_qr_measure(wasm_exec_env_t exec_env, const char* data,
+                                 uint32_t max_version, uint32_t ecc, uint16_t* out_modules)
+{
+    if (!wbuf_ok(exec_env, out_modules, sizeof(uint16_t))) return HOST_ERR_INVALID_ARG;
+    return host_qr_measure(data, static_cast<uint8_t>(max_version),
+                           static_cast<uint8_t>(ecc), out_modules);
+}
+static int32_t w_host_qr_render_bitmap(wasm_exec_env_t exec_env, const char* data,
+                                       uint32_t max_version, uint32_t ecc,
+                                       uint32_t scale, uint32_t quiet,
+                                       uint8_t* out, uint32_t out_size,
+                                       uint16_t* stride_out, uint16_t* height_out)
+{
+    if (!wbuf_ok(exec_env, stride_out, sizeof(uint16_t)) ||
+        !wbuf_ok(exec_env, height_out, sizeof(uint16_t))) {
+        return HOST_ERR_INVALID_ARG;
+    }
+    return host_qr_render_bitmap(data, static_cast<uint8_t>(max_version),
+                                 static_cast<uint8_t>(ecc), static_cast<uint8_t>(scale),
+                                 static_cast<uint8_t>(quiet), out, out_size,
+                                 stride_out, height_out);
+}
+
+// -- Image decoding --
+static int32_t w_host_image_info(wasm_exec_env_t exec_env, const uint8_t* data, uint32_t len,
+                                 uint16_t* out_w, uint16_t* out_h)
+{
+    if (!wbuf_ok(exec_env, out_w, sizeof(uint16_t)) ||
+        !wbuf_ok(exec_env, out_h, sizeof(uint16_t))) {
+        return HOST_ERR_INVALID_ARG;
+    }
+    return host_image_info(data, len, out_w, out_h);
+}
+static int32_t w_host_image_render(wasm_exec_env_t exec_env, const uint8_t* data, uint32_t len,
+                                   uint32_t target_w, uint8_t* out, uint32_t out_size,
+                                   uint16_t* stride_out, uint16_t* height_out)
+{
+    if (!wbuf_ok(exec_env, stride_out, sizeof(uint16_t)) ||
+        !wbuf_ok(exec_env, height_out, sizeof(uint16_t))) {
+        return HOST_ERR_INVALID_ARG;
+    }
+    return host_image_render(data, len, static_cast<uint16_t>(target_w),
+                             out, out_size, stride_out, height_out);
+}
+
+// -- Offscreen surfaces --
+static int32_t w_host_surface_create(wasm_exec_env_t, uint32_t w, uint32_t h)
+{ return host_surface_create(static_cast<uint16_t>(w), static_cast<uint16_t>(h)); }
+static int32_t w_host_surface_destroy(wasm_exec_env_t, uint32_t s)
+{ return host_surface_destroy(s); }
+static int32_t w_host_surface_clear(wasm_exec_env_t, uint32_t s)
+{ return host_surface_clear(s); }
+static int32_t w_host_surface_set_font(wasm_exec_env_t, uint32_t s, uint32_t font_id)
+{ return host_surface_set_font(s, static_cast<uint8_t>(font_id)); }
+static int32_t w_host_surface_set_text_size(wasm_exec_env_t, uint32_t s, uint32_t size)
+{ return host_surface_set_text_size(s, static_cast<uint8_t>(size)); }
+static int32_t w_host_surface_set_text_color(wasm_exec_env_t, uint32_t s, uint32_t inverted)
+{ return host_surface_set_text_color(s, static_cast<uint8_t>(inverted)); }
+static int32_t w_host_surface_set_shade(wasm_exec_env_t, uint32_t s, uint32_t shade)
+{ return host_surface_set_shade(s, static_cast<uint8_t>(shade)); }
+static int32_t w_host_surface_draw_text(wasm_exec_env_t, uint32_t s, int32_t x, int32_t y,
+                                        const char* text)
+{ return host_surface_draw_text(s, static_cast<int16_t>(x), static_cast<int16_t>(y), text); }
+static int32_t w_host_surface_draw_text_aligned(wasm_exec_env_t, uint32_t s, int32_t x,
+                                                int32_t y, int32_t w, const char* text,
+                                                uint32_t align)
+{ return host_surface_draw_text_aligned(s, static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                        static_cast<int16_t>(w), text,
+                                        static_cast<uint8_t>(align)); }
+static int32_t w_host_surface_measure_text(wasm_exec_env_t exec_env, uint32_t s,
+                                           const char* text, uint16_t* out_w, uint16_t* out_h)
+{
+    if (!wbuf_ok(exec_env, out_w, sizeof(uint16_t)) ||
+        !wbuf_ok(exec_env, out_h, sizeof(uint16_t))) {
+        return HOST_ERR_INVALID_ARG;
+    }
+    return host_surface_measure_text(s, text, out_w, out_h);
+}
+static int32_t w_host_surface_draw_pixel(wasm_exec_env_t, uint32_t s, int32_t x, int32_t y)
+{ return host_surface_draw_pixel(s, static_cast<int16_t>(x), static_cast<int16_t>(y)); }
+static int32_t w_host_surface_draw_line(wasm_exec_env_t, uint32_t s, int32_t x0, int32_t y0,
+                                        int32_t x1, int32_t y1)
+{ return host_surface_draw_line(s, static_cast<int16_t>(x0), static_cast<int16_t>(y0),
+                                static_cast<int16_t>(x1), static_cast<int16_t>(y1)); }
+static int32_t w_host_surface_draw_rect(wasm_exec_env_t, uint32_t s, int32_t x, int32_t y,
+                                        int32_t w, int32_t h, uint32_t filled)
+{ return host_surface_draw_rect(s, static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                static_cast<int16_t>(w), static_cast<int16_t>(h),
+                                static_cast<uint8_t>(filled)); }
+static int32_t w_host_surface_draw_circle(wasm_exec_env_t, uint32_t s, int32_t x, int32_t y,
+                                          int32_t r, uint32_t filled)
+{ return host_surface_draw_circle(s, static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                  static_cast<int16_t>(r), static_cast<uint8_t>(filled)); }
+static int32_t w_host_surface_draw_triangle(wasm_exec_env_t, uint32_t s, int32_t x0, int32_t y0,
+                                            int32_t x1, int32_t y1, int32_t x2, int32_t y2,
+                                            uint32_t filled)
+{ return host_surface_draw_triangle(s, static_cast<int16_t>(x0), static_cast<int16_t>(y0),
+                                    static_cast<int16_t>(x1), static_cast<int16_t>(y1),
+                                    static_cast<int16_t>(x2), static_cast<int16_t>(y2),
+                                    static_cast<uint8_t>(filled)); }
+static int32_t w_host_surface_draw_round_rect(wasm_exec_env_t, uint32_t s, int32_t x, int32_t y,
+                                              int32_t w, int32_t h, int32_t r, uint32_t filled)
+{ return host_surface_draw_round_rect(s, static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                      static_cast<int16_t>(w), static_cast<int16_t>(h),
+                                      static_cast<int16_t>(r), static_cast<uint8_t>(filled)); }
+static int32_t w_host_surface_hline(wasm_exec_env_t, uint32_t s, int32_t x, int32_t y, int32_t w)
+{ return host_surface_hline(s, static_cast<int16_t>(x), static_cast<int16_t>(y),
+                            static_cast<int16_t>(w)); }
+static int32_t w_host_surface_vline(wasm_exec_env_t, uint32_t s, int32_t x, int32_t y, int32_t h)
+{ return host_surface_vline(s, static_cast<int16_t>(x), static_cast<int16_t>(y),
+                            static_cast<int16_t>(h)); }
+static int32_t w_host_surface_draw_bitmap(wasm_exec_env_t, uint32_t s, int32_t x, int32_t y,
+                                          int32_t w, int32_t h, const uint8_t* data, uint32_t len)
+{ return host_surface_draw_bitmap(s, static_cast<int16_t>(x), static_cast<int16_t>(y),
+                                  static_cast<int16_t>(w), static_cast<int16_t>(h), data, len); }
+static int32_t w_host_surface_export(wasm_exec_env_t exec_env, uint32_t s, uint8_t* out,
+                                     uint32_t out_size, uint16_t* stride_out)
+{
+    if (!wbuf_ok(exec_env, stride_out, sizeof(uint16_t))) return HOST_ERR_INVALID_ARG;
+    return host_surface_export(s, out, out_size, stride_out);
+}
+static int32_t w_host_surface_export_jpg(wasm_exec_env_t exec_env, uint32_t s, uint32_t quality,
+                                         uint8_t* out, uint32_t out_size, uint32_t* len_out)
+{
+    if (!wbuf_ok(exec_env, len_out, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;
+    return host_surface_export_jpg(s, static_cast<uint8_t>(quality), out, out_size, len_out);
+}
+static int32_t w_host_surface_draw_sprite(wasm_exec_env_t, uint32_t s, int32_t x, int32_t y,
+                                          uint32_t sprite)
+{ return host_surface_draw_sprite(s, static_cast<int16_t>(x), static_cast<int16_t>(y), sprite); }
+
+// -- External features (inter-plugin) --
+static int32_t w_host_ext_feature_available(wasm_exec_env_t, const char* feature)
+{ return host_ext_feature_available(feature); }
+static int32_t w_host_ext_feature_use(wasm_exec_env_t, const char* feature,
+                                      const uint8_t* data, uint32_t len, uint32_t status_aid)
+{ return host_ext_feature_use(feature, data, len, status_aid); }
+static int32_t w_host_ext_feature_register_handler(wasm_exec_env_t, const char* feature,
+                                                   uint32_t aid)
+{ return host_ext_feature_register_handler(feature, aid); }
+static int32_t w_host_ext_feature_consume(wasm_exec_env_t, uint8_t* buf, uint32_t buf_size,
+                                          char* feature_out, uint32_t feature_size)
+{ return host_ext_feature_consume(buf, buf_size, feature_out, feature_size); }
+static int32_t w_host_ext_feature_result(wasm_exec_env_t, int32_t status_code)
+{ return host_ext_feature_result(status_code); }
 
 static int32_t w_host_ui_acquire_exclusive(wasm_exec_env_t)  { return host_ui_acquire_exclusive(); }
 static int32_t w_host_ui_release_exclusive(wasm_exec_env_t)  { return host_ui_release_exclusive(); }
@@ -858,6 +1181,9 @@ static int32_t  w_host_display_draw_text(wasm_exec_env_t, int32_t x, int32_t y, 
                                 static_cast<uint8_t>(size), static_cast<uint16_t>(color)); }
 static int32_t  w_host_display_flush(wasm_exec_env_t, uint32_t mode) { return host_display_flush(static_cast<uint8_t>(mode)); }
 static int32_t  w_host_display_is_busy(wasm_exec_env_t) { return host_display_is_busy() ? 1 : 0; }
+static int32_t  w_host_display_set_backlight(wasm_exec_env_t, uint32_t level)
+{ return host_display_set_backlight(static_cast<uint16_t>(level)); }
+static uint32_t w_host_display_get_backlight(wasm_exec_env_t) { return host_display_get_backlight(); }
 
 // -- Keypad / USB -----------------------------------------------------------
 
@@ -927,11 +1253,17 @@ static int32_t  w_host_ble_write_char(wasm_exec_env_t, uint32_t conn, uint32_t v
 { return host_ble_write_char(conn, static_cast<uint16_t>(vh), data, len, static_cast<uint8_t>(wr)); }
 static int32_t  w_host_ble_subscribe(wasm_exec_env_t, uint32_t conn, uint32_t cccd, uint32_t aid)
 { return host_ble_subscribe(conn, static_cast<uint16_t>(cccd), aid); }
+static int32_t  w_host_ble_subscribe_char(wasm_exec_env_t, uint32_t conn, uint32_t vh, uint32_t aid)
+{ return host_ble_subscribe_char(conn, static_cast<uint16_t>(vh), aid); }
 static int32_t  w_host_ble_consume_notification(wasm_exec_env_t exec_env, uint16_t* vh_out, uint8_t* buf, uint32_t size)
 {
     if (!wbuf_ok(exec_env, vh_out, sizeof(uint16_t))) return HOST_ERR_INVALID_ARG;
     return host_ble_consume_notification(vh_out, buf, size);
 }
+static uint32_t w_host_ble_get_mtu(wasm_exec_env_t, uint32_t conn)
+{ return host_ble_get_mtu(conn); }
+static int32_t  w_host_ble_on_write_complete(wasm_exec_env_t, uint32_t aid)
+{ return host_ble_on_write_complete(aid); }
 
 // -- Symbol table -----------------------------------------------------------
 
@@ -981,6 +1313,7 @@ static const NativeSymbol s_symbols[] = {
     W("host_view_canvas_get_body_size", w_host_view_canvas_get_body_size, "(**)i"),
     W("host_view_canvas_set_footer",    w_host_view_canvas_set_footer,    "($)i"),
     W("host_view_canvas_clear",         w_host_view_canvas_clear,         "()i"),
+    W("host_view_canvas_clear_ex",      w_host_view_canvas_clear_ex,      "(i)i"),
     W("host_view_canvas_set_text_size", w_host_view_canvas_set_text_size, "(i)i"),
     W("host_view_canvas_set_text_color",w_host_view_canvas_set_text_color,"(i)i"),
     W("host_view_canvas_set_shade",     w_host_view_canvas_set_shade,     "(i)i"),
@@ -998,6 +1331,38 @@ static const NativeSymbol s_symbols[] = {
     W("host_view_canvas_hline",         w_host_view_canvas_hline,         "(iii)i"),
     W("host_view_canvas_vline",         w_host_view_canvas_vline,         "(iii)i"),
     W("host_view_canvas_commit",        w_host_view_canvas_commit,        "(i)i"),
+    W("host_view_canvas_elem_begin",    w_host_view_canvas_elem_begin,    "(i)i"),
+    W("host_view_canvas_elem_end",      w_host_view_canvas_elem_end,      "()i"),
+    W("host_view_canvas_elem_set_offset", w_host_view_canvas_elem_set_offset, "(iii)i"),
+    W("host_view_canvas_elem_move",     w_host_view_canvas_elem_move,     "(iii)i"),
+    W("host_view_canvas_elem_show",     w_host_view_canvas_elem_show,     "(ii)i"),
+    W("host_view_canvas_elem_remove",   w_host_view_canvas_elem_remove,   "(i)i"),
+    W("host_view_canvas_elem_clear",    w_host_view_canvas_elem_clear,    "(i)i"),
+    W("host_view_canvas_elem_set_z",    w_host_view_canvas_elem_set_z,    "(ii)i"),
+    W("host_view_canvas_elem_get_offset", w_host_view_canvas_elem_get_offset, "(i**)i"),
+    W("host_view_canvas_elem_get_bounds", w_host_view_canvas_elem_get_bounds, "(i****)i"),
+    W("host_view_canvas_set_anim_policy", w_host_view_canvas_set_anim_policy, "(ii)i"),
+    W("host_view_canvas_draw_sprite",   w_host_view_canvas_draw_sprite,   "(iii)i"),
+    W("host_sprite_create",             w_host_sprite_create,             "(iii*~)i"),
+    W("host_sprite_create_from_surface",w_host_sprite_create_from_surface,"(iiii)i"),
+    W("host_sprite_create_from_image",  w_host_sprite_create_from_image,  "(*~ii)i"),
+    W("host_sprite_set_mask",           w_host_sprite_set_mask,           "(i*~)i"),
+    W("host_sprite_set_flags",          w_host_sprite_set_flags,          "(ii)i"),
+    W("host_sprite_set_scale",          w_host_sprite_set_scale,          "(ii)i"),
+    W("host_view_canvas_set_ink",       w_host_view_canvas_set_ink,       "(i)i"),
+    W("host_view_canvas_marquee",       w_host_view_canvas_marquee,       "(iii$ii)i"),
+    W("host_sprite_set_frame",          w_host_sprite_set_frame,          "(ii)i"),
+    W("host_sprite_get_frame",          w_host_sprite_get_frame,          "(i*)i"),
+    W("host_sprite_set_frame_durations",w_host_sprite_set_frame_durations,"(i*i)i"),
+    W("host_sprite_play",               w_host_sprite_play,               "(iiiii)i"),
+    W("host_sprite_stop",               w_host_sprite_stop,               "(i)i"),
+    W("host_sprite_destroy",            w_host_sprite_destroy,            "(i)i"),
+    W("host_anim_start",                w_host_anim_start,                "(*)i"),
+    W("host_anim_cancel",               w_host_anim_cancel,               "(i)i"),
+    W("host_anim_pause",                w_host_anim_pause,                "(ii)i"),
+    W("host_anim_state",                w_host_anim_state,                "(i)i"),
+    W("host_anim_active_count",         w_host_anim_active_count,         "()i"),
+    W("host_anim_blink",                w_host_anim_blink,                "(iiii)i"),
     W("host_view_canvas_add_slider",    w_host_view_canvas_add_slider,    "(iiiii)i"),
     W("host_view_canvas_add_text",      w_host_view_canvas_add_text,      "(ii$)i"),
     W("host_view_canvas_add_button",    w_host_view_canvas_add_button,    "(i)i"),
@@ -1054,6 +1419,10 @@ static const NativeSymbol s_symbols[] = {
     W("host_socket_write",       w_host_socket_write,       "(i*~i)i"),
     W("host_socket_read",        w_host_socket_read,        "(i*~i)i"),
     W("host_socket_close",       w_host_socket_close,       "(i)i"),
+    W("host_net_listen",         w_host_net_listen,         "(ii)i"),
+    W("host_net_accept",         w_host_net_accept,         "()i"),
+    W("host_net_close",          w_host_net_close,          "(i)i"),
+    W("host_set_resident",       w_host_set_resident,       "(i)i"),
 
     W("host_wifi_request",       w_host_wifi_request,       "(i)i"),
     W("host_wifi_release",       w_host_wifi_release,       "()i"),
@@ -1101,6 +1470,50 @@ static const NativeSymbol s_symbols[] = {
     W("host_msg_consume",            w_host_msg_consume,            "(*~*~)i"),
     W("host_msg_send_interactive",   w_host_msg_send_interactive,   "($*~i)i"),
     W("host_msg_send",               w_host_msg_send,               "(*i$*~i)i"),
+
+    W("host_vcard_get_own",          w_host_vcard_get_own,          "(*~)i"),
+    W("host_vcard_received_count",   w_host_vcard_received_count,   "()i"),
+    W("host_vcard_received_get",     w_host_vcard_received_get,     "(i*~)i"),
+    W("host_vcard_received_display", w_host_vcard_received_display, "(i*~)i"),
+    W("host_vcard_set_own",          w_host_vcard_set_own,          "(*~)i"),
+    W("host_vcard_received_add",     w_host_vcard_received_add,     "(*~)i"),
+    W("host_vcard_received_update",  w_host_vcard_received_update,  "(i*~)i"),
+    W("host_vcard_received_delete",  w_host_vcard_received_delete,  "(i)i"),
+
+    W("host_qr_measure",       w_host_qr_measure,       "($ii*)i"),
+    W("host_qr_render_bitmap", w_host_qr_render_bitmap, "($iiii*~**)i"),
+
+    W("host_image_info",       w_host_image_info,       "(*~**)i"),
+    W("host_image_render",     w_host_image_render,     "(*~i*~**)i"),
+
+    W("host_surface_create",            w_host_surface_create,            "(ii)i"),
+    W("host_surface_destroy",           w_host_surface_destroy,           "(i)i"),
+    W("host_surface_clear",             w_host_surface_clear,             "(i)i"),
+    W("host_surface_set_font",          w_host_surface_set_font,          "(ii)i"),
+    W("host_surface_set_text_size",     w_host_surface_set_text_size,     "(ii)i"),
+    W("host_surface_set_text_color",    w_host_surface_set_text_color,    "(ii)i"),
+    W("host_surface_set_shade",         w_host_surface_set_shade,         "(ii)i"),
+    W("host_surface_draw_text",         w_host_surface_draw_text,         "(iii$)i"),
+    W("host_surface_draw_text_aligned", w_host_surface_draw_text_aligned, "(iiii$i)i"),
+    W("host_surface_measure_text",      w_host_surface_measure_text,      "(i$**)i"),
+    W("host_surface_draw_pixel",        w_host_surface_draw_pixel,        "(iii)i"),
+    W("host_surface_draw_line",         w_host_surface_draw_line,         "(iiiii)i"),
+    W("host_surface_draw_rect",         w_host_surface_draw_rect,         "(iiiiii)i"),
+    W("host_surface_draw_circle",       w_host_surface_draw_circle,       "(iiiii)i"),
+    W("host_surface_draw_triangle",     w_host_surface_draw_triangle,     "(iiiiiiii)i"),
+    W("host_surface_draw_round_rect",   w_host_surface_draw_round_rect,   "(iiiiiii)i"),
+    W("host_surface_hline",             w_host_surface_hline,             "(iiii)i"),
+    W("host_surface_vline",             w_host_surface_vline,             "(iiii)i"),
+    W("host_surface_draw_bitmap",       w_host_surface_draw_bitmap,       "(iiiii*~)i"),
+    W("host_surface_export",            w_host_surface_export,            "(i*~*)i"),
+    W("host_surface_export_jpg",        w_host_surface_export_jpg,        "(ii*~*)i"),
+    W("host_surface_draw_sprite",       w_host_surface_draw_sprite,       "(iiii)i"),
+
+    W("host_ext_feature_available",        w_host_ext_feature_available,        "($)i"),
+    W("host_ext_feature_use",              w_host_ext_feature_use,              "($*~i)i"),
+    W("host_ext_feature_register_handler", w_host_ext_feature_register_handler, "($i)i"),
+    W("host_ext_feature_consume",          w_host_ext_feature_consume,          "(*~*~)i"),
+    W("host_ext_feature_result",           w_host_ext_feature_result,           "(i)i"),
 
     W("host_ui_acquire_exclusive", w_host_ui_acquire_exclusive, "()i"),
     W("host_ui_release_exclusive", w_host_ui_release_exclusive, "()i"),
@@ -1161,6 +1574,8 @@ static const NativeSymbol s_symbols[] = {
     W("host_display_draw_text",  w_host_display_draw_text,  "(ii$ii)i"),
     W("host_display_flush",      w_host_display_flush,      "(i)i"),
     W("host_display_is_busy",    w_host_display_is_busy,    "()i"),
+    W("host_display_set_backlight", w_host_display_set_backlight, "(i)i"),
+    W("host_display_get_backlight", w_host_display_get_backlight, "()i"),
 
     W("host_key_pressed",        w_host_key_pressed,        "(i)i"),
     W("host_key_consume_next",   w_host_key_consume_next,   "(*)i"),
@@ -1187,7 +1602,10 @@ static const NativeSymbol s_symbols[] = {
     W("host_ble_consume_read",      w_host_ble_consume_read,      "(*~)i"),
     W("host_ble_write_char",        w_host_ble_write_char,        "(ii*~i)i"),
     W("host_ble_subscribe",         w_host_ble_subscribe,         "(iii)i"),
+    W("host_ble_subscribe_char",    w_host_ble_subscribe_char,    "(iii)i"),
     W("host_ble_consume_notification", w_host_ble_consume_notification, "(**~)i"),
+    W("host_ble_get_mtu",           w_host_ble_get_mtu,           "(i)i"),
+    W("host_ble_on_write_complete", w_host_ble_on_write_complete, "(i)i"),
 };
 
 static cdc::core::PsramUniquePtr<NativeSymbol> s_symbols_ram;

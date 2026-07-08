@@ -1,4 +1,5 @@
 #include "plugin_manager/CapabilityChecker.h"
+#include "plugin_manager/ExtFeatureName.h"
 #include "plugin_manager/PluginGpioPolicy.h"
 #include "plugin_manager/host_api.h"
 
@@ -144,6 +145,19 @@ CapabilityCheckResult CapabilityChecker::validate(const PluginManifest& m)
             return { CapabilityResult::BleServiceUuidInvalid,
                      "ble_service_uuid '" + uuid +
                          "' not a 128-bit lowercase UUID" };
+        }
+    }
+
+    if (m.capabilities.provides.size() > EXT_FEATURE_MAX_PER_PLUGIN) {
+        return { CapabilityResult::FeatureNameInvalid,
+                 "provides exceeds " + std::to_string(EXT_FEATURE_MAX_PER_PLUGIN) +
+                     " entries" };
+    }
+    for (const std::string& name : m.capabilities.provides) {
+        if (!isValidExtFeatureName(name.c_str())) {
+            return { CapabilityResult::FeatureNameInvalid,
+                     "provides entry '" + name + "' must be [a-z][a-z0-9_]*, 1-" +
+                         std::to_string(EXT_FEATURE_NAME_MAX - 1) + " chars" };
         }
     }
 

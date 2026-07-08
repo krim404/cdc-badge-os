@@ -7,6 +7,7 @@
 
 #include "cdc_views/LayoutConstants.h"
 
+class Adafruit_GFX;
 class Gdey029T94;
 
 namespace cdc::ui::render {
@@ -37,7 +38,7 @@ void drawDialogFrame(Gdey029T94* gfx, int x, int y, int w, int h);
  * \param text Null-terminated text.
  * \param maxWidthPx Maximum width in pixels.
  */
-void printTruncated(Gdey029T94* gfx, const char* text, int maxWidthPx);
+void printTruncated(Adafruit_GFX* gfx, const char* text, int maxWidthPx);
 
 /**
  * \brief Maps a CP437 byte to the equivalent Latin-1 byte for use with
@@ -86,7 +87,7 @@ void decodeWebText(const char* in, char* out, size_t out_size,
  * \param gfx Target display.
  * \param text CP437-encoded null-terminated string.
  */
-void drawCp437Text(Gdey029T94* gfx, const char* text);
+void drawCp437Text(Adafruit_GFX* gfx, const char* text);
 
 /**
  * \brief Draws CP437-encoded text correctly for the given font: the built-in
@@ -99,7 +100,7 @@ void drawCp437Text(Gdey029T94* gfx, const char* text);
  * \param text CP437-encoded null-terminated string.
  * \param font Active font (`nullptr` for the built-in glcdfont).
  */
-void drawText(Gdey029T94* gfx, const char* text, const GFXfont* font);
+void drawText(Adafruit_GFX* gfx, const char* text, const GFXfont* font);
 
 /**
  * \brief Draws CP437 text with the built-in 6x8 glyph font, byte-for-byte.
@@ -111,7 +112,7 @@ void drawText(Gdey029T94* gfx, const char* text, const GFXfont* font);
  * \param gfx Display drawing context.
  * \param text CP437-encoded null-terminated string.
  */
-void printText(Gdey029T94* gfx, const char* text);
+void printText(Adafruit_GFX* gfx, const char* text);
 
 /**
  * \brief Measures CP437 text exactly as \ref drawText would render it with
@@ -127,7 +128,7 @@ void printText(Gdey029T94* gfx, const char* text);
  * \param w  Output: rendered width.
  * \param h  Output: rendered height.
  */
-void measureText(Gdey029T94* gfx, const char* text, const GFXfont* font,
+void measureText(Adafruit_GFX* gfx, const char* text, const GFXfont* font,
                  int16_t x0, int16_t y0, int16_t* x1, int16_t* y1,
                  uint16_t* w, uint16_t* h);
 
@@ -148,7 +149,7 @@ void measureText(Gdey029T94* gfx, const char* text, const GFXfont* font,
  * \return Selected font pointer. Falls back to the last (smallest) candidate
  *         when nothing fits; returns nullptr if the array is empty.
  */
-const GFXfont* pickFontThatFits(Gdey029T94* gfx,
+const GFXfont* pickFontThatFits(Adafruit_GFX* gfx,
                                 const char* text,
                                 int maxWidthPx,
                                 const GFXfont* const* candidates,
@@ -166,7 +167,61 @@ const GFXfont* pickFontThatFits(Gdey029T94* gfx,
  * \param w  Output: width of the rendered text.
  * \param h  Output: height of the rendered text.
  */
-void measureCp437Text(Gdey029T94* gfx, const char* text, int16_t x0, int16_t y0,
+void measureCp437Text(Adafruit_GFX* gfx, const char* text, int16_t x0, int16_t y0,
                       int16_t* x1, int16_t* y1, uint16_t* w, uint16_t* h);
+
+/**
+ * \brief True when the ordered-dither matrix inks pixel (x, y) for `shade`.
+ * \param x Pixel column.
+ * \param y Pixel row.
+ * \param shade Grey level 0 (white) .. 255 (black), quantised to 64 levels.
+ */
+bool ditherOn(int16_t x, int16_t y, uint8_t shade);
+
+/**
+ * \brief Fills a rectangle with an ordered-dither fake-grey pattern.
+ * \param gfx Target drawing context.
+ * \param color Ink color for dithered-on pixels.
+ */
+void fillRectDither(Adafruit_GFX* gfx, int16_t x, int16_t y, int16_t w, int16_t h,
+                    uint8_t shade, uint16_t color);
+
+/// \brief Dithered filled circle; see \ref fillRectDither.
+void fillCircleDither(Adafruit_GFX* gfx, int16_t cx, int16_t cy, int16_t r,
+                      uint8_t shade, uint16_t color);
+
+/// \brief Dithered filled triangle; see \ref fillRectDither.
+void fillTriangleDither(Adafruit_GFX* gfx, int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                        int16_t x2, int16_t y2, uint8_t shade, uint16_t color);
+
+/// Options for \ref drawBitmapMasked. Zero-init = plain transparent blit.
+struct BlitOpts {
+    const uint8_t* mask = nullptr;  ///< Mask plane (same layout) or null.
+    bool     opaque  = false;  ///< Without a mask: unset bits paint bg.
+    bool     flipH   = false;
+    bool     flipV   = false;
+    bool     rot90   = false;  ///< 90 deg clockwise (before flips); output
+                               ///< box becomes h x w.
+    uint8_t  scale   = 1;      ///< Integer upscale 1..4.
+    uint16_t srcX    = 0;      ///< Horizontal source window start.
+    uint16_t srcW    = 0;      ///< Window width; 0 = full width. Ignores
+                               ///< rot90/flips (marquee path).
+    uint16_t srcSpan = 0;      ///< Wrap period >= bitmap width (content +
+                               ///< blank gap); 0 = no wrap-around.
+};
+
+/**
+ * \brief Blit a packed 1-bpp bitmap with optional mask plane, flipping,
+ *        90-degree rotation, integer scaling and a horizontal source window.
+ *
+ * Rows are byte-padded, MSB first (the surface/QR/image convention). Without
+ * a mask, set bits paint \p fg and unset bits are transparent unless
+ * `opts.opaque`, in which case they paint \p bg. With a mask, only pixels
+ * whose mask bit is set are painted (data bit picks \p fg / \p bg), which
+ * allows drawing white pixels without making the whole rectangle opaque.
+ */
+void drawBitmapMasked(Adafruit_GFX* gfx, int16_t x, int16_t y,
+                      const uint8_t* data, int16_t w, int16_t h,
+                      const BlitOpts& opts, uint16_t fg, uint16_t bg);
 
 } // namespace cdc::ui::render

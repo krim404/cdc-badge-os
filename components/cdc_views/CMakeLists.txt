@@ -18,10 +18,13 @@ idf_component_register(
         "src/ToastView.cpp"
         "src/ContextMenuView.cpp"
         "src/QRCodeView.cpp"
+        "src/QrRaster.cpp"
+        "src/MonoSurface.cpp"
         "src/ConfirmView.cpp"
         "src/RenderHelpers.cpp"
         "src/HtmlViewerHook.cpp"
         "src/CanvasView.cpp"
+        "src/CanvasAnim.cpp"
         "src/ColorPickerView.cpp"
         "src/Fonts.cpp"
     INCLUDE_DIRS

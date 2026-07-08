@@ -34,6 +34,7 @@ enum class CapabilityResult {
     NvsNamespaceConflict,
     NvsNamespaceInvalid,
     MissingNvsNamespace,
+    FeatureNameInvalid,
 };
 
 struct CapabilityCheckResult {

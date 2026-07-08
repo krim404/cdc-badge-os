@@ -43,6 +43,17 @@ struct PluginCapabilities {
      */
     bool vfat = false;
     /**
+     * \brief Allow read access to the badge's own vCard and the received
+     * vCard store via the host_vcard_* API.
+     */
+    bool vcard = false;
+    /**
+     * \brief Allow the plugin to run an inbound TCP listener via the
+     * host_net_* API (the plugin picks the port). Accepted connections are
+     * driven through the host_socket_* read/write/close API.
+     */
+    bool net_listen = false;
+    /**
      * \brief Start this plugin as a resident background instance at badge boot.
      * Plugins without this flag stay unloaded until started manually.
      * Orthogonal to \ref background, which only governs survival after the user
@@ -56,6 +67,11 @@ struct PluginCapabilities {
     /// MIME types this plugin handles for badge-to-badge message transfer.
     /// A non-empty list implies messaging; sending also requires `ble`.
     std::vector<std::string> message_types;
+    /// Named external features this plugin provides to other plugins
+    /// (e.g. "thermo_print"). Other plugins invoke them via
+    /// host_ext_feature_use; the provider must register a handler with
+    /// host_ext_feature_register_handler in plugin_init.
+    std::vector<std::string> provides;
     std::vector<uint8_t> gpio_pins;
     std::vector<uint8_t> pwm_pins;
     std::vector<uint8_t> adc_pins;

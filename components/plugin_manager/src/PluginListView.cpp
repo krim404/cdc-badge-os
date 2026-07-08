@@ -255,13 +255,23 @@ void PluginListView::onMenu(uint16_t index)
                          (mgr.activePluginIsBackground() && mgr.activePluginId() == s_ctxPluginId);
     const bool disabled = mgr.isPluginDisabled(s_ctxPluginId);
 
+    // A plugin resident in the background (not the one about to be demoted off
+    // the foreground) gets a clearer "Stop background" label; both stop via
+    // unloadFromRam.
+    const bool inBackground = mgr.isRunningInBackground(s_ctxPluginId);
+
     uint8_t count = 0;
     if (disabled) {
         s_ctxItems[count++] = cdc::ui::ContextMenuItem{cdc::ui::tr("core.enable"), &onCtxEnable};
     } else {
-        s_ctxItems[count++] = running
-            ? cdc::ui::ContextMenuItem{cdc::ui::tr("core.stop"),  &onCtxStop}
-            : cdc::ui::ContextMenuItem{cdc::ui::tr("core.start"), &onCtxStart};
+        if (inBackground) {
+            s_ctxItems[count++] =
+                cdc::ui::ContextMenuItem{cdc::ui::tr("core.plugin_stop_bg"), &onCtxStop};
+        } else if (running) {
+            s_ctxItems[count++] = cdc::ui::ContextMenuItem{cdc::ui::tr("core.stop"), &onCtxStop};
+        } else {
+            s_ctxItems[count++] = cdc::ui::ContextMenuItem{cdc::ui::tr("core.start"), &onCtxStart};
+        }
         s_ctxItems[count++] = cdc::ui::ContextMenuItem{cdc::ui::tr("core.disable"), &onCtxDisable};
     }
     s_ctxItems[count++] = cdc::ui::ContextMenuItem{cdc::ui::tr("core.uninstall"), &onCtxUninstall};

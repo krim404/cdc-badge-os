@@ -128,4 +128,21 @@ bool host_display_is_busy(void)
     return (allowed() && d) ? d->isBusy() : false;
 }
 
+// Backlight control is not framebuffer access, so - like host_ui_wink - it is
+// NOT gated on the display_lowlevel capability. The value is applied live and
+// is NOT persisted to NVS (the firmware persists only via saveBacklight()).
+int host_display_set_backlight(uint16_t level)
+{
+    auto* d = disp();
+    if (!d) return HOST_ERR_GENERIC;
+    d->setBacklight(level);  // clamped to the panel maximum inside the HAL
+    return HOST_OK;
+}
+
+uint16_t host_display_get_backlight(void)
+{
+    auto* d = disp();
+    return d ? d->getBacklight() : 0;
+}
+
 }  // extern "C"

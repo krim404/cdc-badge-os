@@ -618,6 +618,22 @@ public:
     }
 
     /**
+     * Subscribe to notifications on a remote characteristic by its value
+     * handle. Discovers the characteristic's CCCD descriptor (UUID 0x2902)
+     * and writes it, falling back to valueHandle + 1 if descriptor discovery
+     * yields nothing. Requires a prior discoverServiceByUuid() on the same
+     * connection whose range still covers the characteristic (the last
+     * discovered service's end handle bounds the descriptor search).
+     * @param connHandle Connection handle
+     * @param valueHandle Characteristic value handle from discovery
+     * @return true if the subscribe sequence was initiated
+     */
+    virtual bool subscribeToCharacteristic(uint16_t connHandle, uint16_t valueHandle) {
+        (void)connHandle; (void)valueHandle;
+        return false;
+    }
+
+    /**
      * Disconnect a specific connection (central or peripheral)
      * @param connHandle Connection handle to disconnect
      */

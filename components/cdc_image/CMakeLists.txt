@@ -10,6 +10,7 @@ idf_component_register(
         "src/Dither.cpp"
         "src/ImageFormat.cpp"
         "src/ImageDecoder.cpp"
+        "src/JpegEncoder.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES

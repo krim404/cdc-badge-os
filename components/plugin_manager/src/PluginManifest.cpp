@@ -67,6 +67,8 @@ static void parse_capabilities(const cJSON* root, PluginCapabilities& cap)
     cap.prevent_sleep    = get_bool("prevent_sleep", false);
     cap.autoload         = get_bool("autoload", false);
     cap.vfat             = get_bool("vfat", false);
+    cap.vcard            = get_bool("vcard", false);
+    cap.net_listen       = get_bool("net_listen", false);
 
     cap.nvs_namespace = str_or(root, "nvs_namespace", "");
 
@@ -94,6 +96,7 @@ static void parse_capabilities(const cJSON* root, PluginCapabilities& cap)
     get_str_array    ("ecc",               cap.ecc);
     get_str_array    ("ble_service_uuids", cap.ble_service_uuids);
     get_str_array    ("message_types",     cap.message_types);
+    get_str_array    ("provides",          cap.provides);
     get_int_array_u8 ("gpio_pins",         cap.gpio_pins);
     get_int_array_u8 ("pwm_pins",          cap.pwm_pins);
     get_int_array_u8 ("adc_pins",          cap.adc_pins);

@@ -33,7 +33,7 @@ namespace {
 
 static constexpr const char* TAG = "SOCK";
 
-constexpr size_t   MAX_SOCKET_SLOTS   = 4;
+constexpr size_t   MAX_SOCKET_SLOTS   = 8;
 constexpr uint32_t kDefaultTimeoutMs  = 5000;
 
 struct SocketSlot {
@@ -49,6 +49,15 @@ bool socketAllowed()
 {
     auto* p = static_cast<cdc::plugin_manager::Plugin*>(plg_get_active_plugin());
     return p && p->manifest().capabilities.socket;
+}
+
+// Read/write/close are also allowed for a net_listen plugin operating on a
+// connection it accepted via the listener (host_net_accept adopts the fd into
+// this slot pool). Opening outbound connections still requires `socket`.
+bool socketIoAllowed()
+{
+    auto* p = static_cast<cdc::plugin_manager::Plugin*>(plg_get_active_plugin());
+    return p && (p->manifest().capabilities.socket || p->manifest().capabilities.net_listen);
 }
 
 SocketSlot* slotFor(int handle) { return s_slots.lookup(handle); }
@@ -161,7 +170,7 @@ int host_socket_open(uint8_t proto, const char* host, uint16_t port, uint32_t ti
 
 int host_socket_write(int handle, const uint8_t* data, size_t len, uint32_t timeout_ms)
 {
-    if (!socketAllowed()) return HOST_ERR_NO_CAPABILITY;
+    if (!socketIoAllowed()) return HOST_ERR_NO_CAPABILITY;
     auto* slot = slotFor(handle);
     if (!slot || slot->fd < 0) return HOST_ERR_INVALID_ARG;
     if (len == 0) return 0;
@@ -178,7 +187,7 @@ int host_socket_write(int handle, const uint8_t* data, size_t len, uint32_t time
 
 int host_socket_read(int handle, uint8_t* out, size_t cap, uint32_t timeout_ms)
 {
-    if (!socketAllowed()) return HOST_ERR_NO_CAPABILITY;
+    if (!socketIoAllowed()) return HOST_ERR_NO_CAPABILITY;
     auto* slot = slotFor(handle);
     if (!slot || slot->fd < 0) return HOST_ERR_INVALID_ARG;
     if (cap == 0) return 0;
@@ -199,6 +208,23 @@ int host_socket_close(int handle)
     if (!slot) return HOST_ERR_INVALID_ARG;
     closeSlot(*slot);
     return HOST_OK;
+}
+
+// Adopt an already-connected TCP fd (e.g. accepted by the net listener) into a
+// socket slot so the plugin can drive it via host_socket_read/write/close.
+// Returns a 1-based handle, or a negative HOST_ERR_* code. Not WASM-exported.
+int plg_socket_adopt(int fd, void* owner)
+{
+    if (fd < 0) return HOST_ERR_INVALID_ARG;
+    int slot_id = 0;
+    SocketSlot* slot = s_slots.allocate(slot_id);
+    if (!slot) return HOST_ERR_NO_MEMORY;
+    *slot       = SocketSlot{};
+    slot->used  = true;
+    slot->owner = owner;
+    slot->fd    = fd;
+    slot->proto = HOST_SOCK_TCP;
+    return slot_id;
 }
 
 void plg_socket_on_unload(void* plugin)
