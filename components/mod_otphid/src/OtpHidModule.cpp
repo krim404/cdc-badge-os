@@ -7,6 +7,7 @@
 #include "mod_otphid/OtpHidInterface.h"
 #include "mod_otphid/OtpHidCr.h"
 #include "cdc_core/ModuleRegistry.h"
+#include "cdc_core/UsbServiceManager.h"
 #include "cdc_ui/I18n.h"
 #include "cdc_ui/ViewStack.h"
 #include "cdc_views/ListView.h"
@@ -129,6 +130,8 @@ bool OtpHidModule::init() {
     LOG_I(TAG, "Initializing USB OTP HID module");
     registerStrings();
     core::ModuleRegistry::instance().registerModule(this);
+    core::UsbServiceManager::instance().registerModuleService("otphid", "mod_otphid.title",
+                                                              getName(), {1, 0}, "kbd");
     state_ = core::ServiceState::INITIALIZED;
     return true;
 }

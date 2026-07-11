@@ -12,7 +12,9 @@
 #include "cdc_core/ModuleRegistry.h"
 #include "cdc_core/UsbManager.h"
 #include "cdc_ui/I18n.h"
-#include "mod_gpg/openpgp/ccid.h"
+#include "cdc_scard/ccid.h"
+#include "cdc_scard/applet.h"
+#include "cdc_scard/scard_usb.h"
 #include "mod_gpg/openpgp/openpgp.h"
 #include "cdc_ui/ViewStack.h"
 #include "cdc_views/ListView.h"
@@ -1318,21 +1320,16 @@ bool GpgModule::start() {
         return false;
     }
 
-    core::UsbInterfaceSpec spec = {};
-    spec.cls = core::UsbInterfaceClass::Ccid;
-    spec.name = "OpenPGP SmartCard";
-    spec.epInSize = 64;
-    spec.epOutSize = 64;
-    // Call ccid_init() rather than openpgp_init() directly: it brings up
-    // OpenPGP and is the only external reference into ccid.cpp / ccid_driver.cpp.
-    // Without it the linker drops the entire CCID translation unit (including
-    // our strong usbd_app_driver_get_cb override), leaving tinyusb's weak
-    // default in place and the smart-card interface unenumerated.
-    if (!ccid_init()) {
-        core::ModuleRegistry::instance().reportModuleError(getName(), "CCID init failed");
+    if (!openpgp_init()) {
+        core::ModuleRegistry::instance().reportModuleError(getName(), "OpenPGP init failed");
     }
-    if (!core::UsbManager::instance().registerInterface(core::UsbHidInterface::Ccid, getName(), spec)) {
-        LOG_W(TAG, "Failed to register CCID interface");
+    usbAcquired_ = scard_usb_acquire();
+    if (!usbAcquired_) {
+        LOG_W(TAG, "CCID interface unavailable, OpenPGP applet inactive");
+    } else if (!scard_register_applet(openpgp_applet(), true)) {
+        // Default applet: pre-SELECT traffic keeps hitting OpenPGP so the SW
+        // behavior towards scdaemon stays identical to the single-applet wiring.
+        core::ModuleRegistry::instance().reportModuleError(getName(), "Applet registration failed");
     }
 
     state_ = core::ServiceState::STARTED;
@@ -1345,7 +1342,11 @@ bool GpgModule::start() {
 void GpgModule::stop() {
     cdc::msg::MessageTransfer::instance().unregisterHandler(kGpgKeyMime);
     cdc::msg::MessageTransfer::instance().unregisterHandler(kGpgCertMime);
-    core::UsbManager::instance().unregisterInterface(core::UsbHidInterface::Ccid, getName());
+    if (usbAcquired_) {
+        scard_unregister_applet("openpgp");
+        scard_usb_release();
+        usbAcquired_ = false;
+    }
     state_ = core::ServiceState::STOPPED;
 }
 

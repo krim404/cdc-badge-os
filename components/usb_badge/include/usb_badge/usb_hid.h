@@ -35,6 +35,10 @@ bool usb_hid_apply_config(const UsbInterfaceDef* defs, size_t count, bool* needs
 // Add (true) or remove (false) the MSC mass-storage interface and re-enumerate.
 void usb_hid_set_msc(bool active);
 
+// Add (true) or remove (false) the CDC serial interface and re-enumerate.
+// CDC is present by default; removing it frees 2 IN / 1 OUT endpoints.
+void usb_hid_set_cdc(bool active);
+
 // Check if USB is ready (CDC or HID).
 bool usb_hid_ready(void);
 

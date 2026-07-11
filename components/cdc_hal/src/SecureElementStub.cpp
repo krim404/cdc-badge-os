@@ -60,6 +60,9 @@ public:
     SeResult ecdsaSign(uint8_t, const uint8_t*, size_t, uint8_t*, size_t*) override {
         return SeResult::NOT_SUPPORTED;
     }
+    SeResult ecdsaSignDigest(uint8_t, const uint8_t[32], uint8_t*, size_t*) override {
+        return SeResult::NOT_SUPPORTED;
+    }
     SeResult eddsaSign(uint8_t, const uint8_t*, size_t, uint8_t*) override {
         return SeResult::NOT_SUPPORTED;
     }

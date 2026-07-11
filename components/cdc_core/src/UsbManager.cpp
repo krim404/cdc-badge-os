@@ -42,13 +42,13 @@ void UsbManager::stop() {
 }
 
 /**
- * \brief Counts currently active HID interfaces.
- * \return Number of active interface entries.
+ * \brief Counts HID interfaces currently present in the descriptor.
+ * \return Number of active, non-suspended interface entries.
  */
 uint8_t UsbManager::activeHidCount() const {
     uint8_t count = 0;
     for (const auto& entry : entries_) {
-        if (entry.active) count++;
+        if (entry.active && !entry.suspended) count++;
     }
     return count;
 }
@@ -64,26 +64,36 @@ bool UsbManager::canActivate(UsbHidInterface type) const {
 }
 
 /**
- * \brief Endpoints consumed by one interface spec.
+ * \brief Endpoints consumed by one interface spec, split by direction.
  * \param def Interface definition.
- * \return Endpoint count (HID: 1, or 2 with an OUT endpoint; CCID: 2).
+ * \return Usage (HID: 1 IN, plus 1 OUT when present; CCID: 1 IN + 1 OUT).
  */
-uint8_t UsbManager::interfaceEndpoints(const UsbInterfaceSpec& def) {
-    if (def.cls == UsbInterfaceClass::Ccid) return 2;
-    return def.hasOut ? 2 : 1;
+usb_ep_usage_t UsbManager::interfaceEndpoints(const UsbInterfaceSpec& def) {
+    if (def.cls == UsbInterfaceClass::Ccid) return {1, 1};
+    return {1, static_cast<uint8_t>(def.hasOut ? 1 : 0)};
 }
 
 /**
- * \brief Total endpoints in use (CDC + active HID/CCID + MSC).
- * \return Endpoint count.
+ * \brief Endpoints in use per direction (CDC + non-suspended HID/CCID + MSC).
+ * \return Usage split into IN and OUT endpoints.
  */
-uint8_t UsbManager::endpointsInUse() const {
-    uint8_t n = CDC_ENDPOINTS;
-    for (const auto& entry : entries_) {
-        if (entry.active) n += interfaceEndpoints(entry.def);
+usb_ep_usage_t UsbManager::endpointsInUse() const {
+    usb_ep_usage_t used = {0, 0};
+    if (cdcEnabled_) {
+        used.in_eps = USB_EP_BUDGET_CDC_IN;
+        used.out_eps = USB_EP_BUDGET_CDC_OUT;
     }
-    if (mscActive_) n += MSC_ENDPOINTS;
-    return n;
+    for (const auto& entry : entries_) {
+        if (!entry.active || entry.suspended) continue;
+        const usb_ep_usage_t u = interfaceEndpoints(entry.def);
+        used.in_eps += u.in_eps;
+        used.out_eps += u.out_eps;
+    }
+    if (mscActive_) {
+        used.in_eps += USB_EP_BUDGET_MSC_IN;
+        used.out_eps += USB_EP_BUDGET_MSC_OUT;
+    }
+    return used;
 }
 
 /**
@@ -112,9 +122,12 @@ bool UsbManager::registerInterface(UsbHidInterface type, const char* moduleName,
         return false;
     }
 
-    if (endpointsInUse() + interfaceEndpoints(def) > MAX_ENDPOINTS) {
-        LOG_W(TAG, "USB endpoint budget exhausted (have %d/%d, +%d)",
-              endpointsInUse(), MAX_ENDPOINTS, interfaceEndpoints(def));
+    const usb_ep_usage_t used = endpointsInUse();
+    const usb_ep_usage_t need = interfaceEndpoints(def);
+    if (!usb_ep_budget_fits(used, need)) {
+        LOG_W(TAG, "USB endpoint budget exhausted (IN %d/%d +%d, OUT %d/%d +%d)",
+              used.in_eps, USB_EP_BUDGET_MAX_IN, need.in_eps,
+              used.out_eps, USB_EP_BUDGET_MAX_OUT, need.out_eps);
         return false;
     }
 
@@ -131,8 +144,10 @@ bool UsbManager::registerInterface(UsbHidInterface type, const char* moduleName,
  * \brief Unregisters a previously registered HID interface.
  * \param type HID interface slot.
  * \param moduleName Requesting module name.
+ * \param apply `true` to re-enumerate immediately, `false` when the caller
+ *        batches further changes and applies once.
  */
-void UsbManager::unregisterInterface(UsbHidInterface type, const char* moduleName) {
+void UsbManager::unregisterInterface(UsbHidInterface type, const char* moduleName, bool apply) {
     const uint8_t idx = static_cast<uint8_t>(type);
     if (idx >= (sizeof(entries_) / sizeof(entries_[0]))) return;
 
@@ -145,11 +160,60 @@ void UsbManager::unregisterInterface(UsbHidInterface type, const char* moduleNam
     }
 
     entry.active = false;
+    entry.suspended = false;
     entry.owner = nullptr;
     entry.def = {};
     activeMask_ &= ~(1u << idx);
     LOG_I(TAG, "Unregistered HID interface %d", idx);
-    applyConfiguration();
+    if (apply) applyConfiguration();
+}
+
+/**
+ * \brief Temporarily removes a registered interface from the descriptor.
+ * \param type Interface slot to suspend.
+ * \param apply `true` to re-enumerate immediately.
+ * \return `true` when the interface was active and is now suspended.
+ */
+bool UsbManager::suspendInterface(UsbHidInterface type, bool apply) {
+    const uint8_t idx = static_cast<uint8_t>(type);
+    if (idx >= (sizeof(entries_) / sizeof(entries_[0]))) return false;
+
+    auto& entry = entries_[idx];
+    if (!entry.active || entry.suspended) return false;
+
+    entry.suspended = true;
+    activeMask_ &= ~(1u << idx);
+    LOG_I(TAG, "Suspended USB interface %d (owner %s)", idx, entry.owner ? entry.owner : "?");
+    if (apply) applyConfiguration();
+    return true;
+}
+
+/**
+ * \brief Restores a previously suspended interface into the descriptor.
+ * \param type Interface slot to resume.
+ * \param apply `true` to re-enumerate immediately.
+ * \return `true` when the interface was suspended and fits the budget again.
+ */
+bool UsbManager::resumeInterface(UsbHidInterface type, bool apply) {
+    const uint8_t idx = static_cast<uint8_t>(type);
+    if (idx >= (sizeof(entries_) / sizeof(entries_[0]))) return false;
+
+    auto& entry = entries_[idx];
+    if (!entry.active || !entry.suspended) return false;
+
+    const usb_ep_usage_t used = endpointsInUse();
+    const usb_ep_usage_t need = interfaceEndpoints(entry.def);
+    if (!usb_ep_budget_fits(used, need)) {
+        LOG_W(TAG, "Cannot resume interface %d: endpoint budget exhausted (IN %d/%d +%d)",
+              idx, used.in_eps, USB_EP_BUDGET_MAX_IN, need.in_eps);
+        return false;
+    }
+
+    entry.suspended = false;
+    activeMask_ |= (1u << idx);
+    LOG_I(TAG, "Resumed USB interface %d (owner %s)", idx, entry.owner ? entry.owner : "?");
+    if (apply) applyConfiguration();
+    return true;
 }
 
 /**
@@ -163,7 +227,7 @@ bool UsbManager::applyConfiguration() {
 
     auto append_def = [&](UsbHidInterface type) {
         const auto& entry = entries_[static_cast<uint8_t>(type)];
-        if (!entry.active) return;
+        if (!entry.active || entry.suspended) return;
         defs[count++] = entry.def;
     };
 
@@ -180,6 +244,39 @@ bool UsbManager::applyConfiguration() {
 }
 
 /**
+ * \brief Enables or disables the CDC serial interface with budget check.
+ * \param on `true` to expose the serial console, `false` to remove it.
+ * \return `true` on success; `false` if enabling would exceed the budget.
+ */
+bool UsbManager::setCdcEnabled(bool on) {
+    if (cdcEnabled_ == on) return true;
+    if (on) {
+        const usb_ep_usage_t used = endpointsInUse();
+        const usb_ep_usage_t need = {USB_EP_BUDGET_CDC_IN, USB_EP_BUDGET_CDC_OUT};
+        if (!usb_ep_budget_fits(used, need)) {
+            LOG_W(TAG, "USB endpoint budget exhausted for CDC (IN %d/%d, OUT %d/%d)",
+                  used.in_eps, USB_EP_BUDGET_MAX_IN, used.out_eps, USB_EP_BUDGET_MAX_OUT);
+            return false;
+        }
+    }
+    cdcEnabled_ = on;
+    LOG_I(TAG, "CDC serial %s", on ? "enabled" : "disabled");
+    usb_hid_set_cdc(on);
+    return true;
+}
+
+/**
+ * \brief Reports whether an interface slot is suspended.
+ * \param type Interface slot to query.
+ * \return `true` when the slot is registered but currently suspended.
+ */
+bool UsbManager::isInterfaceSuspended(UsbHidInterface type) const {
+    const uint8_t idx = static_cast<uint8_t>(type);
+    if (idx >= (sizeof(entries_) / sizeof(entries_[0]))) return false;
+    return entries_[idx].active && entries_[idx].suspended;
+}
+
+/**
  * \brief Registers the single USB Mass Storage LUN and re-enumerates.
  * \param owner Owning module name.
  * \return `true` on success; `false` if the endpoint budget is exhausted.
@@ -190,9 +287,11 @@ bool UsbManager::registerMassStorage(const char* owner) {
         LOG_W(TAG, "MSC already owned by %s", mscOwner_ ? mscOwner_ : "?");
         return false;
     }
-    if (endpointsInUse() + MSC_ENDPOINTS > MAX_ENDPOINTS) {
-        LOG_W(TAG, "USB endpoint budget exhausted for MSC (have %d/%d)",
-              endpointsInUse(), MAX_ENDPOINTS);
+    const usb_ep_usage_t used = endpointsInUse();
+    const usb_ep_usage_t need = {USB_EP_BUDGET_MSC_IN, USB_EP_BUDGET_MSC_OUT};
+    if (!usb_ep_budget_fits(used, need)) {
+        LOG_W(TAG, "USB endpoint budget exhausted for MSC (IN %d/%d, OUT %d/%d)",
+              used.in_eps, USB_EP_BUDGET_MAX_IN, used.out_eps, USB_EP_BUDGET_MAX_OUT);
         return false;
     }
     mscActive_ = true;

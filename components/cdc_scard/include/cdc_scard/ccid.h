@@ -70,10 +70,6 @@ typedef struct __attribute__((packed)) {
     uint8_t  bSpecific[3];
 } ccid_header_t;
 
-// CCID Functional Descriptor (54 bytes for OpenPGP)
-extern const uint8_t CCID_DESCRIPTOR[];
-extern const size_t CCID_DESCRIPTOR_LEN;
-
 // Initialize CCID interface
 bool ccid_init(void);
 

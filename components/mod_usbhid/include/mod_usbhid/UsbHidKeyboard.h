@@ -22,6 +22,11 @@ public:
 
     /**
      * \brief Registers the USB HID keyboard interface and loads settings.
+     *
+     * When the endpoint budget is exhausted (CDC + FIDO2 + CCID use all four
+     * IN endpoints), the CCID interface is suspended to free its IN endpoint
+     * and restored again by unregisterUsb(). The host sees the smartcard
+     * disappear while the keyboard is active.
      * \return true if the Keyboard USB interface slot was acquired.
      */
     bool registerUsb();
@@ -59,6 +64,9 @@ private:
     uint8_t hidInstance() const;
 
     bool registered_ = false;
+    // True while the CCID interface is suspended to lend its IN endpoint to
+    // the keyboard; unregisterUsb() resumes it.
+    bool ccidSuspended_ = false;
 };
 
 } // namespace cdc::mod_usbhid

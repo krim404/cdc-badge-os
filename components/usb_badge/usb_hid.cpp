@@ -21,6 +21,22 @@ extern "C" {
 
 static const char* TAG = "USB_HID";
 
+// Disconnect duration before soft reconnect. Windows hosts need >=100 ms to
+// reliably register the detach and re-enumerate with the new descriptor set.
+static constexpr uint32_t REENUM_DISCONNECT_MS = 150;
+
+/**
+ * \brief Forces host re-enumeration by toggling the soft-connect pull-up.
+ * \return `true` when the stack was running and a re-enumeration was triggered.
+ */
+static bool reenumerate_if_running(void) {
+    if (!tud_inited()) return false;
+    tud_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(REENUM_DISCONNECT_MS));
+    tud_connect();
+    return true;
+}
+
 /**
  * \brief Global descriptor and interface registration state.
  */
@@ -40,6 +56,10 @@ static uint16_t s_config_descriptor_len = 0;
 // When true, an MSC (mass-storage) interface is appended after the HID/CCID
 // interfaces. Toggled by usb_hid_set_msc(); the backing LUN lives in usb_msc.cpp.
 static bool s_msc_active = false;
+
+// When true, the CDC serial interface pair leads the configuration. Toggled by
+// usb_hid_set_cdc(); disabling it frees 2 IN / 1 OUT endpoints for other services.
+static bool s_cdc_active = true;
 
 /**
  * \brief Dynamic module interface names generated during configuration apply.
@@ -75,8 +95,8 @@ static void build_config_descriptor(void) {
     uint8_t* p = s_config_descriptor;
     s_config_descriptor_len = 0;
 
-    uint8_t itf_count = 2;
-    uint16_t total_len = TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN;
+    uint8_t itf_count = s_cdc_active ? 2 : 0;
+    uint16_t total_len = TUD_CONFIG_DESC_LEN + (s_cdc_active ? TUD_CDC_DESC_LEN : 0);
     bool has_ccid = false;
     uint16_t pref_vid = 0;
     uint16_t pref_pid = 0;
@@ -123,14 +143,16 @@ static void build_config_descriptor(void) {
     memcpy(p, cfg_desc, sizeof(cfg_desc));
     p += sizeof(cfg_desc);
 
-    uint8_t cdc_desc[] = {
-        TUD_CDC_DESCRIPTOR(0, STR_CDC, EP_CDC_NOTIF, EP_CDC_NOTIF_SIZE,
-                           EP_CDC_OUT, EP_CDC_IN, EP_CDC_SIZE),
-    };
-    memcpy(p, cdc_desc, sizeof(cdc_desc));
-    p += sizeof(cdc_desc);
+    if (s_cdc_active) {
+        uint8_t cdc_desc[] = {
+            TUD_CDC_DESCRIPTOR(0, STR_CDC, EP_CDC_NOTIF, EP_CDC_NOTIF_SIZE,
+                               EP_CDC_OUT, EP_CDC_IN, EP_CDC_SIZE),
+        };
+        memcpy(p, cdc_desc, sizeof(cdc_desc));
+        p += sizeof(cdc_desc);
+    }
 
-    uint8_t next_itf = 2;
+    uint8_t next_itf = s_cdc_active ? 2 : 0;
     uint8_t next_out = 0x03;
     uint8_t next_in = 0x83;
 
@@ -397,11 +419,8 @@ extern "C" bool usb_hid_apply_config(const UsbInterfaceDef* defs, size_t count, 
 
     build_config_descriptor();
 
-    if (tud_inited()) {
-        tud_disconnect();
-        vTaskDelay(pdMS_TO_TICKS(20));
-        tud_connect();
-        if (needs_replug) *needs_replug = true;
+    if (reenumerate_if_running() && needs_replug) {
+        *needs_replug = true;
     }
 
     return true;
@@ -416,12 +435,19 @@ extern "C" void usb_hid_set_msc(bool active) {
     s_msc_active = active;
 
     build_config_descriptor();
+    reenumerate_if_running();
+}
 
-    if (tud_inited()) {
-        tud_disconnect();
-        vTaskDelay(pdMS_TO_TICKS(20));
-        tud_connect();
-    }
+/**
+ * \brief Adds or removes the CDC serial interface and re-enumerates the device.
+ * \param active `true` to expose the serial console, `false` to remove it.
+ */
+extern "C" void usb_hid_set_cdc(bool active) {
+    if (s_cdc_active == active) return;
+    s_cdc_active = active;
+
+    build_config_descriptor();
+    reenumerate_if_running();
 }
 
 /**

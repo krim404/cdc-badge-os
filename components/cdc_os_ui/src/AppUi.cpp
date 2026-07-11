@@ -521,10 +521,11 @@ static uint8_t toolsBluetoothIcon() {
 }
 
 static const FixedMenuEntry kToolsFixed[] = {
-    {"core.wifi_menu",  nullptr,            showWifiMainMenu},
-    {"core.bluetooth",  toolsBluetoothIcon, showBluetoothMenu},
-    {"core.msg_beacon", nullptr,            showBeaconMenu},
-    {"core.expert",     nullptr,            showExpertMenu},
+    {"core.wifi_menu",     nullptr,            showWifiMainMenu},
+    {"core.bluetooth",     toolsBluetoothIcon, showBluetoothMenu},
+    {"core.msg_beacon",    nullptr,            showBeaconMenu},
+    {"core.usb_services",  nullptr,            showUsbServicesMenu},
+    {"core.expert",        nullptr,            showExpertMenu},
 };
 static constexpr uint8_t TOOLS_FIXED_COUNT =
     static_cast<uint8_t>(sizeof(kToolsFixed) / sizeof(kToolsFixed[0]));
@@ -613,11 +614,9 @@ static void onMainMenuSelect(uint16_t index, void* userData) {
 static void onToolsSelect(uint16_t index, void* userData) {
     (void)userData;
 
-    switch (index) {
-        case 0: showWifiMainMenu(); return;
-        case 1: showBluetoothMenu(); return;
-        case 2: showBeaconMenu(); return;
-        case 3: showExpertMenu(); return;
+    if (index < TOOLS_FIXED_COUNT) {
+        if (kToolsFixed[index].action) kToolsFixed[index].action();
+        return;
     }
 
     uint8_t moduleIdx = index - TOOLS_FIXED_COUNT;

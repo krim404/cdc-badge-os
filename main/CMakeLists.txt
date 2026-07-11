@@ -10,6 +10,7 @@ set(MODULES
     mod_fido2
     mod_password
     mod_gpg
+    mod_piv
     mod_sao
     mod_vcard
     mod_ble_serial
@@ -27,7 +28,7 @@ idf_component_register(
     SRCS
         "main.cpp"
     INCLUDE_DIRS "." "${CMAKE_CURRENT_BINARY_DIR}"
-    REQUIRES nvs_flash freertos esp_timer cdc_core usb_badge serial_cmd cdc_hal cdc_log cdc_os_ui
+    REQUIRES nvs_flash freertos esp_timer cdc_core usb_badge serial_cmd cdc_hal cdc_log cdc_os_ui cdc_scard
         cdc_msg wamr_runtime plugin_manager
         ${MODULES}
 )

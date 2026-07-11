@@ -1,6 +1,7 @@
 #include "mod_fido2/Fido2Module.h"
 #include "cdc_core/ModuleRegistry.h"
 #include "cdc_core/UsbManager.h"
+#include "cdc_core/UsbServiceManager.h"
 #include "cdc_core/EventBus.h"
 #include "cdc_log.h"
 #include "mod_fido2/Fido2Ui.h"
@@ -266,6 +267,8 @@ bool Fido2Module::init() {
 
     fido2_ui_init();
     core::ModuleRegistry::instance().registerModule(this);
+    core::UsbServiceManager::instance().registerModuleService("fido2", "mod_fido2.title",
+                                                              getName(), {1, 1});
     registerAttestCommands();
 
     if (slotRange_.hasEcc && slotRange_.hasRmem) {

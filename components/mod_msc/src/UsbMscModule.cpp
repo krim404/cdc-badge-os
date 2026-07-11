@@ -6,6 +6,7 @@
 #include "mod_msc/UsbMscModule.h"
 #include "cdc_core/ModuleRegistry.h"
 #include "cdc_core/UsbManager.h"
+#include "cdc_core/UsbServiceManager.h"
 #include "plugin_manager/PluginStorage.h"
 #include "usb_badge/usb_msc.h"
 #include "cdc_ui/I18n.h"
@@ -122,6 +123,8 @@ bool UsbMscModule::init() {
     LOG_I(TAG, "Initializing USB Mass Storage module");
     registerStrings();
     core::ModuleRegistry::instance().registerModule(this);
+    core::UsbServiceManager::instance().registerModuleService("msc", "mod_msc.title",
+                                                              getName(), {1, 1});
     state_ = core::ServiceState::INITIALIZED;
     return true;
 }

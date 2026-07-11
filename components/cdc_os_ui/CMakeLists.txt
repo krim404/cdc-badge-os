@@ -10,6 +10,7 @@ idf_component_register(
         "src/BluetoothMenuUi.cpp"
         "src/MsgTransferUi.cpp"
         "src/ExpertMenuUi.cpp"
+        "src/UsbServicesUi.cpp"
         "src/WifiHandlers.cpp"
         "src/SettingsHandlers.cpp"
         "src/SleepManager.cpp"

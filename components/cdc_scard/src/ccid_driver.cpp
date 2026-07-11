@@ -1,5 +1,5 @@
-#include "mod_gpg/openpgp/ccid.h"
-#include "mod_gpg/openpgp/openpgp.h"
+#include "cdc_scard/ccid.h"
+#include "cdc_scard/applet.h"
 #include "cdc_log.h"
 
 extern "C" {
@@ -46,6 +46,8 @@ static void ccid_driver_init(void) {
 
 static void ccid_driver_reset(uint8_t rhport) {
     (void)rhport;
+    // USB bus reset acts like a card power cycle for the applets.
+    scard_reset();
     ccid_state.rx_len = 0;
     ccid_state.rx_pending = false;
     ccid_state.initialized = false;

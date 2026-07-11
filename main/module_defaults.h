@@ -17,6 +17,7 @@ namespace cdc::module_defaults {
     X("mod_fido2",      true)  \
     X("mod_password",   true)  \
     X("mod_gpg",        true)  \
+    X("mod_piv",        true)  \
     X("mod_sao",        true)  \
     X("mod_vcard",      true)  \
     X("mod_ble_serial", true)  \

@@ -1,13 +1,16 @@
 /**
- * \brief USB CCID (Chip Card Interface Device) transport for OpenPGP applet.
+ * \brief USB CCID (Chip Card Interface Device) transport for the applet
+ *        dispatcher (see cdc_scard/applet.h).
  *
  * Based on pico-openpgp (https://github.com/polhenarejos/pico-openpgp).
  * Original project copyright: Pol Henarejos, AGPLv3.
+ *
+ * The CCID functional descriptor actually enumerated lives in
+ * components/usb_badge/usb_descriptors.h (TUD_CCID_DESCRIPTOR).
  */
 
-#include "mod_gpg/openpgp/ccid.h"
-#include "mod_gpg/openpgp/openpgp.h"
-#include "mod_gpg/openpgp/apdu.h"
+#include "cdc_scard/ccid.h"
+#include "cdc_scard/applet.h"
 #include "cdc_log.h"
 #include <string.h>
 #include <stdio.h>
@@ -15,44 +18,11 @@
 static const char *TAG = "CCID";
 
 /**
- * \brief CCID functional descriptor (54 bytes) per OpenPGP 3.4.1 profile.
- */
-const uint8_t CCID_DESCRIPTOR[] = {
-    0x36,       // bLength: 54 bytes
-    0x21,       // bDescriptorType: Functional Descriptor
-    0x10, 0x01, // bcdCCID: CCID version 1.10
-    0x00,       // bMaxSlotIndex: 1 slot (index 0)
-    0x07,       // bVoltageSupport: 5V, 3V, 1.8V
-    0x02, 0x00, 0x00, 0x00, // dwProtocols: T=1 only
-    0xA0, 0x0F, 0x00, 0x00, // dwDefaultClock: 4000 kHz
-    0xA0, 0x0F, 0x00, 0x00, // dwMaximumClock: 4000 kHz
-    0x00,       // bNumClockSupported
-    0xB0, 0x04, 0x00, 0x00, // dwDataRate: 1200 bps
-    0xB0, 0x04, 0x00, 0x00, // dwMaxDataRate: 1200 bps
-    0x00,       // bNumDataRatesSupported
-    0xFE, 0x00, 0x00, 0x00, // dwMaxIFSD: 254 bytes
-    0x00, 0x00, 0x00, 0x00, // dwSynchProtocols: none
-    0x00, 0x00, 0x00, 0x00, // dwMechanical: none
-    // dwFeatures:
-    // - Auto ICC clock frequency change
-    // - Auto baud rate change
-    // - Auto parameter negotiation
-    // - Short and Extended APDU level exchange
-    0x42, 0x08, 0x04, 0x00,
-    0x00, 0x08, 0x00, 0x00, // dwMaxCCIDMessageLength: 2048
-    0xFF,       // bClassGetResponse: echo
-    0xFF,       // bClassEnvelope: echo
-    0x00, 0x00, // wLcdLayout: none
-    0x00,       // bPINSupport: none
-    0x01        // bMaxCCIDBusySlots: 1
-};
-
-const size_t CCID_DESCRIPTOR_LEN = sizeof(CCID_DESCRIPTOR);
-
-/**
- * \brief ATR (Answer To Reset) for CDC Badge OpenPGP card.
+ * \brief ATR (Answer To Reset) for the CDC Badge virtual card.
  *
- * T=1 protocol layout, OpenPGP 3.x compatible.
+ * T=1 protocol layout. Historical bytes advertise generic capabilities
+ * (card service data 0xF5: application selection by full and partial DF
+ * name), no applet-specific AID is embedded.
  */
 static const uint8_t ATR[] = {
     0x3B,                   // TS: Direct convention
@@ -75,18 +45,16 @@ static uint8_t current_slot = 0;
 static uint8_t current_seq = 0;
 
 /**
- * \brief Initializes CCID transport and backing OpenPGP applet.
+ * \brief Initializes the CCID transport.
+ *
+ * Applets are registered separately via scard_register_applet() before
+ * this is called.
  * \return `true` if initialization succeeded.
  */
 extern "C" void ccid_driver_link_anchor(void);
 
 bool ccid_init(void) {
     ccid_driver_link_anchor();
-
-    if (!openpgp_init()) {
-        LOG_E(TAG, "Failed to initialize OpenPGP");
-        return false;
-    }
 
     initialized = true;
     LOG_I(TAG, "CCID initialized");
@@ -162,6 +130,9 @@ int ccid_process_message(const uint8_t *msg, size_t msg_len,
 
     switch (hdr->bMessageType) {
         case CCID_PC_TO_RDR_ICC_POWER_ON: {
+            // Virtual card power cycle: selection and PIN state must not
+            // survive it.
+            scard_reset();
             size_t atr_len;
             const uint8_t *atr = ccid_get_atr(&atr_len);
             ccid_build_header(resp, CCID_RDR_TO_PC_DATA_BLOCK, atr_len,
@@ -172,6 +143,7 @@ int ccid_process_message(const uint8_t *msg, size_t msg_len,
         }
 
         case CCID_PC_TO_RDR_ICC_POWER_OFF: {
+            scard_reset();
             status = CCID_ICC_PRESENT_INACTIVE;
             ccid_build_header(resp, CCID_RDR_TO_PC_SLOT_STATUS, 0,
                              current_slot, current_seq, status, error);
@@ -208,8 +180,8 @@ int ccid_process_message(const uint8_t *msg, size_t msg_len,
             uint8_t *resp_data = resp + CCID_HEADER_SIZE;
             size_t resp_data_max = resp_max - CCID_HEADER_SIZE;
 
-            int resp_len = openpgp_process_apdu(apdu_data, apdu_len,
-                                                resp_data, resp_data_max);
+            int resp_len = scard_dispatch_apdu(apdu_data, apdu_len,
+                                               resp_data, resp_data_max);
 
             if (resp_len < 0) {
                 error = CCID_ERROR_HW_ERROR;

@@ -97,10 +97,22 @@ bool UsbHidKeyboard::registerUsb() {
     spec.callbacks.onGetReport = onGetReport;
     spec.callbacks.onSetReport = onSetReport;
 
-    if (!core::UsbManager::instance().registerInterface(
-            core::UsbHidInterface::Keyboard, USB_OWNER, spec)) {
-        LOG_W(TAG, "Failed to register USB keyboard interface (slot busy)");
-        return false;
+    auto& mgr = core::UsbManager::instance();
+    if (!mgr.registerInterface(core::UsbHidInterface::Keyboard, USB_OWNER, spec)) {
+        // All four IN endpoints taken (typically CDC + FIDO2 + CCID): borrow
+        // the CCID slot so the keyboard fits; unregisterUsb() restores it.
+        if (!mgr.suspendInterface(core::UsbHidInterface::Ccid, /*apply=*/false)) {
+            LOG_W(TAG, "Failed to register USB keyboard interface (no free endpoint)");
+            return false;
+        }
+        if (!mgr.registerInterface(core::UsbHidInterface::Keyboard, USB_OWNER, spec)) {
+            // The suspension was never applied to the host, so no re-enumeration.
+            mgr.resumeInterface(core::UsbHidInterface::Ccid, /*apply=*/false);
+            LOG_W(TAG, "Failed to register USB keyboard interface (slot busy)");
+            return false;
+        }
+        ccidSuspended_ = true;
+        LOG_I(TAG, "CCID interface suspended to free an IN endpoint for the keyboard");
     }
 
     registered_ = true;
@@ -111,8 +123,19 @@ bool UsbHidKeyboard::registerUsb() {
 void UsbHidKeyboard::unregisterUsb() {
     if (!registered_) return;
     engine_.cancel();
-    core::UsbManager::instance().unregisterInterface(
-        core::UsbHidInterface::Keyboard, USB_OWNER);
+    auto& mgr = core::UsbManager::instance();
+    mgr.unregisterInterface(core::UsbHidInterface::Keyboard, USB_OWNER,
+                            /*apply=*/!ccidSuspended_);
+    if (ccidSuspended_) {
+        if (!mgr.resumeInterface(core::UsbHidInterface::Ccid)) {
+            // CCID was unregistered while suspended (e.g. its service was
+            // disabled); the deferred apply above never happened, so push the
+            // descriptor change now to avoid a stale configuration.
+            mgr.applyConfiguration();
+        }
+        ccidSuspended_ = false;
+        LOG_I(TAG, "CCID interface resumed after keyboard release");
+    }
     registered_ = false;
     LOG_I(TAG, "USB HID keyboard interface unregistered");
 }

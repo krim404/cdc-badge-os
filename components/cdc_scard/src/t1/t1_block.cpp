@@ -4,7 +4,7 @@
  * Pure syntax layer. State and reassembly live in t1_state.cpp.
  */
 
-#include "mod_gpg/openpgp/t1/t1_block.h"
+#include "cdc_scard/t1/t1_block.h"
 
 #include <string.h>
 

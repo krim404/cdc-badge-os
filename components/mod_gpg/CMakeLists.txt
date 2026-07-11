@@ -7,12 +7,9 @@ idf_component_register(
         "src/GpgSelfCertStore.cpp"
         "src/GpgKeyPayload.cpp"
         "src/GpgCertPayload.cpp"
-        "src/ccid/ccid_driver.cpp"
         "src/gpg.cpp"
         "src/GpgStorage.cpp"
-        "src/openpgp/apdu.cpp"
         "src/openpgp/algo_attr.cpp"
-        "src/openpgp/ccid.cpp"
         "src/openpgp/ecdh.cpp"
         "src/openpgp/fingerprint.cpp"
         "src/openpgp/kdf.cpp"
@@ -25,6 +22,7 @@ idf_component_register(
         "src/openpgp"
     REQUIRES
         cdc_core
+        cdc_scard
         cdc_ui
         cdc_views
         cdc_os_ui

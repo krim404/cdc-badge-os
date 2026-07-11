@@ -7,7 +7,8 @@
  */
 
 #include "mod_gpg/openpgp/openpgp.h"
-#include "mod_gpg/openpgp/apdu.h"
+#include "cdc_scard/apdu.h"
+#include "cdc_scard/applet.h"
 #include "mod_gpg/openpgp/algo_attr.h"
 #include "mod_gpg/openpgp/constants.h"
 #include "cdc_log.h"
@@ -315,6 +316,14 @@ static void chain_reset(void) {
  * \brief Session PIN cache for DEC key decryption (temporary after VERIFY for PSO:DECIPHER).
  */
 static char s_session_pin[OPENPGP_PIN_MAX_LEN + 1] = {};
+
+/**
+ * \brief Wipes the cached session PIN and the storage session state.
+ */
+static void session_wipe(void) {
+    mbedtls_platform_zeroize(s_session_pin, sizeof(s_session_pin));
+    gpg_storage_clear_session();
+}
 
 /**
  * \brief NVS namespace used for OpenPGP persistent data.
@@ -1167,15 +1176,13 @@ static int cmd_select(const apdu_t *apdu, uint8_t *resp, size_t resp_max) {
         app_selected = true;
         pw1_verified = false;
         pw3_verified = false;
-        mbedtls_platform_zeroize(s_session_pin, sizeof(s_session_pin));
-        gpg_storage_clear_session();
+        session_wipe();
         LOG_I(TAG, "OpenPGP application selected");
         return apdu_sw(resp, SW_OK);
     }
 
     if (app_selected) {
-        mbedtls_platform_zeroize(s_session_pin, sizeof(s_session_pin));
-        gpg_storage_clear_session();
+        session_wipe();
     }
     return apdu_sw(resp, SW_FILE_NOT_FOUND);
 }
@@ -3445,4 +3452,42 @@ int openpgp_process_apdu(const uint8_t *cmd, size_t cmd_len,
     }
 
     return apply_response_chaining(apdu.le, resp, resp_max, result_len);
+}
+
+/**
+ * \brief Applet deselect hook for the smartcard dispatcher.
+ *
+ * Invoked when another applet gets selected or the (virtual) card is power
+ * cycled. Clears every piece of session state: selection, PIN verification,
+ * session PIN, command-chaining accumulator, and the GET RESPONSE buffer
+ * (which can still hold PSO:DECIPHER plaintext).
+ */
+static void openpgp_deselect(void) {
+    app_selected = false;
+    pw1_verified = false;
+    pw3_verified = false;
+    session_wipe();
+    chain_reset();
+    mbedtls_platform_zeroize(g_resp_buffer, sizeof(g_resp_buffer));
+    g_resp_remaining = 0;
+    g_resp_pos = 0;
+}
+
+/**
+ * \brief Returns the OpenPGP applet descriptor for scard_register_applet().
+ *
+ * The registered AID is the constant 6-byte OpenPGP RID, matching the
+ * prefix check in cmd_select(); the full 16-byte AID is dynamic (serial
+ * number from the MAC) and only reported via GET DATA / SELECT.
+ */
+const scard_applet_t *openpgp_applet(void) {
+    static const uint8_t kOpenPgpRid[6] = {0xD2, 0x76, 0x00, 0x01, 0x24, 0x01};
+    static const scard_applet_t applet = {
+        .name = "openpgp",
+        .aid = kOpenPgpRid,
+        .aid_len = sizeof(kOpenPgpRid),
+        .process_apdu = openpgp_process_apdu,
+        .deselect = openpgp_deselect,
+    };
+    return &applet;
 }

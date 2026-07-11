@@ -203,6 +203,12 @@ constexpr I18nEntry kCoreStrings[] = {
     {"core.sleep",              "Sleep"},
     {"core.usb_replug_required","USB replug may be needed"},
     {"core.usb_no_free_slot",   "No free USB slot - disable a USB module (e.g. GPG) first"},
+    {"core.usb_services",       "USB Services"},
+    {"core.usbsvc_cdc",         "Serial Console"},
+    {"core.usbsvc_ccid",        "Smart Card (CCID)"},
+    {"core.usbsvc_cdc_confirm", "Disable USB serial console? Re-enable it here anytime."},
+    {"core.usbsvc_slot_busy",   "USB slot in use - disable the conflicting service first"},
+    {"core.usbsvc_busy",        "Service busy (endpoint borrowed) - try again later"},
     {"core.module_error_generic","Module error"},
     {"core.module_retry_prompt","Reload module?"},
 

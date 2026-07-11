@@ -31,6 +31,7 @@ public:
 private:
     TwoFaModule() : ModuleBase("mod_2fa") {}
     core::IModule::SlotRange slotRange_ = {};
+    bool usbAcquired_ = false;
 };
 
 } // namespace cdc::mod_2fa

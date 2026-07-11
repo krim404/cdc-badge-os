@@ -11,6 +11,7 @@
 #include "cdc_core/Cp437.h"
 #include "cdc_core/ModuleRegistry.h"
 #include "cdc_core/UsbManager.h"
+#include "cdc_core/UsbServiceManager.h"
 #include "cdc_core/PinManager.h"
 #include "cdc_core/TropicSlotMap.h"
 #include "cdc_core/TropicStorage.h"
@@ -2385,6 +2386,127 @@ static void cmdModuleDisable(const char* args) {
 }
 
 /**
+ * \brief Human-readable name for a USB service state.
+ */
+static const char* usbSvcStateName(core::UsbServiceState state) {
+    switch (state) {
+        case core::UsbServiceState::On:        return "on";
+        case core::UsbServiceState::Off:       return "off";
+        case core::UsbServiceState::Suspended: return "suspended";
+        case core::UsbServiceState::Unavailable:
+        default:                               return "unavailable";
+    }
+}
+
+/**
+ * \brief USBSVC LIST - list USB services with state and endpoint cost.
+ * \param args Unused.
+ */
+static void cmdUsbSvcList(const char* args) {
+    (void)args;
+    auto& mgr = core::UsbServiceManager::instance();
+
+    Console::printf("=== USB Services (%u) ===\r\n", static_cast<unsigned>(mgr.count()));
+    for (uint8_t i = 0; i < mgr.count(); i++) {
+        const core::UsbServiceDesc* desc = mgr.at(i);
+        if (!desc) continue;
+        Console::printf("  %-8s %-12s IN:%u OUT:%u\r\n",
+                        desc->id, usbSvcStateName(mgr.state(i)),
+                        static_cast<unsigned>(desc->cost.in_eps),
+                        static_cast<unsigned>(desc->cost.out_eps));
+    }
+    const usb_ep_usage_t usage = mgr.usage();
+    Console::printf("Endpoints: IN %u/%u OUT %u/%u\r\n",
+                    static_cast<unsigned>(usage.in_eps), USB_EP_BUDGET_MAX_IN,
+                    static_cast<unsigned>(usage.out_eps), USB_EP_BUDGET_MAX_OUT);
+}
+
+/**
+ * \brief Runs a USB service toggle and prints the classified result.
+ * \param id Service id.
+ * \param enabled Desired state.
+ */
+static void runUsbSvcToggle(const char* id, bool enabled) {
+    using Result = core::UsbServiceManager::ToggleResult;
+
+    bool needsReplugBefore = core::UsbManager::instance().needsReplug();
+
+    switch (core::UsbServiceManager::instance().setEnabled(id, enabled)) {
+        case Result::Ok:
+            Console::printf("OK: Service '%s' %s\r\n", id, enabled ? "enabled" : "disabled");
+            if (core::UsbManager::instance().newlyRequiresReplug(needsReplugBefore)) {
+                Console::printf("NOTE: USB replug required\r\n");
+            }
+            return;
+        case Result::BudgetFull:
+            Console::printf("ERROR: USB endpoint budget exhausted - disable another service first\r\n");
+            return;
+        case Result::SlotBusy:
+            Console::printf("ERROR: USB slot in use by a conflicting service\r\n");
+            return;
+        case Result::Busy:
+            Console::printf("ERROR: Service busy (endpoint borrowed) - try again later\r\n");
+            return;
+        case Result::NotFound:
+            Console::printf("ERROR: Service '%s' not found (see USBSVC LIST)\r\n", id);
+            return;
+        case Result::Failed:
+        default:
+            Console::printf("ERROR: Failed to %s service '%s'\r\n",
+                            enabled ? "enable" : "disable", id);
+            return;
+    }
+}
+
+/**
+ * \brief USBSVC ENABLE <id> - enable a USB service (persistent).
+ * \param args Service id.
+ */
+static void cmdUsbSvcEnable(const char* args) {
+    if (!args || !*args) {
+        Console::printf("Usage: USBSVC ENABLE <id>\r\n");
+        return;
+    }
+    runUsbSvcToggle(args, true);
+}
+
+/**
+ * \brief USBSVC DISABLE <id> [CONFIRM] - disable a USB service (persistent).
+ *
+ * Disabling "cdc" kills this serial console immediately, so it demands an
+ * explicit CONFIRM argument; recovery is Tools > USB Services on the badge.
+ * \param args Service id, optionally followed by CONFIRM.
+ */
+static void cmdUsbSvcDisable(const char* args) {
+    if (!args || !*args) {
+        Console::printf("Usage: USBSVC DISABLE <id> [CONFIRM]\r\n");
+        return;
+    }
+
+    char id[16];
+    bool confirmed = false;
+    const char* space = strchr(args, ' ');
+    if (space) {
+        size_t len = static_cast<size_t>(space - args);
+        if (len >= sizeof(id)) len = sizeof(id) - 1;
+        memcpy(id, args, len);
+        id[len] = '\0';
+        confirmed = (strcmp(space + 1, "CONFIRM") == 0);
+    } else {
+        strlcpy(id, args, sizeof(id));
+    }
+
+    if (strcmp(id, "cdc") == 0 && !confirmed) {
+        Console::printf("WARNING: Disabling 'cdc' kills this serial console immediately.\r\n");
+        Console::printf("Re-enable via badge menu: Tools > USB Services.\r\n");
+        Console::printf("To proceed: USBSVC DISABLE cdc CONFIRM\r\n");
+        return;
+    }
+
+    runUsbSvcToggle(id, false);
+}
+
+/**
  * \brief Sub-command tables and dispatchers for grouped commands.
  */
 
@@ -2443,6 +2565,14 @@ static const SubCommand kModuleSubs[] = {
 };
 static void cmdModule(const char* args) { dispatchSubCommand("MODULE", args, kModuleSubs); }
 
+static const SubCommand kUsbSvcSubs[] = {
+    {"LIST",    "",               "List USB services with state and endpoint cost", cmdUsbSvcList},
+    {"ENABLE",  "<id>",           "Enable a USB service (persistent)",              cmdUsbSvcEnable},
+    {"DISABLE", "<id> [CONFIRM]", "Disable a USB service (CONFIRM needed for cdc)", cmdUsbSvcDisable},
+    {nullptr, nullptr, nullptr, nullptr},
+};
+static void cmdUsbSvc(const char* args) { dispatchSubCommand("USBSVC", args, kUsbSvcSubs); }
+
 /**
  * \brief Registers all built-in serial commands.
  */
@@ -2488,6 +2618,9 @@ void SerialCmd::registerBuiltinCommands() {
 
     reg.registerCommand({"MODULE", "Module control: LIST/ENABLE/DISABLE",
                          cmdModule, "module", true, kModuleSubs});
+
+    reg.registerCommand({"USBSVC", "USB services: LIST/ENABLE/DISABLE",
+                         cmdUsbSvc, "usb", true, kUsbSvcSubs});
 }
 
 } // namespace cdc::serial

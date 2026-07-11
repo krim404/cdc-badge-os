@@ -23,6 +23,7 @@ private:
     GpgModule() = default;
     core::ServiceState state_ = core::ServiceState::UNINITIALIZED;
     core::IModule::SlotRange slotRange_ = {};
+    bool usbAcquired_ = false;
 };
 
 } // namespace cdc::mod_gpg

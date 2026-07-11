@@ -2,7 +2,7 @@
  * \brief T=1 transport state machine (card side) implementation.
  */
 
-#include "mod_gpg/openpgp/t1/t1_state.h"
+#include "cdc_scard/t1/t1_state.h"
 
 #include <string.h>
 

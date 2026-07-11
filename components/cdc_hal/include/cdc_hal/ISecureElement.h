@@ -143,6 +143,18 @@ public:
                                uint8_t* sig, size_t* sigLen) = 0;
 
     /**
+     * ECDSA signature (P-256) over a caller-supplied 32-byte digest. No
+     * internal hashing; use when the protocol delivers a pre-hashed value
+     * (e.g. PIV GENERAL AUTHENTICATE).
+     * @param slot Key slot
+     * @param digest 32-byte digest to sign
+     * @param sig Output signature (raw R||S, 64 bytes)
+     * @param sigLen Output signature length
+     */
+    virtual SeResult ecdsaSignDigest(uint8_t slot, const uint8_t digest[32],
+                                     uint8_t* sig, size_t* sigLen) = 0;
+
+    /**
      * EdDSA signature (Ed25519)
      * @param slot Key slot
      * @param msg Message to sign

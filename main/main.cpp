@@ -28,6 +28,9 @@
 #include "cdc_core/FactoryReset.h"
 #include "modules_init.gen.h"  // Auto-generated module registrations
 #include "usb_badge/usb_cdc.h"
+#include "cdc_core/UsbManager.h"
+#include "cdc_core/UsbServiceManager.h"
+#include "cdc_scard/scard_usb.h"
 #include "serial_cmd/SerialCmd.h"
 #include "cdc_hal/IDisplay.h"
 #include "cdc_hal/II2cBus.h"
@@ -463,6 +466,51 @@ static void initMessageTransfer() {
 }
 
 /**
+ * \brief CCID service callbacks bridging the cdc_scard gate into the registry.
+ */
+static bool ccidServiceEnable() {
+    return scard_usb_set_enabled(true);
+}
+
+static void ccidServiceDisable() {
+    scard_usb_set_enabled(false);
+}
+
+static cdc::core::UsbServiceState ccidServiceState() {
+    using cdc::core::UsbServiceState;
+    if (!scard_usb_enabled()) return UsbServiceState::Off;
+    if (!scard_usb_in_use()) return UsbServiceState::Unavailable;
+    if (cdc::core::UsbManager::instance().isInterfaceSuspended(cdc::core::UsbHidInterface::Ccid)) {
+        return UsbServiceState::Suspended;
+    }
+    return UsbServiceState::On;
+}
+
+/**
+ * \brief Initializes the USB service registry and its core services.
+ *
+ * Must run before module initializers so persisted-off states (CDC gate,
+ * CCID gate) are applied before any module touches the USB descriptor. The
+ * TinyUSB stack is not started yet, so these are descriptor-only changes and
+ * boot ends with a single enumeration in startApp().
+ */
+static void initUsbServices() {
+    auto& mgr = cdc::core::UsbServiceManager::instance();
+    mgr.init();
+
+    cdc::core::UsbServiceDesc ccid = {};
+    ccid.id = "ccid";
+    ccid.labelKey = "core.usbsvc_ccid";
+    ccid.cost = {1, 1};
+    ccid.enable = ccidServiceEnable;
+    ccid.disable = ccidServiceDisable;
+    ccid.getState = ccidServiceState;
+    mgr.registerService(ccid);
+
+    LOG_I(TAG, "USB service manager ready");
+}
+
+/**
  * \brief Brings up high-level OS services that depend on hardware being ready.
  */
 static void initSystemServices() {
@@ -470,6 +518,7 @@ static void initSystemServices() {
     initTropicStorage();
     initMessageTransfer();
     initSerialCommandInterface();
+    initUsbServices();
 }
 
 /**

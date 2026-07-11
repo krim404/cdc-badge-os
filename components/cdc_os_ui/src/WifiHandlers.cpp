@@ -319,6 +319,9 @@ bool WifiHandlers::syncNtp(bool disconnectAfter) {
     static bool sntpInited = false;
     if (!sntpInited) {
         esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+        // Smooth adjustment (adjtime) so periodic re-syncs slew the clock
+        // instead of stepping it; large offsets still step immediately.
+        esp_sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
         esp_sntp_setservername(0, "time.krim.dev");
         esp_sntp_setservername(1, "pool.ntp.org");
         esp_sntp_setservername(2, "time.google.com");
@@ -333,7 +336,10 @@ bool WifiHandlers::syncNtp(bool disconnectAfter) {
     bool synced = false;
 
     while ((esp_timer_get_time() / 1000 - startMs) < NTP_SYNC_TIMEOUT_MS) {
-        if (esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+        // SMOOTH mode reports IN_PROGRESS while adjtime slews a small offset;
+        // the time is already valid at that point.
+        sntp_sync_status_t status = esp_sntp_get_sync_status();
+        if (status == SNTP_SYNC_STATUS_COMPLETED || status == SNTP_SYNC_STATUS_IN_PROGRESS) {
             synced = true;
             break;
         }

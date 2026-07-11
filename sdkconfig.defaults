@@ -73,6 +73,15 @@ CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
 # SNTP: allow a primary plus two fallback time servers.
 CONFIG_LWIP_SNTP_MAX_SERVERS=3
 
+# RTC slow clock: no external 32 kHz crystal on the board. The default 136 kHz
+# RC oscillator drifts heavily with temperature, and the badge spends most of
+# its life in light sleep where elapsed time is derived from this clock.
+# RC_FAST/256 (~68 kHz) is far more temperature-stable at a few uA extra sleep
+# current. More calibration cycles at boot improve the initial estimate.
+CONFIG_RTC_CLK_SRC_INT_8MD256=y
+CONFIG_ESP32S3_RTC_CLK_SRC_INT_8MD256=y
+CONFIG_RTC_CLK_CAL_CYCLES=3000
+
 # System event loop needs more stack for logging in event handlers
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 

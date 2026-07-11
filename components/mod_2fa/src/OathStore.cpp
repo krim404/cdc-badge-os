@@ -289,7 +289,29 @@ static bool writePayload(uint16_t physSlot, const char* name, uint8_t type,
 bool OathStore::addAccount(uint8_t type, const char* name, const char* issuer,
                            const char* secretBase32, uint8_t digits, uint32_t period,
                            uint8_t algorithm, uint64_t counter, uint8_t flags) {
-    if (!name || !secretBase32) return false;
+    if (!secretBase32) return false;
+
+    uint8_t secret[SECRET_LEN];
+    int secretLen = base32Decode(secretBase32, secret, SECRET_LEN);
+    if (secretLen <= 0) {
+        LOG_E(TAG, "Invalid Base32 secret");
+        return false;
+    }
+
+    return addAccountRaw(type, name, issuer, secret,
+                         static_cast<uint8_t>(secretLen), digits, period,
+                         algorithm, counter, flags);
+}
+
+/**
+ * \brief Adds a new OATH entry from raw secret bytes.
+ * \copydetails OathStore::addAccountRaw
+ */
+bool OathStore::addAccountRaw(uint8_t type, const char* name, const char* issuer,
+                              const uint8_t* key, uint8_t keyLen, uint8_t digits,
+                              uint32_t period, uint8_t algorithm, uint64_t counter,
+                              uint8_t flags) {
+    if (!name || !key || keyLen == 0 || keyLen > SECRET_LEN) return false;
     if (!slots_.hasSlotRange()) return false;
 
     if (strlen(name) >= cdc::hal::ISecureElement::RMEM_NAME_LEN) {
@@ -308,15 +330,7 @@ bool OathStore::addAccount(uint8_t type, const char* name, const char* issuer,
         return false;
     }
 
-    uint8_t secret[SECRET_LEN];
-    int secretLen = base32Decode(secretBase32, secret, SECRET_LEN);
-    if (secretLen <= 0) {
-        LOG_E(TAG, "Invalid Base32 secret");
-        return false;
-    }
-
-    return writePayload(slot, name, type, issuer, secret,
-                        static_cast<uint8_t>(secretLen), digits, period,
+    return writePayload(slot, name, type, issuer, key, keyLen, digits, period,
                         counter, algorithm, flags);
 }
 
@@ -400,12 +414,31 @@ bool OathStore::deleteAccount(uint16_t slot) {
  */
 uint32_t OathStore::generate(const uint8_t* secret, size_t secretLen, uint64_t counter,
                              uint8_t digits, OathAlgorithm algorithm) const {
-    if (!secret || secretLen == 0 || secretLen > SECRET_LEN) {
-        return 0;
-    }
-
     if (digits < OATH_DIGITS_MIN || digits > OATH_DIGITS_MAX) {
         digits = DEFAULT_DIGITS;
+    }
+
+    uint32_t binary = 0;
+    if (!computeTruncated(secret, secretLen, counter, algorithm, &binary)) {
+        return 0;
+    }
+    return binary % POWERS_10[digits];
+}
+
+/**
+ * \brief Computes the masked 31-bit dynamic-truncation value (RFC 4226 §5.3)
+ *        for a moving factor, before the digit modulo is applied.
+ * \param secret Secret byte buffer.
+ * \param secretLen Secret length.
+ * \param counter Moving factor (8-byte big-endian HMAC input).
+ * \param algorithm Hash algorithm.
+ * \param binaryOut Receives the truncated value.
+ * \return `true` on success.
+ */
+bool OathStore::computeTruncated(const uint8_t* secret, size_t secretLen, uint64_t counter,
+                                 OathAlgorithm algorithm, uint32_t* binaryOut) const {
+    if (!secret || secretLen == 0 || secretLen > SECRET_LEN || !binaryOut) {
+        return false;
     }
 
     uint8_t counterBytes[8];
@@ -418,17 +451,64 @@ uint32_t OathStore::generate(const uint8_t* secret, size_t secretLen, uint64_t c
     uint8_t hmac[64] = {};
     size_t hmacLen = 0;
     if (!hmacCompute(algorithm, secret, secretLen, counterBytes, 8, hmac, &hmacLen)) {
-        return 0;
+        return false;
     }
 
     int offset = hmac[hmacLen - 1] & 0x0F;
-    uint32_t binary =
+    *binaryOut =
         ((hmac[offset] & 0x7F) << 24) |
         ((hmac[offset + 1] & 0xFF) << 16) |
         ((hmac[offset + 2] & 0xFF) << 8) |
         (hmac[offset + 3] & 0xFF);
+    return true;
+}
 
-    return binary % POWERS_10[digits];
+/**
+ * \brief YKOATH CALCULATE backend: truncated response for a host challenge.
+ * \copydetails OathStore::calculateForChallenge
+ */
+bool OathStore::calculateForChallenge(uint16_t slot, const uint8_t challenge[8],
+                                      uint8_t truncatedOut[4], uint8_t* digitsOut) {
+    if (!challenge || !truncatedOut) return false;
+
+    OathEntry entry = {};
+    if (!readAccount(slot, &entry)) {
+        return false;
+    }
+    if (entry.type == static_cast<uint8_t>(OathType::CR)) {
+        return false;
+    }
+
+    uint64_t counter;
+    if (entry.type == static_cast<uint8_t>(OathType::HOTP)) {
+        counter = entry.counter;
+        // Persist the incremented moving factor before releasing the code
+        // (RFC 4226: a counter value must never be reused).
+        if (!persistCounter(slot, entry, counter + 1)) {
+            LOG_E(TAG, "Failed to persist HOTP counter for slot %u", slot);
+            return false;
+        }
+    } else {
+        counter = 0;
+        for (int i = 0; i < 8; i++) {
+            counter = (counter << 8) | challenge[i];
+        }
+    }
+
+    uint32_t binary = 0;
+    if (!computeTruncated(entry.secret, entry.secretLen, counter,
+                          static_cast<OathAlgorithm>(entry.algorithm), &binary)) {
+        return false;
+    }
+
+    truncatedOut[0] = static_cast<uint8_t>(binary >> 24);
+    truncatedOut[1] = static_cast<uint8_t>(binary >> 16);
+    truncatedOut[2] = static_cast<uint8_t>(binary >> 8);
+    truncatedOut[3] = static_cast<uint8_t>(binary);
+    if (digitsOut) {
+        *digitsOut = entry.digits ? entry.digits : DEFAULT_DIGITS;
+    }
+    return true;
 }
 
 /**

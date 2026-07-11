@@ -14,6 +14,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "cdc_scard/applet.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -112,6 +114,9 @@ int openpgp_process_apdu(const uint8_t *cmd, size_t cmd_len,
 
 // Check if OpenPGP application is selected
 bool openpgp_is_selected(void);
+
+// Applet descriptor for scard_register_applet() (AID = 6-byte OpenPGP RID)
+const scard_applet_t *openpgp_applet(void);
 
 // Get current signature count
 uint32_t openpgp_get_sig_count(void);

@@ -1,6 +1,9 @@
 #include "mod_2fa/TwoFaModule.h"
 #include "mod_2fa/OathStore.h"
 #include "mod_2fa/ble_chalresp.h"
+#include "OathApplet.h"
+#include "cdc_scard/applet.h"
+#include "cdc_scard/scard_usb.h"
 #include "cdc_core/ModuleRegistry.h"
 #include "cdc_core/ServiceRegistry.h"
 #include "cdc_core/StringUtils.h"
@@ -27,6 +30,11 @@
 #include <new>
 
 static const char* TAG = "2FA";
+
+namespace cdc::mod_2fa {
+// Defined in OathBackend.cpp: wires the YKOATH applet to OathStore.
+void oath_backend_install();
+}
 
 namespace cdc::mod_2fa {
 
@@ -1268,6 +1276,16 @@ bool TwoFaModule::start() {
     if (state_ != core::ServiceState::INITIALIZED && state_ != core::ServiceState::STOPPED) {
         return false;
     }
+    // Expose the accounts over CCID (YKOATH). The interface may be unavailable
+    // (service disabled / USB budget); the module still starts and the on-device
+    // TOTP UI keeps working regardless.
+    oath_backend_install();
+    usbAcquired_ = scard_usb_acquire();
+    if (!usbAcquired_) {
+        LOG_W(TAG, "CCID interface unavailable, OATH applet inactive");
+    } else if (!scard_register_applet(oath_applet(), false)) {
+        LOG_W(TAG, "OATH applet registration failed");
+    }
     state_ = core::ServiceState::STARTED;
     return true;
 }
@@ -1318,6 +1336,11 @@ int TwoFaModule::challengeResponseUsbSlot(const uint8_t* challenge, size_t clen,
  * \brief Stops the 2FA module and releases list buffers.
  */
 void TwoFaModule::stop() {
+    if (usbAcquired_) {
+        scard_unregister_applet("oath");
+        scard_usb_release();
+        usbAcquired_ = false;
+    }
     ble_chalresp_deinit();
     freeListBuffers();
     ModuleBase::stop();

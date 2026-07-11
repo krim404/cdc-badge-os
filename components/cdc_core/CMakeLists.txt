@@ -15,6 +15,7 @@ idf_component_register(
         "src/TropicSlotMap.cpp"
         "src/KeyFingerprint.cpp"
         "src/UsbManager.cpp"
+        "src/UsbServiceManager.cpp"
         "src/IKeyboardProvider.cpp"
         "src/pin_storage_c.cpp"
         "src/FactoryReset.cpp"

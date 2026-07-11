@@ -81,6 +81,8 @@ public:
     // Signing
     SeResult ecdsaSign(uint8_t slot, const uint8_t* msg, size_t msgLen,
                        uint8_t* sig, size_t* sigLen) override;
+    SeResult ecdsaSignDigest(uint8_t slot, const uint8_t digest[32],
+                             uint8_t* sig, size_t* sigLen) override;
     SeResult eddsaSign(uint8_t slot, const uint8_t* msg, size_t msgLen,
                        uint8_t* sig) override;
 
@@ -641,8 +643,7 @@ bool Tropic01Element::eccSlotUsed(uint8_t slot) const {
  */
 SeResult Tropic01Element::ecdsaSign(uint8_t slot, const uint8_t* msg, size_t msgLen,
                                      uint8_t* sig, size_t* sigLen) {
-    if (core::SystemLock::instance().isLocked()) return SeResult::ALARM_MODE;
-    if (slot >= ECC_SLOT_COUNT || !msg || msgLen == 0 || !sig || !sigLen) {
+    if (!msg || msgLen == 0) {
         return SeResult::INVALID_PARAM;
     }
 
@@ -653,7 +654,18 @@ SeResult Tropic01Element::ecdsaSign(uint8_t slot, const uint8_t* msg, size_t msg
         digestLen != sizeof(digest)) {
         return SeResult::ERROR;
     }
+    return ecdsaSignDigest(slot, digest, sig, sigLen);
+}
 
+/**
+ * \brief Signs a caller-supplied 32-byte digest using the ECDSA key in slot.
+ */
+SeResult Tropic01Element::ecdsaSignDigest(uint8_t slot, const uint8_t digest[32],
+                                           uint8_t* sig, size_t* sigLen) {
+    if (core::SystemLock::instance().isLocked()) return SeResult::ALARM_MODE;
+    if (slot >= ECC_SLOT_COUNT || !digest || !sig || !sigLen) {
+        return SeResult::INVALID_PARAM;
+    }
     if (!acquireBus()) return SeResult::ERROR;
 
     SeResult result;
@@ -661,7 +673,7 @@ SeResult Tropic01Element::ecdsaSign(uint8_t slot, const uint8_t* msg, size_t msg
         result = SeResult::SESSION_REQUIRED;
     } else {
         lt_ret_t ret = lt_ecc_ecdsa_sign(&handle_, static_cast<lt_ecc_slot_t>(slot),
-                                          digest, static_cast<uint32_t>(sizeof(digest)), sig);
+                                          digest, 32u, sig);
         if (ret == LT_OK) {
             *sigLen = TR01_ECDSA_EDDSA_SIGNATURE_LENGTH;
         }

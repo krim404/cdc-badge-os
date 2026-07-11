@@ -16,7 +16,7 @@
  */
 
 #pragma once
-#include "mod_gpg/openpgp/t1/t1_block.h"
+#include "cdc_scard/t1/t1_block.h"
 
 #ifdef __cplusplus
 extern "C" {

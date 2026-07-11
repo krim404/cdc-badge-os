@@ -8,6 +8,7 @@
 #include "cdc_core/ModuleRegistry.h"
 #include "cdc_core/ServiceRegistry.h"
 #include "cdc_core/UsbManager.h"
+#include "cdc_core/UsbServiceManager.h"
 #include "cdc_ui/I18n.h"
 #include "cdc_ui/ViewStack.h"
 #include "cdc_views/ListView.h"
@@ -171,6 +172,8 @@ bool UsbHidModule::init() {
     LOG_I(TAG, "Initializing USB HID keyboard module");
     registerStrings();
     core::ModuleRegistry::instance().registerModule(this);
+    core::UsbServiceManager::instance().registerModuleService("kbd", "mod_usbhid.title",
+                                                              getName(), {1, 0}, "otphid");
     state_ = core::ServiceState::INITIALIZED;
     return true;
 }
@@ -182,7 +185,7 @@ bool UsbHidModule::start() {
     }
 
     if (!UsbHidKeyboard::instance().registerUsb()) {
-        // USB HID budget exhausted (e.g. FIDO + CCID already active). Return
+        // No endpoint slot and no CCID interface to borrow one from. Return
         // false cleanly; the Expert menu classifies this as UsbBudgetFull and
         // shows core.usb_no_free_slot.
         LOG_W(TAG, "Start aborted: no free USB HID slot");

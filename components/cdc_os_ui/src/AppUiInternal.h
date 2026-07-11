@@ -83,6 +83,9 @@ void showExpertMenu();
 void showModulesView();
 void onModuleErrorEvent(const core::Event& evt);
 
+// USB services (UsbServicesUi.cpp)
+void showUsbServicesMenu();
+
 // Backup (BackupMenuUi.cpp)
 void showBackupMenu();
 void registerBackupSerialCommand();

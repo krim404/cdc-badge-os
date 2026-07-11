@@ -18,7 +18,7 @@ extern "C" {
 #define CLA_ISO7816             0x00
 #define CLA_CHAIN               0x10  // Command chaining
 
-// APDU Instructions (OpenPGP specific)
+// APDU Instructions (ISO 7816-4 plus one vendor extension)
 #define INS_SELECT              0xA4
 #define INS_GET_DATA            0xCA
 #define INS_PUT_DATA            0xDA
@@ -42,7 +42,7 @@ extern "C" {
 #define PSO_ENC                 0x8680  // Encipher
 
 #ifdef __DOXYGEN__
-namespace cdc::mod_gpg::openpgp {
+namespace cdc::scard {
 #endif
 
 // Parsed APDU structure
@@ -58,7 +58,7 @@ typedef struct {
 } apdu_t;
 
 #ifdef __DOXYGEN__
-} // namespace cdc::mod_gpg::openpgp
+} // namespace cdc::scard
 #endif
 
 // Parse raw APDU bytes into structure

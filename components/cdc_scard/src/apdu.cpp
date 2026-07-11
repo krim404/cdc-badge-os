@@ -1,10 +1,10 @@
 /**
- * \brief ISO 7816 APDU parsing/building helpers for CDC Badge OpenPGP stack.
+ * \brief ISO 7816 APDU parsing/building helpers for CDC Badge smartcard stack.
  *
  * Based on pico-openpgp (https://github.com/polhenarejos/pico-openpgp).
  */
 
-#include "mod_gpg/openpgp/apdu.h"
+#include "cdc_scard/apdu.h"
 #include <string.h>
 
 /**

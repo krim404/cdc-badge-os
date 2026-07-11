@@ -64,6 +64,38 @@ public:
     bool addAccount(uint8_t type, const char* name, const char* issuer,
                     const char* secretBase32, uint8_t digits, uint32_t period,
                     uint8_t algorithm, uint64_t counter, uint8_t flags = 0);
+
+    /**
+     * \brief Adds a new OATH entry from raw secret bytes.
+     *
+     * Same semantics as \ref addAccount, but takes the HMAC key directly
+     * (YKOATH PUT delivers key bytes, not Base32).
+     *
+     * \param key Raw HMAC key.
+     * \param keyLen Key length (1..SECRET_LEN).
+     */
+    bool addAccountRaw(uint8_t type, const char* name, const char* issuer,
+                       const uint8_t* key, uint8_t keyLen, uint8_t digits,
+                       uint32_t period, uint8_t algorithm, uint64_t counter,
+                       uint8_t flags = 0);
+
+    /**
+     * \brief YKOATH CALCULATE: dynamic truncation for an explicit challenge.
+     *
+     * TOTP: HMACs the host-supplied 8-byte big-endian challenge (time step
+     * computed by the host). HOTP: ignores the challenge, consumes the
+     * internal moving counter and persists the increment. CR entries are
+     * rejected (not part of the YKOATH surface).
+     *
+     * \param slot Logical slot index.
+     * \param challenge 8-byte big-endian challenge from the host.
+     * \param truncatedOut Receives the 4-byte truncated value (RFC 4226
+     *        dynamic truncation, MSB already masked, before modulo).
+     * \param digitsOut Receives the entry's digit count.
+     * \return `true` on success.
+     */
+    bool calculateForChallenge(uint16_t slot, const uint8_t challenge[8],
+                               uint8_t truncatedOut[4], uint8_t* digitsOut);
     bool updateAccount(uint16_t slot, uint8_t type, const char* name, const char* issuer,
                        const char* secretBase32, uint8_t digits, uint32_t period,
                        uint8_t algorithm, uint64_t counter, uint8_t flags = 0);
@@ -167,6 +199,8 @@ private:
 
     uint32_t generate(const uint8_t* secret, size_t secretLen, uint64_t counter,
                       uint8_t digits, OathAlgorithm algorithm) const;
+    bool computeTruncated(const uint8_t* secret, size_t secretLen, uint64_t counter,
+                          OathAlgorithm algorithm, uint32_t* binaryOut) const;
     bool hmacCompute(OathAlgorithm algo, const uint8_t* key, size_t keyLen,
                      const uint8_t* data, size_t dataLen,
                      uint8_t* output, size_t* outputLen) const;
