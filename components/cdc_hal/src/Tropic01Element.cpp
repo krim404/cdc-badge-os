@@ -68,6 +68,11 @@ public:
     bool isSessionActive() const override { return sessionActive_.load(std::memory_order_acquire); }
     void sleep() override;
 
+    // Pairing-Key (SH0) Management — DANGEROUS, IRREVERSIBLE
+    SeResult pairingKeyWrite(uint8_t slot, const uint8_t pub[32]) override;
+    SeResult pairingKeyInvalidate(uint8_t slot) override;
+    uint8_t activePairingSlot() const override { return static_cast<uint8_t>(PAIRING_KEY_SLOT); }
+
     // ECC Operations
     SeResult eccGenerate(uint8_t slot, EccCurve curve) override;
     SeResult eccImport(uint8_t slot, const uint8_t* privKey, EccCurve curve) override;
@@ -504,6 +509,62 @@ void Tropic01Element::dumpChipStatus_unlocked(const char* context) {
     } else if (status & 0x02) {
         LOG_E(TAG, "[%s] Real ALARM mode: chip set ALARM bit (tamper/violation)", context);
     }
+}
+
+/**
+ * \brief Writes a host public pairing key into an empty pairing slot (one-shot).
+ */
+SeResult Tropic01Element::pairingKeyWrite(uint8_t slot, const uint8_t pub[32]) {
+    if (core::SystemLock::instance().isLocked()) return SeResult::ALARM_MODE;
+    if (!pub || slot > TR01_PAIRING_KEY_SLOT_INDEX_3) return SeResult::INVALID_PARAM;
+    // Refuse to touch the slot the running firmware authenticates with: a bad
+    // write there could leave the chip unreachable on next boot.
+    if (slot == PAIRING_KEY_SLOT) {
+        LOG_E(TAG, "pairingKeyWrite refused: slot %u is the active pairing slot", slot);
+        return SeResult::INVALID_PARAM;
+    }
+    if (!acquireBus()) return SeResult::ERROR;
+
+    SeResult result;
+    if (!ensureSession_unlocked("pairingKeyWrite")) {
+        result = SeResult::SESSION_REQUIRED;
+    } else {
+        LOG_W(TAG, "Writing pairing key into slot %u (one-shot, irreversible)", slot);
+        lt_ret_t ret = lt_pairing_key_write(&handle_, pub,
+                                            static_cast<lt_pkey_index_t>(slot));
+        handleSessionError(ret);
+        result = mapResult(ret);
+    }
+    releaseBus();
+    return result;
+}
+
+/**
+ * \brief Permanently invalidates a pairing slot (irreversible).
+ */
+SeResult Tropic01Element::pairingKeyInvalidate(uint8_t slot) {
+    if (core::SystemLock::instance().isLocked()) return SeResult::ALARM_MODE;
+    if (slot > TR01_PAIRING_KEY_SLOT_INDEX_3) return SeResult::INVALID_PARAM;
+    // Never invalidate the slot in use: that would kill the secure channel the
+    // firmware needs and could brick the chip if it is the last valid slot.
+    if (slot == PAIRING_KEY_SLOT) {
+        LOG_E(TAG, "pairingKeyInvalidate refused: slot %u is the active pairing slot", slot);
+        return SeResult::INVALID_PARAM;
+    }
+    if (!acquireBus()) return SeResult::ERROR;
+
+    SeResult result;
+    if (!ensureSession_unlocked("pairingKeyInvalidate")) {
+        result = SeResult::SESSION_REQUIRED;
+    } else {
+        LOG_W(TAG, "PERMANENTLY invalidating pairing slot %u", slot);
+        lt_ret_t ret = lt_pairing_key_invalidate(&handle_,
+                                                 static_cast<lt_pkey_index_t>(slot));
+        handleSessionError(ret);
+        result = mapResult(ret);
+    }
+    releaseBus();
+    return result;
 }
 
 /**

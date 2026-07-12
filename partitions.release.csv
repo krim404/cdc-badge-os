@@ -1,0 +1,14 @@
+# Production lockdown partition table (env cdc_badge_release only).
+#
+# Same layout as partitions.csv, but the nvs data partition is shrunk by 4 KB
+# to make room for an encrypted `nvs_keys` partition. NVS Encryption
+# (flash-encryption-based scheme) stores its 32-byte XTS key + tweak + CRC
+# there; the partition is protected by flash encryption. The keys are generated
+# per device by nvs_flash_init() on first boot. All fixed offsets used by the
+# flasher (bootloader 0x0, partition table 0x8000, app 0x50000) stay identical.
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x46000,
+nvs_keys,   data, nvs_keys, 0x4F000,  0x1000,   encrypted
+app0,       app,  factory,  0x50000,  0xDA0000,
+vfat,       data, fat,      0xDF0000, 0x200000,
+coredump,   data, coredump, 0xFF0000, 0x10000,

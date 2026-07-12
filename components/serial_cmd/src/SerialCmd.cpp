@@ -30,6 +30,8 @@
 #include "plugin_manager/host_api.h"
 #include "esp_timer.h"
 #include "esp_attr.h"
+#include "esp_flash_encrypt.h"
+#include "esp_secure_boot.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -448,6 +450,22 @@ static void cmdVersion(const char* args) {
     (void)args;
     Console::printf("Firmware: %s\r\n", APP_VERSION);
     Console::printf("API level: %s\r\n", HOST_API_LEVEL_STR);
+    // Build profile: lets the provisioning tool verify a release build
+    // (debug off, secure serial on) before it burns any lockdown eFuses.
+    // flash_enc/secure_boot are RUNTIME eFuse states, not build flags, so the
+    // tool can confirm the lockdown actually took effect on this chip.
+    // pairing_slot is the SH0 slot the firmware authenticates with, required
+    // by rotate-key --verify before the old slot may be invalidated.
+    int pairingSlot = -1;
+    if (auto* se = hal::getSecureElementInstance()) {
+        pairingSlot = (int)se->activePairingSlot();
+    }
+    Console::printf("Profile: 0x%02X debug=%d secure_serial=%d provisioning=%d "
+                    "pairing_slot=%d flash_enc=%d secure_boot=%d\r\n",
+                    (unsigned)BUILD_PROFILE_BYTE, (int)DEBUG_MODE,
+                    (int)FEATURE_SECURE_SERIAL, (int)FEATURE_PROVISIONING,
+                    pairingSlot, esp_flash_encryption_enabled() ? 1 : 0,
+                    esp_secure_boot_enabled() ? 1 : 0);
     char last[64];
     if (cdc::ui::firmwareCheckLastResult(last, sizeof(last))) {
         Console::printf("Latest: %s\r\n", last);
@@ -1507,6 +1525,103 @@ static void cmdTr01Wipe(const char* args) {
                     result.eccDeleted, result.rmemDeleted);
 }
 
+#if FEATURE_PROVISIONING
+/**
+ * \brief Decodes exactly `len` bytes from `2*len` hex characters.
+ * \param hex Null-terminated hex string (no separators).
+ * \param out Output buffer of `len` bytes.
+ * \param len Expected byte count.
+ * \return true on success, false if the string is the wrong length or contains
+ *         a non-hex character.
+ */
+static bool decodeHexExact(const char* hex, uint8_t* out, size_t len) {
+    if (!hex || !out) return false;
+    size_t n = strlen(hex);
+    if (n != len * 2) return false;
+    auto nibble = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < len; ++i) {
+        int hi = nibble(hex[2 * i]);
+        int lo = nibble(hex[2 * i + 1]);
+        if (hi < 0 || lo < 0) return false;
+        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return true;
+}
+
+/**
+ * \brief Writes a host X25519 public key into an empty TROPIC01 pairing slot.
+ * \param args "<slot> <64-hex-char pubkey>".
+ *
+ * One-shot per slot, irreversible. Used only by tools/provision.py for SH0
+ * sync-key rotation. The driver rejects the active pairing slot.
+ */
+static void cmdTr01PairWrite(const char* args) {
+    unsigned slot = 0;
+    char hex[80] = {0};
+    if (!args || sscanf(args, "%u %79s", &slot, hex) != 2) {
+        Console::printf("Usage: TR01 PAIR_WRITE <slot 0-3> <64-hex-char pubkey>\r\n");
+        return;
+    }
+    uint8_t pub[32];
+    if (!decodeHexExact(hex, pub, sizeof(pub))) {
+        Console::printf("ERROR: pubkey must be exactly 64 hex chars (32 bytes)\r\n");
+        return;
+    }
+
+    auto* se = getSecureElementWithCheck();
+    if (!se) return;
+
+    hal::SeResult r = se->pairingKeyWrite(static_cast<uint8_t>(slot), pub);
+    if (r == hal::SeResult::OK) {
+        Console::printf("OK: pairing key written to slot %u\r\n", slot);
+    } else if (r == hal::SeResult::INVALID_PARAM) {
+        Console::printf("ERROR: invalid slot (0-3, not the active slot)\r\n");
+    } else {
+        Console::printf("ERROR: pairing write failed (slot occupied or no session)\r\n");
+    }
+}
+
+/**
+ * \brief PERMANENTLY invalidates a TROPIC01 pairing slot after confirmation.
+ * \param args "<slot> CONFIRM".
+ *
+ * Irreversible: the slot is dead forever. Guarded by an explicit CONFIRM token
+ * in addition to the tool-side gates; the driver rejects the active slot.
+ */
+static void cmdTr01PairInvalidate(const char* args) {
+    unsigned slot = 0;
+    char token[16] = {0};
+    int n = args ? sscanf(args, "%u %15s", &slot, token) : 0;
+    if (n < 1) {
+        Console::printf("Usage: TR01 PAIR_INVALIDATE <slot 0-3> CONFIRM\r\n");
+        return;
+    }
+    if (n < 2 || strcmp(token, "CONFIRM") != 0) {
+        Console::printf("WARNING: PERMANENTLY invalidates pairing slot %u.\r\n", slot);
+        Console::printf("  The slot is dead forever. Invalidating all 4 bricks the chip.\r\n");
+        Console::printf("\r\nTo proceed, type: TR01 PAIR_INVALIDATE %u CONFIRM\r\n", slot);
+        return;
+    }
+
+    auto* se = getSecureElementWithCheck();
+    if (!se) return;
+
+    hal::SeResult r = se->pairingKeyInvalidate(static_cast<uint8_t>(slot));
+    if (r == hal::SeResult::OK) {
+        Console::printf("OK: pairing slot %u permanently invalidated\r\n", slot);
+    } else if (r == hal::SeResult::INVALID_PARAM) {
+        Console::printf("ERROR: invalid slot (0-3, not the active slot)\r\n");
+    } else {
+        Console::printf("ERROR: pairing invalidate failed (no session)\r\n");
+    }
+}
+#endif // FEATURE_PROVISIONING
+
 /**
  * \brief Public `SerialCmd` interface implementation.
  */
@@ -2541,6 +2656,10 @@ static const SubCommand kTr01Subs[] = {
     {"CACHE_REBUILD", "",         "Rebuild TR01 cache from chip",                  cmdTr01CacheRebuild},
     {"CLEANUP",       "",         "Cleanup mismatched slots and rebuild cache",    cmdTr01Cleanup},
     {"WIPE",          "CONFIRM",  "Factory reset all TR01 data",                   cmdTr01Wipe},
+#if FEATURE_PROVISIONING
+    {"PAIR_WRITE",    "<slot> <hexpub>", "Write host pubkey to empty pairing slot (1-shot)", cmdTr01PairWrite},
+    {"PAIR_INVALIDATE", "<slot> CONFIRM", "PERMANENTLY invalidate a pairing slot",       cmdTr01PairInvalidate},
+#endif
     {nullptr, nullptr, nullptr, nullptr},
 };
 static void cmdTr01(const char* args) { dispatchSubCommand("TR01", args, kTr01Subs); }

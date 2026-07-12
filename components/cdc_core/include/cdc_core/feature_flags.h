@@ -28,6 +28,16 @@
 #define FEATURE_NVS_EDIT 0
 #endif
 
+// TROPIC01 pairing-key provisioning over serial (TR01 PAIR_WRITE /
+// PAIR_INVALIDATE). Default OFF: these drive IRREVERSIBLE one-shot pairing-slot
+// operations and must not exist in a normal build, so they cannot be triggered
+// by accident over serial. Enable only for a dedicated provisioning firmware
+// built explicitly with -DFEATURE_PROVISIONING=1 (see tools/provision.py), then
+// reflash the normal release image. See the TROPIC01 warning block in CLAUDE.md.
+#ifndef FEATURE_PROVISIONING
+#define FEATURE_PROVISIONING 0
+#endif
+
 // Plugin AOT (ahead-of-time native code). Default off: AOT artifacts run as
 // native machine code and bypass the WASM bounds-checked sandbox, so only
 // interpreted bytecode is loaded/accepted unless this is explicitly enabled.

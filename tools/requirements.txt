@@ -1,5 +1,6 @@
-# flash_firmware.py
-esptool>=4.7
+# flash_firmware.py, provision.py (lock-esp/reflash: espefuse/espsecure ship with esptool)
+# provision.py uses the hyphenated v5 CLI syntax (removed underscore aliases land in v6)
+esptool>=5,<6
 requests>=2.28
 
 # ble_serial.py
@@ -11,7 +12,7 @@ esp-coredump>=1.5
 # ondevice/ test harness (also upload.py, backup.py, 2fa.py)
 pyserial>=3.5
 
-# ondevice/ A-ATTEST + A-GPG-XSIGN (X.509 / key crafting)
+# ondevice/ A-ATTEST + A-GPG-XSIGN (X.509 / key crafting), provision.py (X25519 sync key)
 cryptography>=42
 
 # fido2_largeblob.py (USB-HID authenticatorLargeBlobs round-trip)

@@ -10,6 +10,7 @@ idf_component_register(
         "include"
     REQUIRES
         cdc_core
+        bootloader_support
         driver
         freertos
         esp_timer

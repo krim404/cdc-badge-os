@@ -88,6 +88,37 @@ public:
      */
     virtual bool isSessionActive() const = 0;
 
+    // === Pairing-Key (SH0) Management — DANGEROUS, IRREVERSIBLE ===
+    //
+    // These touch the TROPIC01 I-Memory pairing-key slots (0-3). A write to a
+    // slot can happen only ONCE; an invalidate is PERMANENT. Used solely by the
+    // host-driven provisioning tool (tools/provision.py) to rotate the SH0 sync
+    // key away from the public libtropic production key. Never call from normal
+    // firmware flows. See the TROPIC01 warning block in CLAUDE.md.
+
+    /**
+     * Write a host public pairing key into a currently EMPTY pairing slot.
+     * One-shot per slot; a slot that already holds a key cannot be rewritten.
+     * @param slot Pairing-key slot index (0-3). The slot the running firmware
+     *             authenticates with is rejected to avoid locking out the chip.
+     * @param pub 32-byte X25519 public key.
+     */
+    virtual SeResult pairingKeyWrite(uint8_t slot, const uint8_t pub[32]) = 0;
+
+    /**
+     * PERMANENTLY invalidate a pairing-key slot. The slot is dead forever after
+     * this; invalidating all four slots bricks the secure element.
+     * @param slot Pairing-key slot index (0-3). The active slot is rejected.
+     */
+    virtual SeResult pairingKeyInvalidate(uint8_t slot) = 0;
+
+    /**
+     * Pairing-key slot (0-3) the running firmware authenticates with (SH0).
+     * Reported over serial (VERSION) so the provisioning tool can verify a
+     * rotated key is actually in use before it invalidates the old slot.
+     */
+    virtual uint8_t activePairingSlot() const = 0;
+
     /**
      * Put chip to sleep
      */

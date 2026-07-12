@@ -1,0 +1,35 @@
+# CDC Badge OS - production lockdown sdkconfig overlay.
+#
+# Used ONLY by the opt-in PlatformIO env `cdc_badge_release` (provision.py
+# workflow). The default dev env `cdc_badge_usb` stays unsigned/unencrypted.
+#
+# DANGER: a bootloader built from this config SELF-ENABLES secure boot and
+# flash encryption (burning eFuses!) on its first boot if the chip is not
+# already locked. Never `pio run -e cdc_badge_release -t upload` onto a dev
+# badge. In the provision.py flow all eFuses are burned externally BEFORE this
+# image ever boots, so the bootloader finds everything enabled and burns
+# nothing. See website docs: dev/production-hardening.
+
+# Secure Boot v2 (RSA-3072). Binaries are signed EXTERNALLY by provision.py,
+# so the build itself must not require a signing key.
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+# CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES is not set
+
+# Flash encryption, release mode (XTS-AES-128, key host-generated and burned
+# via espefuse by provision.py).
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+
+# NVS encryption. Under flash encryption the nvs partition stays PLAINTEXT
+# unless NVS encryption is enabled separately, and the badge keeps app data
+# (GPG stores, FIDO2 metadata, browser bookmarks, plugin NVS) there. Uses the
+# flash-encryption-based scheme: the XTS keys live in the encrypted `nvs_keys`
+# partition (partitions.release.csv) and are generated per device by
+# nvs_flash_init() on first boot. nvs_flash_init() stays transparent (no app
+# code change) and no eFuse key block is consumed.
+CONFIG_NVS_ENCRYPTION=y
+CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y
+
+# Authenticated serial commands are mandatory on a locked badge.
+CONFIG_SECURE_SERIAL=y
