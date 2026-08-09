@@ -68,7 +68,7 @@ jobs:
           cp build/plugins_initial.bin "artifacts/cdc-badge-plugins-initial-${VERSION}.bin"
 
       - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cdc-badge-firmware-${{ steps.version.outputs.version }}
           path: artifacts/
@@ -87,7 +87,7 @@ jobs:
         run: echo "version=${GIT_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: cdc-badge-firmware-${{ steps.version.outputs.version }}
           path: artifacts/
