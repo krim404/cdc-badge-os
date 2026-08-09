@@ -9,7 +9,7 @@ variables:
   PLATFORMIO_CORE_DIR: "$CI_PROJECT_DIR/.cache/platformio"
 
 default:
-  image: python:3.11
+  image: python:3.14
   cache:
     key: "$CI_JOB_NAME"
     paths:
