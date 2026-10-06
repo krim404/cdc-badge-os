@@ -122,6 +122,10 @@ CapabilityCheckResult CapabilityChecker::validate(const PluginManifest& m)
                      "nvs_namespace exceeds " +
                          std::to_string(NVS_NAMESPACE_MAX_LEN) + " chars" };
         }
+        if (ns == "plg_ecc_map") {
+            return { CapabilityResult::NvsNamespaceInvalid,
+                     "nvs_namespace 'plg_ecc_map' is reserved for the firmware" };
+        }
         const bool prefixOk = ns.rfind("plg_", 0) == 0 ||
                               ns.rfind("plugin_", 0) == 0;
         if (!prefixOk) {

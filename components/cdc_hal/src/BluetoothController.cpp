@@ -912,6 +912,17 @@ void BluetoothController::clearAllBonds() {
 }
 
 void BluetoothController::onEncChange(uint16_t connHandle, int status) {
+    // Every encrypted link must be MITM-authenticated (numeric comparison or
+    // an authenticated bond). A Just-Works downgrade by a peer claiming no I/O
+    // capability is dropped and reported as a failed pairing.
+    if (status == 0) {
+        struct ble_gap_conn_desc desc;
+        if (ble_gap_conn_find(connHandle, &desc) == 0 && !desc.sec_state.authenticated) {
+            LOG_W(TAG, "Unauthenticated encryption on handle %d rejected", connHandle);
+            ble_gap_terminate(connHandle, BLE_ERR_REM_USER_CONN_TERM);
+            status = BLE_HS_EAUTHEN;
+        }
+    }
     LOG_I(TAG, "Encryption %s on handle %d (status=%d)",
           status == 0 ? "established" : "failed", connHandle, status);
     if (authCompleteCb_) {

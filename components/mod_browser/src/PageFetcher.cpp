@@ -6,6 +6,7 @@
 #include "cdc_log.h"
 
 #include <cstring>
+#include <cctype>
 
 namespace cdc::browser {
 namespace {
@@ -14,9 +15,43 @@ static constexpr const char* TAG = "BROWSER-HTTP";
 static constexpr int kMaxRedirects = 5;
 static constexpr int kTimeoutMs = 8000;
 
-// Active jar for the in-flight request, so the header event handler can capture
-// Set-Cookie. Only one fetch runs at a time (serialized worker task).
+// Active jar and request origin for the in-flight request, so the header event
+// handler can capture Set-Cookie. Only one fetch runs at a time (serialized
+// worker task).
 CookieJar* s_activeJar = nullptr;
+char       s_activeHost[CookieJar::kHostCap] = {};
+bool       s_activeHttps = false;
+
+bool urlIsHttps(const char* url)
+{
+    return url && std::strncmp(url, "https://", 8) == 0;
+}
+
+// Extracts the host (without userinfo, port, or path) of an absolute URL.
+void urlHost(const char* url, char* out, size_t cap)
+{
+    out[0] = '\0';
+    if (!url) return;
+    const char* p = std::strstr(url, "://");
+    p = p ? p + 3 : url;
+    const char* end = p;
+    while (*end && *end != '/' && *end != '?' && *end != '#') ++end;
+    const char* at = static_cast<const char*>(std::memchr(p, '@', static_cast<size_t>(end - p)));
+    if (at) p = at + 1;
+    const char* colon = static_cast<const char*>(std::memchr(p, ':', static_cast<size_t>(end - p)));
+    if (colon) end = colon;
+    size_t n = static_cast<size_t>(end - p);
+    if (n >= cap) n = cap - 1;
+    std::memcpy(out, p, n);
+    out[n] = '\0';
+    for (size_t i = 0; i < n; ++i) out[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(out[i])));
+}
+
+void setActiveOrigin(const char* url)
+{
+    urlHost(url, s_activeHost, sizeof(s_activeHost));
+    s_activeHttps = urlIsHttps(url);
+}
 
 bool feedable(const char* ct)
 {
@@ -32,7 +67,9 @@ bool isRedirect(int status)
 esp_err_t headerHandler(esp_http_client_event_t* evt)
 {
     if (evt->event_id == HTTP_EVENT_ON_HEADER && s_activeJar && evt->header_key && evt->header_value) {
-        if (strcasecmp(evt->header_key, "Set-Cookie") == 0) s_activeJar->put(evt->header_value);
+        if (strcasecmp(evt->header_key, "Set-Cookie") == 0) {
+            s_activeJar->put(s_activeHost, evt->header_value);
+        }
     }
     return ESP_OK;
 }
@@ -43,8 +80,9 @@ bool doOpen(esp_http_client_handle_t h, bool isPost, const char* body, size_t bo
     esp_http_client_set_method(h, isPost ? HTTP_METHOD_POST : HTTP_METHOD_GET);
     if (jar && jar->count) {
         char cookie[CookieJar::kMax * CookieJar::kItemCap + 16];
-        jar->header(cookie, sizeof(cookie));
-        if (cookie[0]) esp_http_client_set_header(h, "Cookie", cookie);
+        jar->header(s_activeHost, s_activeHttps, cookie, sizeof(cookie));
+        // An empty value clears a header left over from the previous hop.
+        esp_http_client_set_header(h, "Cookie", cookie[0] ? cookie : nullptr);
     }
     if (isPost) {
         esp_http_client_set_header(h, "Content-Type", "application/x-www-form-urlencoded");
@@ -79,6 +117,7 @@ esp_http_client_handle_t openFollowing(const char* url, bool isPost, const char*
     if (!h) return nullptr;
 
     s_activeJar = jar;
+    setActiveOrigin(url);
     if (!doOpen(h, isPost, body, bodyLen, jar)) {
         s_activeJar = nullptr;
         esp_http_client_cleanup(h);
@@ -90,6 +129,9 @@ esp_http_client_handle_t openFollowing(const char* url, bool isPost, const char*
         if (isRedirect(status) && redirect < kMaxRedirects) {
             esp_http_client_set_redirection(h);
             esp_http_client_close(h);
+            char next[512] = {0};
+            esp_http_client_get_url(h, next, sizeof(next));
+            setActiveOrigin(next);
             if (!doOpen(h, false, nullptr, 0, jar)) {  // follow redirects as GET
                 s_activeJar = nullptr;
                 esp_http_client_cleanup(h);
@@ -147,9 +189,15 @@ FetchResult streamBody(esp_http_client_handle_t h, HtmlTokenizer* tok, size_t ma
 
 }  // namespace
 
-void CookieJar::put(const char* v)
+void CookieJar::put(const char* fromHost, const char* v)
 {
-    if (!v || !v[0]) return;
+    if (!v || !v[0] || !fromHost || !fromHost[0]) return;
+    if (std::strcmp(host, fromHost) != 0) {
+        clear();
+        std::strncpy(host, fromHost, sizeof(host) - 1);
+        host[sizeof(host) - 1] = '\0';
+    }
+    if (strcasestr(v, "; secure") || strcasestr(v, ";secure")) secureOnly = true;
     // Keep "name=value" up to the first ';' (drop attributes).
     size_t n = 0;
     while (v[n] && v[n] != ';') ++n;
@@ -174,10 +222,12 @@ void CookieJar::put(const char* v)
     ++count;
 }
 
-void CookieJar::header(char* out, size_t cap) const
+void CookieJar::header(const char* toHost, bool https, char* out, size_t cap) const
 {
     if (!out || cap == 0) return;
     out[0] = '\0';
+    if (!toHost || std::strcmp(host, toHost) != 0) return;
+    if (secureOnly && !https) return;
     size_t pos = 0;
     for (uint8_t i = 0; i < count; ++i) {
         size_t need = std::strlen(items[i]) + (i ? 2 : 0);

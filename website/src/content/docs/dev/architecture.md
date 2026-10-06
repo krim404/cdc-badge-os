@@ -49,7 +49,7 @@ It also drives bulk lifecycle: `initAll()`, `startAll()`, and `stopAll()` (the l
 
 ### PinManager
 
-`PinManager` (`cdc_core/PinManager.h`) manages every device PIN in TROPIC01 R-Memory slot 0, with the payload covered by a slot-0 attestation signature so tampering forces a reset to defaults. It distinguishes a Badge/FIDO2 PIN (RAM-only retry counter with a recovery timer, so a crash mid-verify cannot brick the badge) from OpenPGP PW1/PW3, which use smartcard semantics where reaching zero retries is terminal until an admin reset.
+`PinManager` (`cdc_core/PinManager.h`) manages every device PIN in TROPIC01 R-Memory slot 0, with the payload covered by a slot-0 attestation signature so a tampered or unreadable record keeps every PIN blocked rather than falling back to defaults. It distinguishes a Badge/FIDO2 PIN (RAM-only retry counter with a recovery timer that doubles per persisted consecutive lockout, capped and never terminal, so a crash mid-verify cannot brick the badge) from OpenPGP PW1/PW3, which use smartcard semantics where reaching zero retries is terminal until an admin reset.
 
 :::note[R-Memory slot byte size is firmware-dependent]
 The secure element exposes 512 R-Memory slots. The usable payload bytes per slot

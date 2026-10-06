@@ -10,6 +10,7 @@
 #include "cdc_core/feature_flags.h"
 
 #include "cdc_log.h"
+#include "cdc_core/EventBus.h"
 #include "esp_err.h"
 #include "esp_idf_version.h"
 #include "esp_rom_sys.h"
@@ -285,4 +286,11 @@ void usb_cdc_flush(void) {
     if (!g_usb_started) return;
     tud_cdc_write_flush();
     vTaskDelay(pdMS_TO_TICKS(10));
+}
+
+// TinyUSB device-level callback: the host configured the device. Published on
+// the EventBus (queued, dispatched from the main loop); tud_umount_cb lives in
+// usb_msc.cpp next to the MSC detach handling and publishes the counterpart.
+extern "C" void tud_mount_cb(void) {
+    cdc::core::EventBus::instance().publish(cdc::core::EventType::POWER_USB_CONNECTED);
 }

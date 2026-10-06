@@ -148,6 +148,9 @@ void OtpHidCr::onSetReport(uint8_t const* buffer, uint16_t bufsize) {
     if (offset >= FRAME_SIZE) return;
 
     core::MutexGuard guard(ensureMutex());
+    // While the confirmation prompt is on screen the challenge is frozen, so the
+    // user's confirmation can only release the response they were asked about.
+    if (s_phase == Phase::WAITING) return;
     // A new transfer (block 0) supersedes any half-assembled or stale frame.
     if (seq == 0) {
         memset(s_frame, 0, sizeof(s_frame));

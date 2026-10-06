@@ -180,6 +180,20 @@ static int onChallengeWrite(uint16_t connHandle, uint16_t, const uint8_t* data, 
 }
 
 /**
+ * \brief Returns whether at least one challenge-response entry is stored.
+ * \return `true` if a CR entry exists.
+ */
+static bool hasCrEntry() {
+    auto& store = OathStore::instance();
+    const uint16_t cap = store.capacity();
+    for (uint16_t s = 0; s < cap; s++) {
+        OathEntry e = {};
+        if (store.readAccount(s, &e) && e.type == static_cast<uint8_t>(OathType::CR)) return true;
+    }
+    return false;
+}
+
+/**
  * \brief Registers the CR GATT service and characteristics.
  * \return `true` on success.
  */
@@ -189,13 +203,13 @@ static bool registerGattService() {
 
     s_gattChars[0].uuid = BleUuid::from128(CR_CHALLENGE_UUID);
     s_gattChars[0].properties = GattProp::WRITE;
-    s_gattChars[0].permissions = GattPerm::WRITE;
+    s_gattChars[0].permissions = GattPerm::WRITE_ENC;
     s_gattChars[0].valueHandle = &s_challenge_handle;
     s_gattChars[0].onWrite = onChallengeWrite;
 
     s_gattChars[1].uuid = BleUuid::from128(CR_RESPONSE_UUID);
     s_gattChars[1].properties = GattProp::READ | GattProp::NOTIFY;
-    s_gattChars[1].permissions = GattPerm::READ;
+    s_gattChars[1].permissions = GattPerm::READ_ENC;
     s_gattChars[1].valueHandle = &s_response_handle;
     s_gattChars[1].onRead = [](uint16_t, uint16_t, uint8_t* buf, uint16_t* len) -> int {
         // The response is delivered by notification; a plain read returns empty.
@@ -252,10 +266,10 @@ bool ble_chalresp_init() {
         return false;
     }
 
-    // Request BLE; the controller defers the bring-up until the system is ready.
-    // GATT registration below is allowed while BLE is still down (committed on
-    // enable), so there is no need to block waiting for the stack here.
-    if (!ble->isEnabled()) {
+    // BLE is brought up only when a CR entry exists; otherwise the service is
+    // registered dormant (GATT registration is allowed while BLE is down and
+    // committed on enable) and becomes reachable whenever BLE is enabled.
+    if (!ble->isEnabled() && hasCrEntry()) {
         ble->enable();
     }
 

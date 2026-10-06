@@ -60,7 +60,12 @@ bool socketIoAllowed()
     return p && (p->manifest().capabilities.socket || p->manifest().capabilities.net_listen);
 }
 
-SocketSlot* slotFor(int handle) { return s_slots.lookup(handle); }
+// Handles are valid only for the plugin that owns the socket.
+SocketSlot* slotFor(int handle)
+{
+    SocketSlot* s = s_slots.lookup(handle);
+    return (s && s->owner == plg_get_active_plugin()) ? s : nullptr;
+}
 
 void closeSlot(SocketSlot& slot)
 {

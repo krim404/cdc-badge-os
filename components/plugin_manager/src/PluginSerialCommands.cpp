@@ -258,9 +258,23 @@ void cmdList(const char*)
     send("]");
 }
 
+// Plugin ids become file names under the system folder.
+bool validPluginId(const char* id)
+{
+    if (!id || !*id) return false;
+    size_t n = 0;
+    for (const char* p = id; *p; ++p, ++n) {
+        const bool ok = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                        (*p >= '0' && *p <= '9') || *p == '_' || *p == '-';
+        if (!ok || n >= 48) return false;
+    }
+    return true;
+}
+
 void cmdInfo(const char* args)
 {
     if (!args || !*args) { send("ERR missing_id"); return; }
+    if (!validPluginId(args)) { send("ERR invalid_id"); return; }
     std::string id = args;
     auto mf = PluginManager::instance().getManifest(id);
     if (!mf) { send("ERR not_found"); return; }
@@ -335,6 +349,7 @@ void cmdInfo(const char* args)
 void cmdDelete(const char* args)
 {
     if (!args || !*args) { send("ERR missing_id"); return; }
+    if (!validPluginId(args)) { send("ERR invalid_id"); return; }
     std::string id = args;
     PluginManager::instance().uninstallPlugin(id);
     send("OK");
@@ -343,6 +358,7 @@ void cmdDelete(const char* args)
 void cmdDisable(const char* args)
 {
     if (!args || !*args) { send("ERR missing_id"); return; }
+    if (!validPluginId(args)) { send("ERR invalid_id"); return; }
     if (!PluginManager::instance().setPluginDisabled(args, true)) {
         send("ERR not_found");
         return;
@@ -353,6 +369,7 @@ void cmdDisable(const char* args)
 void cmdEnable(const char* args)
 {
     if (!args || !*args) { send("ERR missing_id"); return; }
+    if (!validPluginId(args)) { send("ERR invalid_id"); return; }
     if (!PluginManager::instance().setPluginDisabled(args, false)) {
         send("ERR not_found");
         return;
@@ -363,6 +380,7 @@ void cmdEnable(const char* args)
 void cmdStart(const char* args)
 {
     if (!args || !*args) { send("ERR missing_id"); return; }
+    if (!validPluginId(args)) { send("ERR invalid_id"); return; }
     auto res = PluginManager::instance().startPlugin(args);
     if (res == StartResult::Ok) {
         sendf("OK started %s", args);
@@ -457,6 +475,7 @@ void start_upload(const char* args, PluginUploadKind kind)
         send("ERR usage:_PLUGIN_UPLOAD_<id>_<size>_<crc32_hex>");
         return;
     }
+    if (!validPluginId(id_buf)) { send("ERR invalid_id"); return; }
 
     if (kind == PluginUploadKind::Wasm || kind == PluginUploadKind::Aot) {
         const std::string target_id = id_buf;

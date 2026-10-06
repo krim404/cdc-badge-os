@@ -4,6 +4,7 @@
  */
 
 #include "mod_msc/UsbMscModule.h"
+#include "cdc_core/EventBus.h"
 #include "cdc_core/ModuleRegistry.h"
 #include "cdc_core/UsbManager.h"
 #include "cdc_core/UsbServiceManager.h"
@@ -125,8 +126,26 @@ bool UsbMscModule::init() {
     core::ModuleRegistry::instance().registerModule(this);
     core::UsbServiceManager::instance().registerModuleService("msc", "mod_msc.title",
                                                               getName(), {1, 1});
+    // The drive exposes the whole volume (plugins, overlays, user files), so
+    // it presents no medium while the badge is locked.
+    auto& bus = core::EventBus::instance();
+    bus.subscribe([](const core::Event&) { instance().onLockChanged(true); },
+                  core::EventBus::eventMask(core::EventType::SYSTEM_LOCK));
+    bus.subscribe([](const core::Event&) { instance().onLockChanged(false); },
+                  core::EventBus::eventMask(core::EventType::SYSTEM_UNLOCK));
     state_ = core::ServiceState::INITIALIZED;
     return true;
+}
+
+void UsbMscModule::onLockChanged(bool locked) {
+    locked_ = locked;
+    if (state_ != core::ServiceState::STARTED) return;
+    if (locked) {
+        usb_msc_set_backend(nullptr);
+        plugin_manager::PluginStorage::setHostActive(false);
+    } else {
+        usb_msc_set_backend(&kBackend);
+    }
 }
 
 bool UsbMscModule::start() {
@@ -135,7 +154,7 @@ bool UsbMscModule::start() {
         return false;
     }
 
-    usb_msc_set_backend(&kBackend);
+    if (!locked_) usb_msc_set_backend(&kBackend);
     if (!core::UsbManager::instance().registerMassStorage(getName())) {
         // USB endpoint budget exhausted (e.g. FIDO + CCID already active).
         LOG_W(TAG, "Start aborted: no USB endpoints for MSC");

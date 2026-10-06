@@ -20,4 +20,11 @@ fido2_user_presence_result_t fido2_ui_user_presence_callback(
  */
 bool fido2_ui_abort_prompt();
 
+/**
+ * \brief Records whether the badge is on the lock screen.
+ *        A locked badge asks for the badge PIN before approving a prompt.
+ * \param locked `true` when the badge is locked.
+ */
+void fido2_ui_set_locked(bool locked);
+
 } // namespace cdc::mod_fido2

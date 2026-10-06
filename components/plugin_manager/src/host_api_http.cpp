@@ -14,6 +14,7 @@
  * close) or, when the pool is full, owns a transient client freed on close.
  */
 
+#include "plugin_manager/Plugin.h"
 #include "plugin_manager/Raii.h"
 #include "plugin_manager/SlotTable.h"
 #include "plugin_manager/host_api.h"
@@ -52,6 +53,9 @@ struct HttpSlot {
     esp_http_client_handle_t client = nullptr;
     int           pool_idx    = -1;
     EspHttpClient owned;
+    // Request body copied out of plugin memory: WAMR may move linear memory on
+    // memory.grow, so the client must never keep a pointer into it.
+    cdc::plugin_manager::PsramUniquePtr<uint8_t> post_body;
     HttpBody      body;
     size_t        body_len    = 0;
     size_t        body_cap    = 0;
@@ -131,7 +135,18 @@ esp_err_t http_event_handler(esp_http_client_event_t* evt)
     return ESP_OK;
 }
 
-HttpSlot* slotFor(int handle) { return s_slots.lookup(handle); }
+// Handles are valid only for the plugin that opened them.
+HttpSlot* slotFor(int handle)
+{
+    HttpSlot* s = s_slots.lookup(handle);
+    return (s && s->owner == plg_get_active_plugin()) ? s : nullptr;
+}
+
+bool httpAllowed()
+{
+    auto* p = static_cast<cdc::plugin_manager::Plugin*>(plg_get_active_plugin());
+    return p && p->manifest().capabilities.http;
+}
 
 // Release a slot: return a borrowed pool connection to the pool (a transient
 // client is freed by the slot reset) and clear the slot. Shared by
@@ -139,6 +154,8 @@ HttpSlot* slotFor(int handle) { return s_slots.lookup(handle); }
 void closeSlot(HttpSlot& slot)
 {
     if (slot.pool_idx >= 0 && static_cast<size_t>(slot.pool_idx) < MAX_HTTP_CONNS) {
+        // The pooled client outlives the slot: detach the body it may still reference.
+        esp_http_client_set_post_field(slot.client, nullptr, 0);
         s_pool[slot.pool_idx].in_use = false;
     }
     slot = HttpSlot{};
@@ -178,6 +195,7 @@ esp_http_client_handle_t makeClient(uint8_t method, const char* url, uint32_t ti
 int host_http_open(uint8_t method, const char* url, uint32_t timeout_ms)
 {
     if (!url) return HOST_ERR_INVALID_ARG;
+    if (!httpAllowed()) return HOST_ERR_NO_CAPABILITY;
     int slot_id = 0;
     HttpSlot* slot = s_slots.allocate(slot_id);
     if (!slot) return HOST_ERR_NO_MEMORY;
@@ -244,8 +262,13 @@ int host_http_set_body(int handle, const uint8_t* body, size_t len)
 {
     auto* slot = slotFor(handle);
     if (!slot || !slot->client) return HOST_ERR_INVALID_ARG;
+    if (len && !body) return HOST_ERR_INVALID_ARG;
+    auto copy = cdc::plugin_manager::psramAlloc<uint8_t>(len ? len : 1);
+    if (!copy) return HOST_ERR_NO_MEMORY;
+    if (len) std::memcpy(copy.get(), body, len);
+    slot->post_body = std::move(copy);
     return esp_http_client_set_post_field(slot->client,
-                                          reinterpret_cast<const char*>(body),
+                                          reinterpret_cast<const char*>(slot->post_body.get()),
                                           static_cast<int>(len)) == ESP_OK
            ? HOST_OK : HOST_ERR_GENERIC;
 }

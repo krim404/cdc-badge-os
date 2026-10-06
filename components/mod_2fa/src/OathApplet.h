@@ -59,6 +59,11 @@ typedef struct {
     bool (*hmacSha1)(const uint8_t* key, size_t keyLen,
                      const uint8_t* data, size_t dataLen, uint8_t out[20]);
     bool (*rng)(uint8_t* buf, size_t len);
+
+    // Touch policy for CALCULATE on a touch-required credential: returns true
+    // when the user has confirmed the release on the badge; otherwise arms the
+    // on-badge prompt and returns false (the host retries after confirming).
+    bool (*touchOk)(uint16_t slot);
 } oath_backend_t;
 
 void oath_set_backend(const oath_backend_t* backend);

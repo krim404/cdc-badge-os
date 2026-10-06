@@ -1228,12 +1228,18 @@ static int32_t  w_host_ble_scan_results(wasm_exec_env_t exec_env, void* out, uin
     *count = static_cast<uint32_t>(c);
     return rc;
 }
-static int32_t  w_host_ble_connect(wasm_exec_env_t, const uint8_t* addr, uint32_t type)
-{ return host_ble_connect(addr, static_cast<uint8_t>(type)); }
+static int32_t  w_host_ble_connect(wasm_exec_env_t exec_env, const uint8_t* addr, uint32_t type)
+{
+    if (!wbuf_ok(exec_env, addr, 6)) return HOST_ERR_INVALID_ARG;
+    return host_ble_connect(addr, static_cast<uint8_t>(type));
+}
 static uint32_t w_host_ble_conn_handle(wasm_exec_env_t) { return host_ble_conn_handle(); }
 static int32_t  w_host_ble_disconnect(wasm_exec_env_t, uint32_t conn) { return host_ble_disconnect(conn); }
-static int32_t  w_host_ble_discover(wasm_exec_env_t, uint32_t conn, const uint8_t* uuid, uint32_t aid)
-{ return host_ble_discover(conn, uuid, aid); }
+static int32_t  w_host_ble_discover(wasm_exec_env_t exec_env, uint32_t conn, const uint8_t* uuid, uint32_t aid)
+{
+    if (!wbuf_ok(exec_env, uuid, 16)) return HOST_ERR_INVALID_ARG;
+    return host_ble_discover(conn, uuid, aid);
+}
 static int32_t  w_host_ble_consume_discovery(wasm_exec_env_t exec_env, void* out, uint32_t* count)
 {
     if (!wbuf_ok(exec_env, count, sizeof(uint32_t))) return HOST_ERR_INVALID_ARG;

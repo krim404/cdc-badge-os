@@ -60,6 +60,7 @@ constexpr ui::I18nEntry kStrings[] = {
     {"mod_2fa.touch_on",      "Required"},
     {"mod_2fa.touch_off",     "Not required"},
     {"mod_2fa.cr_confirm",    "Allow challenge-response?"},
+    {"mod_2fa.touch_confirm", "Release OATH code?"},
     {"mod_2fa.cr_entry",      "Challenge-Response"},
     {"mod_2fa.usb_cr",        "USB slot 2"},
     {"mod_2fa.usb_cr_on",     "Designate"},

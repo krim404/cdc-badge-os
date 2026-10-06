@@ -33,13 +33,26 @@ Each sensitive area is also a manifest capability flag (for example `wifi`, `ble
 ## Storage rules
 
 - File access (`vfat`) is confined host-side to the plugin's own folder, `/vfat/data/<id>/`. A plugin cannot read another plugin's files or escape that directory.
-- NVS use requires an `nvs_namespace` that starts with `plg_` or `plugin_`, uses only `[a-z0-9_]`, and is at most 15 characters.
+- NVS use requires an `nvs_namespace` that starts with `plg_` or `plugin_`, uses only `[a-z0-9_]`, and is at most 15 characters. `plg_ecc_map` is reserved for the firmware.
 - Requesting R-Memory slots (`rmem`) requires a valid `nvs_namespace` to be declared as well.
+- Claims are exclusive per badge: a plugin whose effective NVS namespace (declared, or the default `plugin_<id>`), `rmem` name or `ecc` name is also declared by another installed plugin is refused at start, with the conflicting plugin named in the log.
+
+## Network rules
+
+- `host_http_*` and `host_browser_open` require the `http` capability; `host_wifi_request` and the WiFi scan functions require `wifi`. Calls without the flag return `HOST_ERR_NO_CAPABILITY`.
+- HTTP and socket handles are bound to the plugin that opened them; another plugin's handle is invalid.
+
+## Input rules
+
+- Key events (`EVENT_KEY_*`) and keypad polling (`host_key_pressed`, `host_key_consume_next`) reach a plugin only while it is the foreground plugin and one of its own views (list, input, canvas or modal) has focus. On the lock screen, in a PIN prompt, or under a system modal, plugins see no keys.
+- The exclusive UI lock (`host_ui_acquire_exclusive`) requires `ui_exclusive` and is released automatically when the plugin stops.
+- A plugin inactivity timer never replaces the badge's auto-lock timer.
 
 ## BLE and messaging rules
 
 - Each `ble_service_uuid` must be a 128-bit lowercase, dashed UUID.
 - Declaring `message_types` (MIME types) implies the plugin handles badge-to-badge messages; sending also requires the `ble` capability.
+- `host_msg_register_handler` accepts only MIME types listed in the plugin's own `message_types`, and never a type already served by a firmware module (such as `text/vcard` or `application/pgp-keys`) or another loaded plugin.
 
 ## GPIO, PWM, ADC, and I2C safety policy
 

@@ -51,6 +51,10 @@ public:
 
     [[nodiscard]] std::vector<std::string>     listInstalledIds() const;
     [[nodiscard]] std::optional<PluginManifest> getManifest(const std::string& id) const;
+    /// True if `mf` claims an NVS namespace, rmem name or ecc name that another
+    /// installed plugin also declares; `detail` names the conflict.
+    [[nodiscard]] bool claimsCollide(const std::string& id, const PluginManifest& mf,
+                                     std::string& detail) const;
 
     /// \brief True if any installed plugin's manifest declares this MIME type
     ///        for message transfer. Reads a cached index; safe to call from the
@@ -113,6 +117,8 @@ public:
     /// reverts to false on its own the moment the plugin leaves the foreground
     /// (no inhibitor flag that could leak).
     [[nodiscard]] bool        activePluginPreventsSleep() const;
+    /// True if `p` is the foreground (user-visible) plugin instance.
+    [[nodiscard]] bool        isForeground(const Plugin* p) const noexcept { return p && active_.get() == p; }
 
     void dispatchButton(uint32_t button_code);
     void dispatchAction(uint32_t action_id, uint32_t idx, uint32_t user_data);

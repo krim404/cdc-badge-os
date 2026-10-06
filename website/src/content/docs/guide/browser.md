@@ -80,6 +80,10 @@ Many public Wi-Fi hotspots require a login on a portal page (an "I agree" or
   with **4 / 6**, toggle it with **Y**, then select the **[>]** submit control and
   press **Y** to send the form and gain access.
 - Portals that use a plain link to connect work via the in-page links.
+- Session cookies set by a page are sent back only to the host that set them,
+  never to a redirect target on another host, and cookies marked `Secure` go
+  out over HTTPS only. The periodic plain-HTTP connectivity probe carries no
+  cookies at all.
 
 Supported portal forms are limited to a submit button plus optional checkboxes
 (terms acceptance). Portals that need typed input (voucher, e-mail) or that build

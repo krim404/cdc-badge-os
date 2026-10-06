@@ -263,6 +263,11 @@ StartResult PluginManager::startPlugin(const std::string& id_ref)
               id.c_str(), check.detail.c_str());
         return StartResult::CapabilityRejected;
     }
+    std::string collision;
+    if (claimsCollide(id, mf, collision)) {
+        LOG_W(TAG, "capability check failed for %s: %s", id.c_str(), collision.c_str());
+        return StartResult::CapabilityRejected;
+    }
 
     auto plugin = std::make_unique<Plugin>();
     if (!plugin->load(id, mf)) {
@@ -554,6 +559,11 @@ void PluginManager::loadAutoloadPlugins()
             LOG_W(TAG, "autoload %s rejected: %s", id.c_str(), check.detail.c_str());
             continue;
         }
+        std::string collision;
+        if (claimsCollide(id, *mf, collision)) {
+            LOG_W(TAG, "autoload %s rejected: %s", id.c_str(), collision.c_str());
+            continue;
+        }
         if (loadIntoBackground(id, *mf)) {
             // Autoload is opt-in: plugin_init ran (its chance to call
             // host_set_resident(true)); keep it resident only if it did.
@@ -691,7 +701,42 @@ bool PluginManager::activateForMessageType(const char* mime)
         LOG_W(TAG, "msg activate %s rejected: %s", id.c_str(), check.detail.c_str());
         return false;
     }
+    std::string collision;
+    if (claimsCollide(id, *mf, collision)) {
+        LOG_W(TAG, "msg activate %s rejected: %s", id.c_str(), collision.c_str());
+        return false;
+    }
     return loadIntoBackground(id, *mf);
+}
+
+bool PluginManager::claimsCollide(const std::string& id, const PluginManifest& mf,
+                                  std::string& detail) const
+{
+    auto effectiveNs = [](const std::string& pid, const PluginManifest& m) {
+        return m.capabilities.nvs_namespace.empty() ? "plugin_" + pid
+                                                    : m.capabilities.nvs_namespace;
+    };
+    const std::string ns = effectiveNs(id, mf);
+    for (const std::string& other_id : listInstalledIds()) {
+        if (other_id == id) continue;
+        auto other = getManifest(other_id);
+        if (!other) continue;
+        if (ns == effectiveNs(other_id, *other)) {
+            detail = "nvs_namespace '" + ns + "' already claimed by " + other_id;
+            return true;
+        }
+        for (const std::string& n : mf.capabilities.rmem) {
+            for (const std::string& m : other->capabilities.rmem) {
+                if (n == m) { detail = "rmem '" + n + "' already claimed by " + other_id; return true; }
+            }
+        }
+        for (const std::string& n : mf.capabilities.ecc) {
+            for (const std::string& m : other->capabilities.ecc) {
+                if (n == m) { detail = "ecc '" + n + "' already claimed by " + other_id; return true; }
+            }
+        }
+    }
+    return false;
 }
 
 uint8_t PluginManager::getLockscreenItems(LockscreenItem* out, uint8_t max) const
@@ -929,6 +974,7 @@ void PluginManager::tickTaskLoop()
                 stopActivePlugin();
             }
         }
+        PluginUiState::instance().pollInactivity(static_cast<uint32_t>(esp_timer_get_time() / 1000));
         dispatchTick(esp_timer_get_time() / 1000);
     }
 }

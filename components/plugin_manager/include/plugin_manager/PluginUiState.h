@@ -72,6 +72,14 @@ public:
     [[nodiscard]] int acquireExclusive();
     [[nodiscard]] int releaseExclusive();
     [[nodiscard]] int setInactivity(uint32_t timeout_ms, uint32_t action_id);
+    /// Fires the plugin inactivity action once the UI has been idle for the
+    /// configured time; re-arms when input resumes. Called from the tick task.
+    void pollInactivity(uint32_t nowMs);
+    /// True if `view` is one of this plugin UI's own views (list, input, canvas, modal).
+    [[nodiscard]] bool ownsView(const cdc::ui::IView* view) const;
+    /// True if `plugin` is the foreground plugin and one of its views currently
+    /// has input focus (top of the view stack, or the top modal).
+    [[nodiscard]] bool hasInputFocus(const void* plugin) const;
 
     [[nodiscard]] int consumeInputText(char* out, size_t out_size);
     [[nodiscard]] int consumeInputInt (int32_t* out);
@@ -165,7 +173,6 @@ private:
     // date, time, color); onPinCancel pops the PinEntryView first.
     static void onInputCancel();
     static void onPinCancel ();
-    static void onInactivity();
     static void onViewHide(void* userData);
     static void onViewShow(void* userData);
     static void onCanvasKey      (char key, uint32_t focused_widget);
@@ -176,6 +183,14 @@ private:
     /// Grow the active list's capacity arrays (and re-point the view) so an
     /// insert has room. Returns false on OOM. Caller must hold listEditMutex.
     bool growList(uint16_t need);
+
+    /// Removes the current input view from the ViewStack and parks the state in
+    /// the graveyard, so a push issued from inside that view's own callback
+    /// never frees the object mid-dispatch.
+    void retireInput();
+    void retireCanvas();
+    void retireConfirm();
+    void retireContextMenu();
 
 public:
     void dispatchContextSelect(uint8_t idx);
@@ -191,8 +206,17 @@ private:
     // on the view stack. Destroyed in bulk on plugin stop so views that
     // ViewStack still references are never freed mid-dispatch.
     std::vector<std::unique_ptr<ListState>>     list_graveyard_;
+    // Same deferred-destruction rule for the other view kinds. Bounded: only
+    // the most recently retired state can still be mid-callback.
+    static constexpr size_t kGraveyardMax = 4;
+    std::vector<InputState>       input_graveyard_;
+    std::vector<CanvasState>      canvas_graveyard_;
+    std::vector<ConfirmState>     confirm_graveyard_;
+    std::vector<ContextMenuState> ctxmenu_graveyard_;
     const void*  exclusive_token_   = nullptr;
     uint32_t     inactivity_action_ = 0;
+    uint32_t     inactivity_timeout_ms_ = 0;
+    bool         inactivity_fired_ = false;
     uint32_t     lifecycle_hide_action_ = 0;
     uint32_t     lifecycle_show_action_ = 0;
 };

@@ -16,14 +16,20 @@ namespace cdc::browser {
 struct CookieJar {
     static constexpr uint8_t kMax = 8;
     static constexpr size_t  kItemCap = 160;  ///< "name=value" length cap.
+    static constexpr size_t  kHostCap = 96;
     char    items[kMax][kItemCap] = {};
     uint8_t count = 0;
+    char    host[kHostCap] = {};  ///< Host that set the cookies; the jar serves only it.
+    bool    secureOnly = false;   ///< Any cookie carried `Secure`: send over https only.
 
-    void clear() { count = 0; }
-    /// \brief Store a Set-Cookie value (keeps "name=value" up to the first ';').
-    void put(const char* setCookieValue);
-    /// \brief Build a "Cookie:" header value ("a=b; c=d") into \p out.
-    void header(char* out, size_t cap) const;
+    void clear() { count = 0; host[0] = '\0'; secureOnly = false; }
+    /// \brief Store a Set-Cookie value received from \p fromHost (keeps
+    ///        "name=value" up to the first ';'). A different host resets the jar.
+    void put(const char* fromHost, const char* setCookieValue);
+    /// \brief Build a "Cookie:" header value ("a=b; c=d") into \p out for a
+    ///        request to \p toHost; empty unless the host matches and the
+    ///        scheme satisfies \ref secureOnly.
+    void header(const char* toHost, bool https, char* out, size_t cap) const;
 };
 
 struct FetchResult {

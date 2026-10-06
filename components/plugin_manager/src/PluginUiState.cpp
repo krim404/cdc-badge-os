@@ -139,12 +139,79 @@ void PluginUiState::resetForPluginStop()
 
     list_.reset();
     list_graveyard_.clear();
-    ctxmenu_           = ContextMenuState{};
-    confirm_           = ConfirmState{};
-    input_             = InputState{};
-    canvas_            = CanvasState{};
+    retireContextMenu();
+    retireConfirm();
+    retireInput();
+    retireCanvas();
+    ctxmenu_graveyard_.clear();
+    confirm_graveyard_.clear();
+    input_graveyard_.clear();
+    canvas_graveyard_.clear();
+    if (exclusive_token_) vs.releaseExclusive(exclusive_token_);
     exclusive_token_   = nullptr;
     inactivity_action_ = 0;
+    inactivity_timeout_ms_ = 0;
+    inactivity_fired_  = false;
+}
+
+namespace {
+template <typename T>
+void parkInGraveyard(std::vector<T>& graveyard, T& state, size_t max) {
+    graveyard.push_back(std::move(state));
+    state = T{};
+    if (graveyard.size() > max) graveyard.erase(graveyard.begin());
+}
+}  // namespace
+
+void PluginUiState::retireInput()
+{
+    auto& vs = cdc::ui::ViewStack::instance();
+    vs.remove(input_.t9_view.get());
+    vs.remove(input_.pin_view.get());
+    vs.remove(input_.slider_view.get());
+    vs.remove(input_.date_view.get());
+    vs.remove(input_.time_view.get());
+    vs.remove(input_.color_view.get());
+    parkInGraveyard(input_graveyard_, input_, kGraveyardMax);
+}
+
+void PluginUiState::retireCanvas()
+{
+    cdc::ui::ViewStack::instance().remove(canvas_.view.get());
+    parkInGraveyard(canvas_graveyard_, canvas_, kGraveyardMax);
+}
+
+void PluginUiState::retireConfirm()
+{
+    cdc::ui::ViewStack::instance().removeModal(confirm_.view.get());
+    parkInGraveyard(confirm_graveyard_, confirm_, kGraveyardMax);
+}
+
+void PluginUiState::retireContextMenu()
+{
+    cdc::ui::ViewStack::instance().removeModal(ctxmenu_.view.get());
+    parkInGraveyard(ctxmenu_graveyard_, ctxmenu_, kGraveyardMax);
+}
+
+bool PluginUiState::ownsView(const cdc::ui::IView* view) const
+{
+    if (!view) return false;
+    if (list_ && list_->view.get() == view) return true;
+    for (const auto& l : list_graveyard_) {
+        if (l && l->view.get() == view) return true;
+    }
+    return input_.t9_view.get() == view || input_.pin_view.get() == view ||
+           input_.slider_view.get() == view || input_.date_view.get() == view ||
+           input_.time_view.get() == view || input_.color_view.get() == view ||
+           canvas_.view.get() == view || confirm_.view.get() == view ||
+           ctxmenu_.view.get() == view;
+}
+
+bool PluginUiState::hasInputFocus(const void* plugin) const
+{
+    if (!PluginManager::instance().isForeground(static_cast<const Plugin*>(plugin))) return false;
+    auto& vs = cdc::ui::ViewStack::instance();
+    return ownsView(vs.hasModal() ? vs.getModal() : vs.current());
 }
 
 void PluginUiState::onListMenu(uint16_t index, void* userData)
@@ -262,10 +329,17 @@ void PluginUiState::onPinCancel()
     if (action) PluginManager::instance().dispatchAction(action, 0, 0);
 }
 
-void PluginUiState::onInactivity()
+void PluginUiState::pollInactivity(uint32_t nowMs)
 {
-    uint32_t action = instance().inactivity_action_;
-    if (action) PluginManager::instance().dispatchAction(action, 0, 0);
+    if (!inactivity_action_ || !inactivity_timeout_ms_) return;
+    const uint32_t idle = cdc::ui::ViewStack::instance().idleMs(nowMs);
+    if (idle < inactivity_timeout_ms_) {
+        inactivity_fired_ = false;
+        return;
+    }
+    if (inactivity_fired_) return;
+    inactivity_fired_ = true;
+    PluginManager::instance().dispatchAction(inactivity_action_, 0, 0);
 }
 
 void PluginUiState::onViewHide(void* /*userData*/)
@@ -386,8 +460,9 @@ int PluginUiState::pushContextMenu(const char* title, const ui_item_t* items, ui
     next.view->init(next.title_buf ? next.title_buf.get() : "",
                     next.items.get(), static_cast<uint8_t>(count));
 
-    cdc::ui::ViewStack::instance().showModal(next.view.get());
+    retireContextMenu();
     ctxmenu_ = std::move(next);
+    cdc::ui::ViewStack::instance().showModal(ctxmenu_.view.get());
     return HOST_OK;
 }
 
@@ -577,7 +652,7 @@ int PluginUiState::removeListItem(uint16_t index)
 int PluginUiState::pushConfirm(const char* text, uint8_t icon, uint32_t action_id)
 {
     if (!text) return HOST_ERR_INVALID_ARG;
-    confirm_           = ConfirmState{};
+    retireConfirm();
     confirm_.view      = std::make_unique<cdc::ui::ConfirmView>();
     confirm_.action_id = action_id;
     std::string cpText = toDisplay(text);
@@ -592,7 +667,7 @@ int PluginUiState::pushT9(const char* title, const char* initial,
                           uint16_t max_len, uint32_t action_id)
 {
     if (!title || max_len == 0) return HOST_ERR_INVALID_ARG;
-    input_           = InputState{};
+    retireInput();
     input_.action_id = action_id;
     std::string cpTitle = toDisplay(title);
     input_.title_buf = psramAlloc<char>(cpTitle.size() + 1);
@@ -611,7 +686,7 @@ int PluginUiState::pushPin(const char* title, uint8_t max_len, uint8_t max_attem
                            uint32_t action_id)
 {
     if (!title || max_len == 0) return HOST_ERR_INVALID_ARG;
-    input_           = InputState{};
+    retireInput();
     input_.action_id = action_id;
     std::string cpTitle = toDisplay(title);
     input_.pin_view  = std::make_unique<cdc::ui::PinEntryView>();
@@ -626,7 +701,7 @@ int PluginUiState::pushSlider(const char* title, int32_t min, int32_t max, int32
                               int32_t step, const char* unit, uint32_t action_id)
 {
     if (!title || min >= max) return HOST_ERR_INVALID_ARG;
-    input_             = InputState{};
+    retireInput();
     input_.action_id   = action_id;
     std::string cpTitle = toDisplay(title);
     input_.title_buf = psramAlloc<char>(cpTitle.size() + 1);
@@ -648,7 +723,7 @@ int PluginUiState::pushDate(const char* title, uint8_t d, uint8_t m, uint16_t y,
                             uint32_t action_id)
 {
     if (!title) return HOST_ERR_INVALID_ARG;
-    input_           = InputState{};
+    retireInput();
     input_.action_id = action_id;
     std::string cpTitle = toDisplay(title);
     input_.date_view = std::make_unique<cdc::ui::DateInputView>();
@@ -662,7 +737,7 @@ int PluginUiState::pushDate(const char* title, uint8_t d, uint8_t m, uint16_t y,
 int PluginUiState::pushTime(const char* title, uint8_t h, uint8_t m, uint32_t action_id)
 {
     if (!title) return HOST_ERR_INVALID_ARG;
-    input_           = InputState{};
+    retireInput();
     input_.action_id = action_id;
     std::string cpTitle = toDisplay(title);
     input_.time_view = std::make_unique<cdc::ui::TimeInputView>();
@@ -675,7 +750,7 @@ int PluginUiState::pushTime(const char* title, uint8_t h, uint8_t m, uint32_t ac
 
 int PluginUiState::pushColorPicker(uint8_t r, uint8_t g, uint8_t b, uint32_t action_id)
 {
-    input_            = InputState{};
+    retireInput();
     input_.action_id  = action_id;
     input_.color_view = std::make_unique<cdc::ui::ColorPickerView>();
     input_.color_view->init(r, g, b);
@@ -688,7 +763,7 @@ int PluginUiState::pushColorPicker(uint8_t r, uint8_t g, uint8_t b, uint32_t act
 int PluginUiState::pushCanvas(const char* title, uint32_t key_action_id,
                                uint32_t widget_action_id)
 {
-    canvas_ = CanvasState{};
+    retireCanvas();
 
     if (title && *title) {
         std::string cp = toDisplay(title);
@@ -727,6 +802,9 @@ int PluginUiState::acquireExclusive()
 {
     void* plugin = plg_get_active_plugin();
     if (!plugin) return HOST_ERR_NO_CAPABILITY;
+    if (!static_cast<Plugin*>(plugin)->manifest().capabilities.ui_exclusive) {
+        return HOST_ERR_NO_CAPABILITY;
+    }
     exclusive_token_ = plugin;
     return cdc::ui::ViewStack::instance().acquireExclusive(plugin) ? HOST_OK : HOST_ERR_BUSY;
 }
@@ -741,10 +819,10 @@ int PluginUiState::releaseExclusive()
 
 int PluginUiState::setInactivity(uint32_t timeout_ms, uint32_t action_id)
 {
-    inactivity_action_ = action_id;
-    cdc::ui::ViewStack::instance().setInactivityTimeout(
-        action_id ? &PluginUiState::onInactivity : nullptr,
-        action_id ? timeout_ms : 0);
+    // Plugin timer only; the system auto-lock timer in ViewStack is untouched.
+    inactivity_action_     = action_id;
+    inactivity_timeout_ms_ = action_id ? timeout_ms : 0;
+    inactivity_fired_      = false;
     return HOST_OK;
 }
 

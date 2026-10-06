@@ -30,6 +30,8 @@ static bool s_initialized = false;
 
 /** \brief Optional console hooks for additional I/O transports (for example BLE). */
 static console_output_hook_t s_output_hook = nullptr;
+static bool s_last_input_from_hook = false;
+static uint8_t s_output_route = CONSOLE_ROUTE_ALL;
 static console_input_available_hook_t s_input_avail_hook = nullptr;
 static log_authgate_hook_t s_authgate_hook = nullptr;
 static console_input_getchar_hook_t s_input_getchar_hook = nullptr;
@@ -286,6 +288,7 @@ int console_getchar(void) {
 #if CONFIG_TINYUSB_CDC_ENABLED
     // Priority 1: USB CDC
     if (tud_cdc_connected() && tud_cdc_available()) {
+        s_last_input_from_hook = false;
         return tud_cdc_read_char();
     }
 #endif
@@ -294,6 +297,7 @@ int console_getchar(void) {
     if (s_input_getchar_hook) {
         int c = s_input_getchar_hook();
         if (c >= 0) {
+            s_last_input_from_hook = true;
             return c;
         }
     }
@@ -301,9 +305,18 @@ int console_getchar(void) {
     // Fallback: UART via stdin
     int c = getchar();
     if (c != EOF) {
+        s_last_input_from_hook = false;
         return c;
     }
     return -1;
+}
+
+bool console_input_from_hook(void) {
+    return s_last_input_from_hook;
+}
+
+void console_set_output_route(uint8_t mask) {
+    s_output_route = mask;
 }
 
 /**
@@ -326,7 +339,7 @@ void console_print(const char* str) {
     // device end-to-end. We give the FIFO a short retry window and then drop
     // the rest of this log line: dropping a log entry is non-fatal, but
     // hanging on it is.
-    if (s_initialized && tud_cdc_connected()) {
+    if (s_initialized && tud_cdc_connected() && (s_output_route & CONSOLE_ROUTE_USB)) {
         size_t written = 0;
         const TickType_t deadline =
             xTaskGetTickCount() + pdMS_TO_TICKS(20);
@@ -347,7 +360,7 @@ void console_print(const char* str) {
 #endif
 
     // Also send to output hook (e.g., BLE)
-    if (s_output_hook) {
+    if (s_output_hook && (s_output_route & CONSOLE_ROUTE_HOOK)) {
         s_output_hook(str, len);
     }
 }

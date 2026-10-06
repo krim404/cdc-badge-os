@@ -202,7 +202,7 @@ PIN, pre-hash new value) before `PUT DATA 0xF9` turns the mode on.
 
 | Command | Effect |
 | --- | --- |
-| `CHANGE REFERENCE DATA` (`0x24`) | Change PW1 / PW3 given the old PIN |
+| `CHANGE REFERENCE DATA` (`0x24`) | Change PW1 / PW3 given the old PIN. Each failed attempt consumes one retry of that PIN (persisted before the check); a blocked PIN answers `6983` |
 | `RESET RETRY COUNTER` (`0x2C`), `P1=0x02` | Reset PW1, requires PW3 |
 | `RESET RETRY COUNTER` (`0x2C`), `P1=0x00` | Reset PW1 using the Resetting Code |
 | `TERMINATE DF` (`0xE6`) | Terminate; needs PW3, or both PINs blocked |

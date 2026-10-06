@@ -7,8 +7,11 @@
 #include "OathApplet.h"
 #include "mod_2fa/OathStore.h"
 #include "cdc_hal/ISecureElement.h"
+#include "cdc_ui/I18n.h"
+#include "cdc_views/ConfirmView.h"
 #include "cdc_log.h"
 
+#include <esp_timer.h>
 #include <nvs.h>
 #include <mbedtls/md.h>
 #include <cstring>
@@ -21,6 +24,14 @@ constexpr char kDevIdKey[] = "oath_devid";
 constexpr char kAccessKey[] = "oath_akey";
 
 const char* TAG = "OATH";
+
+// A confirmed touch releases one CALCULATE for that slot within this window.
+constexpr int64_t kTouchWindowUs = 15 * 1000 * 1000;
+constexpr uint16_t kNoSlot = 0xFFFF;
+
+volatile uint16_t s_touchPromptSlot = kNoSlot;  // prompt currently on screen
+volatile uint16_t s_touchArmedSlot = kNoSlot;   // confirmed, not yet consumed
+volatile int64_t s_touchArmedUntilUs = 0;
 
 OathStore& store() { return OathStore::instance(); }
 
@@ -131,10 +142,35 @@ bool beRng(uint8_t* buf, size_t len) {
     return se && se->getRandom(buf, static_cast<uint16_t>(len));
 }
 
+void onTouchConfirm(void*) {
+    s_touchArmedSlot = s_touchPromptSlot;
+    s_touchArmedUntilUs = esp_timer_get_time() + kTouchWindowUs;
+    s_touchPromptSlot = kNoSlot;
+}
+
+void onTouchCancel(void*) {
+    s_touchPromptSlot = kNoSlot;
+}
+
+// Runs in the USB task (CCID is synchronous), so the prompt is shown and the
+// APDU is answered immediately; the confirmation arms the next CALCULATE.
+bool beTouchOk(uint16_t slot) {
+    if (s_touchArmedSlot == slot && esp_timer_get_time() < s_touchArmedUntilUs) {
+        s_touchArmedSlot = kNoSlot;
+        return true;
+    }
+    if (s_touchPromptSlot == kNoSlot) {
+        s_touchPromptSlot = slot;
+        ui::showConfirm(ui::tr("mod_2fa.touch_confirm"), onTouchConfirm, onTouchCancel,
+                        ui::ConfirmView::Icon::QUESTION, nullptr);
+    }
+    return false;
+}
+
 const oath_backend_t g_backend = {
     beCapacity, beRead, beCalculate, beAddRaw, beRemove, beWipeAll,
     beDevId, beAkeyGet, beAkeySet, beAkeyClear,
-    beHmacSha1, beRng,
+    beHmacSha1, beRng, beTouchOk,
 };
 
 } // namespace

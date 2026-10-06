@@ -99,7 +99,8 @@ Key lifecycle, as implemented by the attestation key service:
 3. It reads back the public key, hashes it, and stores that hash in NVS
    (namespace `attest`).
 4. On later boots it re-reads the slot and compares the public-key hash against
-   the stored value. A mismatch, an empty slot, or a wrong curve triggers
+   the stored value. The hash in NVS is only a cache: a mismatch refreshes the
+   cache from the secure element. An empty slot or a wrong curve triggers
    regeneration.
 
 Because the key is generated locally and lazily, a freshly flashed or wiped

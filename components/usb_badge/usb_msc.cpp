@@ -7,6 +7,7 @@
  */
 
 #include "usb_badge/usb_msc.h"
+#include "cdc_core/EventBus.h"
 #include "cdc_log.h"
 
 extern "C" {
@@ -108,6 +109,7 @@ void tud_umount_cb(void) {
     // USB disconnect (including our own re-enumeration): release the volume so
     // the badge regains write access and refreshes its view.
     if (s_backend && s_backend->set_host_active) s_backend->set_host_active(false);
+    cdc::core::EventBus::instance().publish(cdc::core::EventType::POWER_USB_DISCONNECTED);
 }
 
 } // extern "C"

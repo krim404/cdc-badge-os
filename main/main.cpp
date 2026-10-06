@@ -273,6 +273,13 @@ static bool initCoreServices() {
     LOG_I(TAG, "Open Hardware Security");
     LOG_I(TAG, "=================================");
 
+    // USB attach/detach arrive from the TinyUSB task via the queued EventBus and
+    // reach the module lifecycle hooks from the main loop.
+    EventBus::instance().subscribe([](const Event&) { ModuleRegistry::instance().dispatchUsbConnect(); },
+                                   EventBus::eventMask(EventType::POWER_USB_CONNECTED));
+    EventBus::instance().subscribe([](const Event&) { ModuleRegistry::instance().dispatchUsbDisconnect(); },
+                                   EventBus::eventMask(EventType::POWER_USB_DISCONNECTED));
+
     LOG_I(TAG, "EventBus ready");
     LOG_I(TAG, "USB CDC ready");
     LOG_I(TAG, "ServiceRegistry ready (capacity: %u)", ServiceRegistry::MAX_SERVICES);

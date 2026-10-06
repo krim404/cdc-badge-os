@@ -60,7 +60,7 @@ bool BleUartService::init() {
     // RX characteristic (phone writes to badge)
     chars[0].uuid = BleUuid::from128(NUS_RX_UUID);
     chars[0].properties = GattProp::WRITE | GattProp::WRITE_NO_RSP;
-    chars[0].permissions = GattPerm::WRITE;
+    chars[0].permissions = GattPerm::WRITE_ENC;
     chars[0].valueHandle = nullptr;
     chars[0].onWrite = [](uint16_t /*connHandle*/, uint16_t /*attrHandle*/,
                           const uint8_t* data, uint16_t len) -> int {
@@ -72,7 +72,7 @@ bool BleUartService::init() {
     // TX characteristic (badge notifies phone)
     chars[1].uuid = BleUuid::from128(NUS_TX_UUID);
     chars[1].properties = GattProp::NOTIFY;
-    chars[1].permissions = GattPerm::READ;
+    chars[1].permissions = GattPerm::READ_ENC;
     chars[1].valueHandle = &txCharHandle_;
     chars[1].onWrite = nullptr;
     chars[1].onRead = nullptr;

@@ -393,7 +393,8 @@ void doFetchWork()
     s_resultMsg = nullptr;
     auto* wifi = hal::getWifiControllerInstance();
     if (s_job == Job::Probe) {  // background captive detection (silent; verdict applied in pollLoad)
-        int st = (wifi && wifi->isConnected()) ? probe(kCaptiveProbeUrl, &s_jar) : -1;
+        // Plain-http probe: never carries the session jar.
+        int st = (wifi && wifi->isConnected()) ? probe(kCaptiveProbeUrl, nullptr) : -1;
         s_probeResult = (st > 0 && st != 204);
         return;
     }

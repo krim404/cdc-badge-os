@@ -185,7 +185,20 @@ int host_msg_register_handler(const char* mime_type, uint32_t action_id) {
         }
     }
 
+    // Only MIME types declared in the manifest, and never one a firmware
+    // module (vCard, GPG keys) already serves.
+    {
+        auto* p = static_cast<cdc::plugin_manager::Plugin*>(plugin);
+        bool declared = false;
+        for (const auto& t : p->manifest().capabilities.message_types) {
+            if (t == mime_type) { declared = true; break; }
+        }
+        if (!declared) return HOST_ERR_NO_CAPABILITY;
+    }
     int idx = find_handler(plugin, mime_type);
+    if (idx < 0 && msg::MessageTransfer::instance().hasHandler(mime_type)) {
+        return HOST_ERR_BUSY;
+    }
     if (idx < 0) {
         for (int i = 0; i < MAX_HANDLERS; ++i) {
             if (!s_handlers[i].used) { idx = i; break; }

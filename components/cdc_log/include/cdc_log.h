@@ -115,6 +115,23 @@ typedef int (*console_input_getchar_hook_t)(void);
 void console_register_output_hook(console_output_hook_t hook);
 
 /**
+ * \brief Returns whether the most recent console_getchar() byte came from the
+ *        input hook (e.g. BLE) rather than USB CDC / UART.
+ * \return `true` for the hook transport.
+ */
+bool console_input_from_hook(void);
+
+#define CONSOLE_ROUTE_USB  0x01  ///< USB CDC output
+#define CONSOLE_ROUTE_HOOK 0x02  ///< Output hook transport (e.g. BLE)
+#define CONSOLE_ROUTE_ALL  (CONSOLE_ROUTE_USB | CONSOLE_ROUTE_HOOK)
+
+/**
+ * \brief Selects which console transports receive output (UART always does).
+ * \param mask Bitmask of CONSOLE_ROUTE_* values.
+ */
+void console_set_output_route(uint8_t mask);
+
+/**
  * \brief Registers the console input hooks (only one set supported at a time).
  * \param avail_hook Available-check callback, or NULL to unregister.
  * \param getchar_hook Getchar callback, or NULL to unregister.

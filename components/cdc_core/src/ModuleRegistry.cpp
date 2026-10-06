@@ -340,6 +340,7 @@ void ModuleRegistry::dispatchUnlock() {
             modules_[i]->onUnlock();
         }
     }
+    EventBus::instance().publish(EventType::SYSTEM_UNLOCK);
 }
 
 /**
@@ -351,6 +352,7 @@ void ModuleRegistry::dispatchLock() {
             modules_[i]->onLock();
         }
     }
+    EventBus::instance().publish(EventType::SYSTEM_LOCK);
 }
 
 /**

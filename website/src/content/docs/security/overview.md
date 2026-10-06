@@ -17,14 +17,15 @@ against the firmware source.
   key out.
 - The keys for FIDO2, GPG, and the device's own identity are **generated inside
   the secure element**, so for those keys no private value ever existed off-chip.
-- The device is gated by a **badge PIN**. Too many wrong tries trigger a short,
+- The device is gated by a **badge PIN**. Too many wrong tries trigger an escalating,
   self-recovering lockout, not a permanent brick.
 - As an OpenPGP smartcard the badge also has the standard **PW1/PW3 card PINs**,
   which follow smartcard rules: their counters are persistent and can lock the
   card.
 - An optional **duress PIN** can wipe the device when entered.
-- The PIN record is **signed by a chip-bound key**, so tampering with it forces
-  a reset to defaults rather than trusting the altered data.
+- The PIN record is **signed by a chip-bound key**. A record with a bad
+  signature, or one that cannot be read, keeps every PIN blocked (it is never
+  replaced by the default PIN); only an empty slot is initialised with defaults.
 
 :::caution[Beta firmware]
 This is pre-1.0 beta. Data on the badge can be wiped by a flash, a breaking
@@ -51,7 +52,8 @@ A few security-relevant things happen without you asking:
   mechanism the duress self-destruct uses. See
   [Beta status & caveats](/security/caveats/).
 - **Self-recovering PIN lockout.** A blocked badge PIN restores its attempts
-  after a short recovery window, automatically.
+  after a recovery window that doubles with every consecutive lockout (60 s up
+  to about 17 hours), automatically.
 
 ## Read next
 

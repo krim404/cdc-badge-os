@@ -28,6 +28,14 @@ column below. Two rules combine at dispatch time
 Auth is checked at the **group level**: every subcommand of an AUTH-gated group
 needs authentication, including read-only ones.
 
+The session is **per transport**: USB CDC (and UART) and the BLE serial console
+each have their own `AUTH` state and timeout. Echo and command output are
+returned only to the transport the command came from, and the argument of
+`AUTH` is echoed as `*`. A command line is assembled from one transport only
+(a byte from the other transport discards the partial line), a binary upload
+accepts bytes only from the transport that started it, and `AUTH` lines are
+never stored in the command history.
+
 ## Global commands
 
 ### System

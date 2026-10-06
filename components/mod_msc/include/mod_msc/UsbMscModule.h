@@ -31,6 +31,9 @@ public:
 private:
     UsbMscModule() = default;
     core::ServiceState state_ = core::ServiceState::UNINITIALIZED;
+    bool locked_ = true;  // lock screen is the root view at boot
+
+    void onLockChanged(bool locked);
 };
 
 } // namespace cdc::mod_msc

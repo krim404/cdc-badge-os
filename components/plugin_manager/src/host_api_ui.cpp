@@ -10,6 +10,7 @@
 
 #include "plugin_manager/host_api.h"
 #include "plugin_manager/PluginManager.h"
+#include "plugin_manager/Plugin.h"
 #include "cdc_hal/IDisplay.h"
 #include "cdc_views/ToastView.h"
 #include "cdc_views/InfoView.h"
@@ -18,6 +19,8 @@
 #include "cdc_views/HtmlViewerHook.h"
 #include "cdc_ui/ViewStack.h"
 #include "host_str_conv.h"
+
+extern "C" void* plg_get_active_plugin(void);
 
 #include <string>
 
@@ -85,6 +88,8 @@ int host_ui_view_markdown(const uint8_t* data, uint32_t len)
 int host_browser_open(const char* url)
 {
     if (!url || !url[0]) return HOST_ERR_INVALID_ARG;
+    auto* p = static_cast<cdc::plugin_manager::Plugin*>(plg_get_active_plugin());
+    if (!p || !p->manifest().capabilities.http) return HOST_ERR_NO_CAPABILITY;
     cdc::ui::UrlOpenerFn opener = cdc::ui::urlOpener();
     if (!opener) return HOST_ERR_NOT_SUPPORTED;  // browser module not present
     opener(url);  // URL stays raw UTF-8 (not display-converted)

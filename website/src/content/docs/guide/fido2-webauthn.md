@@ -113,7 +113,10 @@ or delete credentials that way.
 ### Resetting all credentials
 
 A platform "reset authenticator" request erases **all** FIDO2 credentials. The
-badge requires you to confirm this on the device with <kbd>Y</kbd> first.
+badge accepts it only within **10 seconds** after it was plugged into USB (or
+after boot); unplug and reconnect the badge when the platform asks you to. The
+badge then shows a "RESET FIDO2" prompt that you confirm with <kbd>Y</kbd>, and
+asks for the badge PIN first when it is locked.
 
 ## Capacity
 

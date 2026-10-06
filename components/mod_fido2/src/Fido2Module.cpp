@@ -345,6 +345,12 @@ bool Fido2Module::start() {
                 LOG_I(TAG, "Aborted active FIDO2 prompt before sleep");
             }
         }, core::EventBus::eventMask(core::EventType::SYSTEM_SLEEP_INCOMING));
+        bus.subscribe([](const core::Event&) { fido2_ui_set_locked(true); },
+                      core::EventBus::eventMask(core::EventType::SYSTEM_LOCK));
+        bus.subscribe([](const core::Event&) { fido2_ui_set_locked(false); },
+                      core::EventBus::eventMask(core::EventType::SYSTEM_UNLOCK));
+        bus.subscribe([](const core::Event&) { fido2_note_usb_connect(); },
+                      core::EventBus::eventMask(core::EventType::POWER_USB_CONNECTED));
         sleepHandlerRegistered = true;
     }
 

@@ -123,7 +123,10 @@ CR requests can be served over three paths:
 - **Serial** — `CHALRESP <name> <hex-challenge>` computes the response for the
   named CR entry and prints it as hex. This path is AUTH-gated and does not ask
   for touch confirmation.
-- **BLE** — a GATT service accepts a challenge and notifies the response.
+- **BLE** — a GATT service accepts a challenge and notifies the response. The
+  characteristics require an encrypted, paired link (numeric comparison). The
+  badge turns Bluetooth on at boot for this service only while at least one CR
+  entry exists.
 - **USB OTP HID** — a Yubico-style slot-2 responder (requires the separate USB
   OTP HID module; see the developer protocol page).
 
@@ -133,6 +136,15 @@ When you add a CR entry you can set **Touch confirm** to *Required*. When
 required, the badge shows an on-device confirmation prompt before releasing the
 response over the BLE and USB transports; the request is only answered after you
 confirm. The serial `CHALRESP` path does not apply this gate.
+
+### Touch-required codes over CCID
+
+A TOTP or HOTP account stored with the touch property (for example
+`ykman oath accounts add --touch`) is not computed silently over the CCID
+(YKOATH) interface. `CALCULATE ALL` lists it with the touch tag instead of a
+code, and a single `CALCULATE` for it answers `6985` and shows a confirmation
+prompt on the badge. Confirm on the badge, then request the code again within
+15 seconds to receive it. Each confirmation releases exactly one code.
 
 ### USB slot 2 designation
 

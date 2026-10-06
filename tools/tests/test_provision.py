@@ -397,7 +397,7 @@ def test_expect_ok_dies_on_error(capsys):
 
 def test_parse_profile_extracts_fields():
     p = prov._parse_profile(
-        ["Firmware: 0.8.1",
+        ["Firmware: 0.8.2",
          "Profile: 0x02 debug=0 secure_serial=1 provisioning=0 "
          "pairing_slot=1 flash_enc=1 secure_boot=1"])
     assert p["flash_enc"] == "1" and p["pairing_slot"] == "1"

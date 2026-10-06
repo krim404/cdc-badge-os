@@ -2126,12 +2126,12 @@ done:
 typedef bool (*pin_change_fn_t)(const char *pin);
 
 /**
- * \brief Searches the split point for `CHANGE REFERENCE DATA` without consuming retries.
+ * \brief Searches the split point for `CHANGE REFERENCE DATA`.
  *
- * Iterates over candidate old-PIN lengths and uses a non-decrementing hash
- * comparison. Only the matched split is applied through `change_fn`; the
- * underlying retry counter is left untouched until the caller consumes one
- * retry on overall failure.
+ * Iterates over candidate old-PIN lengths with a non-decrementing hash
+ * comparison. The caller consumes exactly one retry before invoking this, so
+ * the whole search costs one attempt and a matched split resets the counter
+ * through `change_fn`.
  *
  * \param data Concatenated old||new PIN bytes.
  * \param len Total length of `data`.
@@ -2273,19 +2273,24 @@ static int cmd_change_reference_data(const apdu_t *apdu, uint8_t *resp, size_t r
         return apdu_sw(resp, SW_WRONG_LENGTH);
     }
 
-    if (try_change_pin(apdu->data, apdu->lc, min_len, slot, change_fn)) {
-        LOG_I(TAG, "%s changed successfully", log_label);
-        return apdu_sw(resp, SW_OK);
+    // Smartcard semantics: a blocked slot stays blocked, and one retry is
+    // consumed (persisted) before the split search so a failed CHANGE costs
+    // exactly one attempt. A successful change resets the counter.
+    const bool blocked = (slot == PIN_SLOT_PW1) ? pin_storage_openpgp_pw1_blocked()
+                                                : pin_storage_openpgp_pw3_blocked();
+    if (blocked) {
+        return apdu_sw(resp, SW_AUTH_METHOD_BLOCKED);
     }
-
-    pin_slot_t slot_for_decrement = slot;
     char dummy_pin[OPENPGP_PIN_MAX_LEN + 1] = {};
-    // Trigger a single retry decrement via the regular path to keep the
-    // remote counter in sync with the failed CHANGE attempt.
-    if (slot_for_decrement == PIN_SLOT_PW1) {
+    if (slot == PIN_SLOT_PW1) {
         pin_storage_openpgp_verify_pw1(dummy_pin);
     } else {
         pin_storage_openpgp_verify_pw3(dummy_pin);
+    }
+
+    if (try_change_pin(apdu->data, apdu->lc, min_len, slot, change_fn)) {
+        LOG_I(TAG, "%s changed successfully", log_label);
+        return apdu_sw(resp, SW_OK);
     }
 
     uint8_t retries = retries_fn();

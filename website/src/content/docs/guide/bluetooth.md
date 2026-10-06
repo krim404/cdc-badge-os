@@ -48,6 +48,10 @@ then:
 
 If you do nothing, the prompt rejects automatically after a timeout (30 seconds).
 
+Every encrypted link to the badge must be MITM-authenticated. A peer that
+offers only "Just Works" pairing (no display, no keyboard) is disconnected as
+soon as encryption comes up, and the pairing is reported as failed.
+
 :::note
 This is the same numeric-comparison confirmation that badge-to-badge transfer
 uses, just initiated by a host instead of another badge.
@@ -116,4 +120,8 @@ dBm), and the badge's advertised name.
 - **BLE keyboard** for [auto-type](/guide/auto-type/) — pair via **Pair device**.
 - **Badge-to-badge transfer** (the beacon) — used by
   [vCard exchange](/guide/vcard/).
-- **BLE serial** console.
+- **BLE serial** console. Its characteristics require an encrypted, paired
+  link, so the first connection from a phone triggers the numeric-comparison
+  pairing. The serial `AUTH` session is per transport: authenticating over USB
+  does not authenticate the BLE console, and the PIN typed after `AUTH` is
+  echoed as `*`.

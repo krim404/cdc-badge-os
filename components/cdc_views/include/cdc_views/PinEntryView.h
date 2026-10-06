@@ -20,7 +20,6 @@ namespace cdc::ui {
 class PinEntryView : public ViewBase {
 public:
     static constexpr uint8_t MAX_PIN_LENGTH = 8;
-    static constexpr uint32_t LOCKOUT_DURATION_MS = 60000;  // 1 minute lockout
 
     /**
      * PIN complete callback

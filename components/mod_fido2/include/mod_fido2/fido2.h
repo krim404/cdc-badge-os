@@ -38,7 +38,8 @@ typedef enum {
     FIDO2_ACTION_REGISTER = 0,  // makeCredential, new credential
     FIDO2_ACTION_AUTHENTICATE,  // getAssertion
     FIDO2_ACTION_SELECT,        // Device selection (authenticatorSelection 0x0B / make.me.blink probe) - user presence only, no PIN
-    FIDO2_ACTION_OVERWRITE      // makeCredential replacing an existing resident credential
+    FIDO2_ACTION_OVERWRITE,     // makeCredential replacing an existing resident credential
+    FIDO2_ACTION_RESET          // authenticatorReset: deletes every credential
 } fido2_action_t;
 
 #ifdef __DOXYGEN__
@@ -155,6 +156,18 @@ bool fido2_delete_credential(uint8_t slot);
  * @return true on success
  */
 bool fido2_factory_reset(void);
+
+/**
+ * \brief Records a USB attach; authenticatorReset is allowed for 10 s afterwards.
+ */
+void fido2_note_usb_connect(void);
+
+/**
+ * \brief Returns whether authenticatorReset is currently allowed
+ *        (within 10 s after boot or after the last USB attach).
+ * \return `true` if a reset may proceed.
+ */
+bool fido2_reset_window_open(void);
 
 // ============================================================================
 // Authentication Counter

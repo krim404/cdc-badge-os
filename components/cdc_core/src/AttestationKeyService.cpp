@@ -155,16 +155,9 @@ bool AttestationKeyService::ensureKey() {
         if (memcmp(stored, hash, sizeof(hash)) == 0) {
             return true;
         }
-        LOG_W(TAG, "Attestation key mismatch, regenerating");
-        secureElement_->eccDelete(ATTESTATION_ECC_SLOT);
-        if (secureElement_->eccGenerate(ATTESTATION_ECC_SLOT, hal::EccCurve::P256) !=
-            hal::SeResult::OK) {
-            LOG_E(TAG, "Failed to regenerate attestation key");
-            return false;
-        }
-        res = secureElement_->eccGetPublicKey(ATTESTATION_ECC_SLOT, pubkey, &curve);
-        if (res != hal::SeResult::OK) return false;
-        mbedtls_sha256(pubkey, sizeof(pubkey), hash, 0);
+        // The secure element holds the key; the NVS hash is only a cache.
+        // A stale cache is refreshed, never used as a reason to replace the key.
+        LOG_W(TAG, "Attestation key hash cache stale, refreshing");
     }
 
     if (!saveStoredHash(hash, sizeof(hash))) {

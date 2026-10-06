@@ -97,6 +97,10 @@ static struct {
 #define PIN_PERM_LARGE_BLOB_WRITE   0x10    // lbw
 #define PIN_PERM_AUTHN_CONFIG       0x20    // acfg
 
+static uint8_t verify_token_over_message(const uint8_t *msg, size_t msg_len,
+                                         uint8_t protocol, const uint8_t *param,
+                                         size_t param_len, uint8_t required_perm);
+
 static struct {
     bool initialized;
 
@@ -251,6 +255,7 @@ static uint16_t ctap2_build_cred_protect_extension(uint8_t level, uint8_t *out, 
  * \param attested_cred Encoded attested credential data.
  * \param attested_len Length of `attested_cred`.
  * \param cred_protect Requested credProtect level.
+ * \param uv_verified `true` when this request carried a verified pinUvAuthParam.
  * \param auth_data Destination buffer for authenticator data.
  * \param auth_data_len Output length.
  * \return `true` on success, otherwise `false`.
@@ -259,13 +264,13 @@ static bool ctap2_build_auth_data_for_cred(const uint8_t *rp_id_hash,
                                            const uint8_t *attested_cred,
                                            uint16_t attested_len,
                                            uint8_t cred_protect,
+                                           bool uv_verified,
                                            uint8_t *auth_data,
                                            uint16_t *auth_data_len) {
     // Flags: UP=0x01, UV=0x04, AT=0x40, ED=0x80
     uint8_t flags = 0x01 | 0x40;  // UP=1, AT=1
-    bool pin_verified = fido2_is_pin_verified();
-    LOG_I(TAG, "Building authData: pin_verified=%d, cred_protect=%u", pin_verified, cred_protect);
-    if (pin_verified) {
+    LOG_I(TAG, "Building authData: uv=%d, cred_protect=%u", uv_verified, cred_protect);
+    if (uv_verified) {
         flags |= 0x04;  // UV=1 when PIN was verified
         LOG_I(TAG, "UV flag SET -> flags=0x%02X", flags);
     }
@@ -740,6 +745,7 @@ struct MakeCredentialParams {
     char user_name[FIDO2_USER_NAME_MAX_LEN];
     bool rk;
     uint8_t cred_protect;
+    bool uv_verified;
     int alg;
     bool option_uv;
     bool option_up;
@@ -998,7 +1004,7 @@ static uint8_t parse_make_credential_params(const uint8_t *data, uint16_t data_l
  * \param p Parsed makeCredential parameters.
  * \return CTAP2 status code.
  */
-static uint8_t verify_pin_uv_auth(const MakeCredentialParams *p) {
+static uint8_t verify_pin_uv_auth(MakeCredentialParams *p) {
     LOG_D(TAG, "pinToken valid=%d", g_client_pin.pin_token_valid);
 
     if (p->pin_uv_auth_param_len == 0) {
@@ -1007,6 +1013,15 @@ static uint8_t verify_pin_uv_auth(const MakeCredentialParams *p) {
 
     if (!g_client_pin.pin_token_valid) {
         LOG_W(TAG, "makeCredential: pinUvAuthParam provided but no valid pinToken");
+        return CTAP2_ERR_PIN_AUTH_INVALID;
+    }
+    if (!(g_client_pin.token_permissions & PIN_PERM_MAKE_CREDENTIAL)) {
+        LOG_W(TAG, "makeCredential: pinUvAuthToken lacks mc permission");
+        return CTAP2_ERR_PIN_AUTH_INVALID;
+    }
+    if (g_client_pin.token_rp_id_set &&
+        memcmp(g_client_pin.token_rp_id_hash, p->rp_id_hash, 32) != 0) {
+        LOG_W(TAG, "makeCredential: pinUvAuthToken bound to another rpId");
         return CTAP2_ERR_PIN_AUTH_INVALID;
     }
 
@@ -1026,6 +1041,7 @@ static uint8_t verify_pin_uv_auth(const MakeCredentialParams *p) {
     }
 
     LOG_I(TAG, "makeCredential: pinUvAuthParam verified - UV=1");
+    p->uv_verified = true;
     fido2_set_pin_verified(true);
     return CTAP2_OK;
 }
@@ -1102,7 +1118,7 @@ static uint8_t handle_browser_probe(const MakeCredentialParams *p,
     }
 
     if (!ctap2_build_auth_data_for_cred(p->rp_id_hash, attested_cred, attested_len,
-                                        0, auth_data, &auth_data_len)) {
+                                        0, p->uv_verified, auth_data, &auth_data_len)) {
         mbedtls_ecp_keypair_free(&ephemeral_key);
         response[0] = CTAP2_ERR_OTHER;
         *response_len = 1;
@@ -1198,7 +1214,7 @@ static uint8_t create_credential_and_respond(const MakeCredentialParams *p,
                                    attested_cred, sizeof(attested_cred),
                                    &attested_len) ||
         !ctap2_build_auth_data_for_cred(p->rp_id_hash, attested_cred, attested_len,
-                                        p->cred_protect, auth_data, &auth_data_len)) {
+                                        p->cred_protect, p->uv_verified, auth_data, &auth_data_len)) {
         return mc_rollback_credential(slot, response, response_len);
     }
 
@@ -1643,6 +1659,15 @@ static uint8_t ga_verify_pin_auth(const GetAssertionParams *p, bool *uv_verified
         LOG_W(TAG, "pinUvAuthParam provided but no valid pinToken");
         return CTAP2_ERR_PIN_AUTH_INVALID;
     }
+    if (!(g_client_pin.token_permissions & PIN_PERM_GET_ASSERTION)) {
+        LOG_W(TAG, "getAssertion: pinUvAuthToken lacks ga permission");
+        return CTAP2_ERR_PIN_AUTH_INVALID;
+    }
+    if (g_client_pin.token_rp_id_set &&
+        memcmp(g_client_pin.token_rp_id_hash, p->rp_id_hash, 32) != 0) {
+        LOG_W(TAG, "getAssertion: pinUvAuthToken bound to another rpId");
+        return CTAP2_ERR_PIN_AUTH_INVALID;
+    }
 
     // Compute HMAC-SHA256(pinToken, clientDataHash)
     uint8_t expected_hmac[32];
@@ -1659,18 +1684,6 @@ static uint8_t ga_verify_pin_auth(const GetAssertionParams *p, bool *uv_verified
         return CTAP2_ERR_PIN_AUTH_INVALID;
     }
 
-#if DEBUG_MODE
-    LOG_D(TAG, "pinUvAuthParam received (%zu bytes):", p->pin_uv_auth_param_len);
-    LOG_D(TAG, "  %02X%02X%02X%02X %02X%02X%02X%02X...",
-          p->pin_uv_auth_param[0], p->pin_uv_auth_param[1],
-          p->pin_uv_auth_param[2], p->pin_uv_auth_param[3],
-          p->pin_uv_auth_param[4], p->pin_uv_auth_param[5],
-          p->pin_uv_auth_param[6], p->pin_uv_auth_param[7]);
-    LOG_D(TAG, "Expected HMAC (first %zu bytes):", compare_len);
-    LOG_D(TAG, "  %02X%02X%02X%02X %02X%02X%02X%02X...",
-          expected_hmac[0], expected_hmac[1], expected_hmac[2], expected_hmac[3],
-          expected_hmac[4], expected_hmac[5], expected_hmac[6], expected_hmac[7]);
-#endif
 
     if (memcmp(p->pin_uv_auth_param, expected_hmac, compare_len) != 0) {
         LOG_W(TAG, "pinUvAuthParam verification failed");
@@ -1690,7 +1703,23 @@ static uint8_t ga_verify_pin_auth(const GetAssertionParams *p, bool *uv_verified
  * \param creds Output credential selection result.
  * \return void
  */
-static void ga_find_credentials(GetAssertionParams *p, AssertionCredentials *creds) {
+/**
+ * \brief Applies the credProtect policy of one credential to this request.
+ * \param slot Credential slot.
+ * \param uv_verified `true` when the request carried a verified pinUvAuthParam.
+ * \param allow_list `true` when the request named the credential in allowList.
+ * \return `true` if the credential may be used for this request.
+ */
+static bool ga_cred_protect_allows(uint8_t slot, bool uv_verified, bool allow_list) {
+    fido2_credential_info_t info;
+    if (!fido2_storage_get_credential(slot, &info)) return false;
+    if (info.cred_protect >= 3 && !uv_verified) return false;               // userVerificationRequired
+    if (info.cred_protect == 2 && !uv_verified && !allow_list) return false; // ...OptionalWithCredentialIDList
+    return true;
+}
+
+static void ga_find_credentials(GetAssertionParams *p, AssertionCredentials *creds,
+                                bool uv_verified) {
     memset(creds, 0, sizeof(*creds));
     creds->hash_in_use = p->rp_id_hash;
 
@@ -1730,17 +1759,17 @@ static void ga_find_credentials(GetAssertionParams *p, AssertionCredentials *cre
             }
         }
     } else {
-        // No allowList - search all credentials for this RP
-        creds->count = fido2_storage_find_by_rp(p->rp_id_hash, creds->slots,
-                                                 FIDO2_MAX_CREDENTIALS);
+        // No allowList - only discoverable (resident) credentials of this RP
+        creds->count = fido2_storage_find_by_rp_resident(p->rp_id_hash, creds->slots,
+                                                          FIDO2_MAX_CREDENTIALS);
         creds->include_user = true;
 
-        LOG_I(TAG, "getAssertion using all RP creds, matches=%u", creds->count);
+        LOG_I(TAG, "getAssertion using resident RP creds, matches=%u", creds->count);
 
         // Try appid extension if present
         if (p->has_appid) {
-            temp_count = fido2_storage_find_by_rp(p->appid_hash, temp_slots,
-                                                   FIDO2_MAX_CREDENTIALS);
+            temp_count = fido2_storage_find_by_rp_resident(p->appid_hash, temp_slots,
+                                                            FIDO2_MAX_CREDENTIALS);
             if (temp_count > 0) {
                 memcpy(creds->slots, temp_slots, temp_count);
                 creds->count = temp_count;
@@ -1749,6 +1778,18 @@ static void ga_find_credentials(GetAssertionParams *p, AssertionCredentials *cre
             }
         }
     }
+
+    const bool allow_list = p->allow_list_present && p->allow_list_count > 0;
+    uint8_t kept = 0;
+    for (uint8_t i = 0; i < creds->count; i++) {
+        if (ga_cred_protect_allows(creds->slots[i], uv_verified, allow_list)) {
+            creds->slots[kept++] = creds->slots[i];
+        }
+    }
+    if (kept != creds->count) {
+        LOG_I(TAG, "credProtect hid %u credential(s)", creds->count - kept);
+    }
+    creds->count = kept;
 }
 
 /**
@@ -1913,7 +1954,7 @@ uint8_t ctap2_get_assertion(const uint8_t *params, uint16_t params_len,
 
     // Step 4: Find matching credentials
     AssertionCredentials creds;
-    ga_find_credentials(&p, &creds);
+    ga_find_credentials(&p, &creds, uv_verified);
 
     if (creds.count == 0) {
         response[0] = CTAP2_ERR_NO_CREDENTIALS;
@@ -2052,7 +2093,8 @@ uint8_t ctap2_get_next_assertion(uint8_t *response, uint16_t *response_len) {
     if (g_ctap2.assertion_appid_used) {
         ext_len = ctap2_build_appid_extension(ext_data, sizeof(ext_data));
     }
-    build_authenticator_data(g_ctap2.assertion_rp_id_hash, 0x01, sign_count,
+    build_authenticator_data(g_ctap2.assertion_rp_id_hash,
+                              g_ctap2.assertion_up_done ? 0x01 : 0x00, sign_count,
                               NULL, 0, ext_data, ext_len, auth_data, &auth_data_len);
 
     // Sign: authData || clientDataHash (TROPIC01 hashes internally)
@@ -2184,17 +2226,6 @@ static bool client_pin_compute_shared_secret(const uint8_t *platform_key_x,
     ret = mbedtls_mpi_write_binary(&shared_x, ecdh_z, 32);
     if (ret != 0) goto cleanup;
 
-#if DEBUG_MODE
-    // Full debug output for manual verification
-    LOG_I(TAG_PIN, "=== ECDH DEBUG (full 32-byte values) ===");
-    LOG_I(TAG_PIN, "Z (ECDH x-coord):");
-    LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          ecdh_z[0], ecdh_z[1], ecdh_z[2], ecdh_z[3], ecdh_z[4], ecdh_z[5], ecdh_z[6], ecdh_z[7],
-          ecdh_z[8], ecdh_z[9], ecdh_z[10], ecdh_z[11], ecdh_z[12], ecdh_z[13], ecdh_z[14], ecdh_z[15]);
-    LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          ecdh_z[16], ecdh_z[17], ecdh_z[18], ecdh_z[19], ecdh_z[20], ecdh_z[21], ecdh_z[22], ecdh_z[23],
-          ecdh_z[24], ecdh_z[25], ecdh_z[26], ecdh_z[27], ecdh_z[28], ecdh_z[29], ecdh_z[30], ecdh_z[31]);
-#endif // DEBUG_MODE
 
     if (pin_protocol == 1) {
         // Protocol 1: sharedSecret = SHA256(Z)
@@ -2218,35 +2249,11 @@ static bool client_pin_compute_shared_secret(const uint8_t *platform_key_x,
         memcpy(expand_input, info, info_len);
         expand_input[info_len] = 0x01;
 
-#if DEBUG_MODE
-        LOG_I(TAG_PIN, "HKDF PRK (HMAC-SHA256(salt=0, IKM=Z)):");
-        LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-              prk[0], prk[1], prk[2], prk[3], prk[4], prk[5], prk[6], prk[7],
-              prk[8], prk[9], prk[10], prk[11], prk[12], prk[13], prk[14], prk[15]);
-        LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-              prk[16], prk[17], prk[18], prk[19], prk[20], prk[21], prk[22], prk[23],
-              prk[24], prk[25], prk[26], prk[27], prk[28], prk[29], prk[30], prk[31]);
-        LOG_I(TAG_PIN, "HKDF info: '%s' || 0x01 (len=%zu)", info, info_len + 1);
-#endif
 
         mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
                         prk, 32, expand_input, info_len + 1, shared_secret);
     }
 
-#if DEBUG_MODE
-    LOG_I(TAG_PIN, "AES key (shared secret):");
-    LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          shared_secret[0], shared_secret[1], shared_secret[2], shared_secret[3],
-          shared_secret[4], shared_secret[5], shared_secret[6], shared_secret[7],
-          shared_secret[8], shared_secret[9], shared_secret[10], shared_secret[11],
-          shared_secret[12], shared_secret[13], shared_secret[14], shared_secret[15]);
-    LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          shared_secret[16], shared_secret[17], shared_secret[18], shared_secret[19],
-          shared_secret[20], shared_secret[21], shared_secret[22], shared_secret[23],
-          shared_secret[24], shared_secret[25], shared_secret[26], shared_secret[27],
-          shared_secret[28], shared_secret[29], shared_secret[30], shared_secret[31]);
-    LOG_I(TAG_PIN, "=== END ECDH DEBUG ===");
-#endif
 
 cleanup:
     mbedtls_ecp_point_free(&platform_point);
@@ -2397,13 +2404,6 @@ static uint8_t client_pin_get_key_agreement(uint8_t *response, uint16_t *respons
     mbedtls_mpi_write_binary(&g_client_pin.ecdh_key.MBEDTLS_PRIVATE(Q).MBEDTLS_PRIVATE(X), pub_x, 32);
     mbedtls_mpi_write_binary(&g_client_pin.ecdh_key.MBEDTLS_PRIVATE(Q).MBEDTLS_PRIVATE(Y), pub_y, 32);
 
-#if DEBUG_MODE
-    LOG_I(TAG_PIN, "=== Our ECDH public key ===");
-    LOG_I(TAG_PIN, "X: %02X%02X%02X%02X %02X%02X%02X%02X...",
-          pub_x[0], pub_x[1], pub_x[2], pub_x[3], pub_x[4], pub_x[5], pub_x[6], pub_x[7]);
-    LOG_I(TAG_PIN, "Y: %02X%02X%02X%02X %02X%02X%02X%02X...",
-          pub_y[0], pub_y[1], pub_y[2], pub_y[3], pub_y[4], pub_y[5], pub_y[6], pub_y[7]);
-#endif
 
     cbor_writer_t w;
     cbor_writer_init(&w, response + 1, *response_len - 1);
@@ -2581,19 +2581,6 @@ static uint8_t client_pin_get_pin_token(const uint8_t *params, uint16_t params_l
         return CTAP2_ERR_MISSING_PARAMETER;
     }
 
-#if DEBUG_MODE
-    // Log received pinHashEnc for debugging
-    LOG_I(TAG_PIN, "Received pinHashEnc (%zu bytes):", pin_hash_enc_len);
-    for (size_t i = 0; i < pin_hash_enc_len; i += 16) {
-        size_t row_len = (pin_hash_enc_len - i < 16) ? (pin_hash_enc_len - i) : 16;
-        char hex[64];
-        char *p = hex;
-        for (size_t j = 0; j < row_len; j++) {
-            p += sprintf(p, "%02X ", pin_hash_enc[i + j]);
-        }
-        LOG_I(TAG_PIN, "  %s", hex);
-    }
-#endif
 
     // Compute shared secret
     uint8_t shared_secret[32];
@@ -2603,31 +2590,6 @@ static uint8_t client_pin_get_pin_token(const uint8_t *params, uint16_t params_l
         return CTAP2_ERR_OTHER;
     }
 
-#if DEBUG_MODE
-    // Full platform key for verification
-    LOG_I(TAG_PIN, "Platform (Chrome) public key X:");
-    LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          platform_key_x[0], platform_key_x[1], platform_key_x[2], platform_key_x[3],
-          platform_key_x[4], platform_key_x[5], platform_key_x[6], platform_key_x[7],
-          platform_key_x[8], platform_key_x[9], platform_key_x[10], platform_key_x[11],
-          platform_key_x[12], platform_key_x[13], platform_key_x[14], platform_key_x[15]);
-    LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          platform_key_x[16], platform_key_x[17], platform_key_x[18], platform_key_x[19],
-          platform_key_x[20], platform_key_x[21], platform_key_x[22], platform_key_x[23],
-          platform_key_x[24], platform_key_x[25], platform_key_x[26], platform_key_x[27],
-          platform_key_x[28], platform_key_x[29], platform_key_x[30], platform_key_x[31]);
-    LOG_I(TAG_PIN, "Platform (Chrome) public key Y:");
-    LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          platform_key_y[0], platform_key_y[1], platform_key_y[2], platform_key_y[3],
-          platform_key_y[4], platform_key_y[5], platform_key_y[6], platform_key_y[7],
-          platform_key_y[8], platform_key_y[9], platform_key_y[10], platform_key_y[11],
-          platform_key_y[12], platform_key_y[13], platform_key_y[14], platform_key_y[15]);
-    LOG_I(TAG_PIN, "  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          platform_key_y[16], platform_key_y[17], platform_key_y[18], platform_key_y[19],
-          platform_key_y[20], platform_key_y[21], platform_key_y[22], platform_key_y[23],
-          platform_key_y[24], platform_key_y[25], platform_key_y[26], platform_key_y[27],
-          platform_key_y[28], platform_key_y[29], platform_key_y[30], platform_key_y[31]);
-#endif
 
     // Decrypt pinHashEnc
     // Protocol 1: 16 bytes ciphertext with IV=0
@@ -2663,31 +2625,6 @@ static uint8_t client_pin_get_pin_token(const uint8_t *params, uint16_t params_l
         memcpy(decrypted_pin_hash, decrypted, 16);
     }
 
-#if DEBUG_MODE
-    LOG_D(TAG_PIN, "Decrypted PIN hash: %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          decrypted_pin_hash[0], decrypted_pin_hash[1], decrypted_pin_hash[2], decrypted_pin_hash[3],
-          decrypted_pin_hash[4], decrypted_pin_hash[5], decrypted_pin_hash[6], decrypted_pin_hash[7],
-          decrypted_pin_hash[8], decrypted_pin_hash[9], decrypted_pin_hash[10], decrypted_pin_hash[11],
-          decrypted_pin_hash[12], decrypted_pin_hash[13], decrypted_pin_hash[14], decrypted_pin_hash[15]);
-
-    // Get stored hash for comparison
-    uint8_t stored_hash[16];
-    pin_storage_get_fido2_hash(stored_hash);
-    LOG_D(TAG_PIN, "Stored FIDO2 hash:  %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          stored_hash[0], stored_hash[1], stored_hash[2], stored_hash[3],
-          stored_hash[4], stored_hash[5], stored_hash[6], stored_hash[7],
-          stored_hash[8], stored_hash[9], stored_hash[10], stored_hash[11],
-          stored_hash[12], stored_hash[13], stored_hash[14], stored_hash[15]);
-
-    // Debug: compute expected hash for "0000"
-    uint8_t test_full[32];
-    sha256((const uint8_t*)"0000", 4, test_full);
-    LOG_D(TAG_PIN, "Expected for 0000: %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
-          test_full[0], test_full[1], test_full[2], test_full[3],
-          test_full[4], test_full[5], test_full[6], test_full[7],
-          test_full[8], test_full[9], test_full[10], test_full[11],
-          test_full[12], test_full[13], test_full[14], test_full[15]);
-#endif
 
     // Verify PIN hash
     if (!pin_storage_verify_fido2_hash(decrypted_pin_hash)) {
@@ -2862,6 +2799,12 @@ static uint8_t client_pin_get_pin_uv_auth_token(const uint8_t *params, uint16_t 
             case CTAP2_PIN_PERMISSIONS: {
                 uint64_t perm;
                 if (cbor_read_uint(&r, &perm)) {
+                    if (perm == 0 || perm > 0xFF) {
+                        LOG_W(TAG_PIN, "Invalid permissions value");
+                        response[0] = CTAP1_ERR_INVALID_PARAMETER;
+                        *response_len = 1;
+                        return CTAP1_ERR_INVALID_PARAMETER;
+                    }
                     permissions = (uint8_t)perm;
                     has_permissions = true;
                     LOG_I(TAG_PIN, "Requested permissions: 0x%02X", permissions);
@@ -3070,8 +3013,14 @@ uint8_t ctap2_client_pin(const uint8_t *params, uint16_t params_len,
  * \return CTAP2 status code.
  */
 uint8_t ctap2_reset(uint8_t *response, uint16_t *response_len) {
-    // CTAP2.1 6.4: reset requires explicit user presence.
-    if (!wait_for_user_presence(NULL, FIDO2_ACTION_AUTHENTICATE, NULL)) {
+    // CTAP2.1 6.4: reset only within 10 s of power-up (boot or USB attach).
+    if (!fido2_reset_window_open()) {
+        response[0] = CTAP2_ERR_NOT_ALLOWED;
+        *response_len = 1;
+        return CTAP2_ERR_NOT_ALLOWED;
+    }
+    // Reset requires explicit user presence on a prompt that names the consequence.
+    if (!wait_for_user_presence(NULL, FIDO2_ACTION_RESET, NULL)) {
         response[0] = CTAP2_ERR_OPERATION_DENIED;
         *response_len = 1;
         return CTAP2_ERR_OPERATION_DENIED;
@@ -3081,6 +3030,10 @@ uint8_t ctap2_reset(uint8_t *response, uint16_t *response_len) {
         *response_len = 1;
         return CTAP2_ERR_OTHER;
     }
+    memset(g_client_pin.pin_token, 0, sizeof(g_client_pin.pin_token));
+    g_client_pin.pin_token_valid = false;
+    g_client_pin.token_permissions = 0;
+    fido2_set_pin_verified(false);
 
     response[0] = CTAP2_OK;
     *response_len = 1;
@@ -3287,6 +3240,11 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
     uint8_t cred_id[FIDO2_CRED_ID_LEN] = {0};
     uint16_t cred_id_len = 0;
     bool has_cred_id = false;
+    const uint8_t *sub_params = NULL;
+    size_t sub_params_len = 0;
+    uint64_t pin_proto = 1;
+    uint8_t pin_auth[32] = {0};
+    size_t pin_auth_len = 0;
 
     // Parse map entries
     for (int i = 0; i < map_count; i++) {
@@ -3308,6 +3266,12 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
 
             case CTAP2_CM_SUBCOMMAND_PARAMS:
                 {
+                    // Raw CBOR span of subCommandParams is part of the pinUvAuth message.
+                    cbor_reader_t probe = r;
+                    cbor_skip_item(&probe);
+                    sub_params = params + r.offset;
+                    sub_params_len = probe.offset - r.offset;
+
                     int sub_count = cbor_read_map(&r);
                     for (int j = 0; j < sub_count; j++) {
                         uint64_t sub_key;
@@ -3350,10 +3314,15 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
                 break;
 
             case CTAP2_CM_PIN_UV_AUTH_PROTOCOL:
+                cbor_read_uint(&r, &pin_proto);
+                break;
+
             case CTAP2_CM_PIN_UV_AUTH_PARAM:
-                // We skip PIN auth verification for now
-                // In production, should verify pinUvAuthParam
-                cbor_skip_item(&r);
+                {
+                    size_t l = 0;
+                    cbor_read_bytes(&r, pin_auth, sizeof(pin_auth), &l);
+                    pin_auth_len = l;
+                }
                 break;
 
             default:
@@ -3364,12 +3333,34 @@ uint8_t ctap2_cred_management(const uint8_t *params, uint16_t params_len,
 
     LOG_I(TAG, "credMgmt subCmd=0x%02X", subcommand);
 
-    // CTAP2.1 6.8: credentialManagement requires a valid pinUvAuthToken. Block
-    // unauthenticated enumeration/deletion of resident credentials.
-    if (!g_client_pin.pin_token_valid) {
-        response[0] = CTAP2_ERR_PIN_AUTH_INVALID;
-        *response_len = 1;
-        return CTAP2_ERR_PIN_AUTH_INVALID;
+    // CTAP2.1 6.8: pinUvAuthParam = authenticate(pinUvAuthToken,
+    // subCommand || subCommandParams) with the cm permission. The getNext
+    // continuations carry no param and only need the token that began the
+    // enumeration.
+    if (subcommand == CRED_MGMT_ENUMERATE_RPS_GET_NEXT ||
+        subcommand == CRED_MGMT_ENUMERATE_CREDS_GET_NEXT) {
+        if (!g_client_pin.pin_token_valid) {
+            response[0] = CTAP2_ERR_PIN_AUTH_INVALID;
+            *response_len = 1;
+            return CTAP2_ERR_PIN_AUTH_INVALID;
+        }
+    } else {
+        if (sub_params_len > 256) {
+            response[0] = CTAP1_ERR_INVALID_LENGTH;
+            *response_len = 1;
+            return CTAP1_ERR_INVALID_LENGTH;
+        }
+        uint8_t msg[1 + 256];
+        msg[0] = subcommand;
+        if (sub_params_len) memcpy(msg + 1, sub_params, sub_params_len);
+        uint8_t st = verify_token_over_message(msg, 1 + sub_params_len,
+                                               static_cast<uint8_t>(pin_proto),
+                                               pin_auth, pin_auth_len, PIN_PERM_CRED_MGMT);
+        if (st != CTAP2_OK) {
+            response[0] = st;
+            *response_len = 1;
+            return st;
+        }
     }
 
     cbor_writer_t w;
@@ -3567,9 +3558,8 @@ static uint8_t verify_token_over_message(const uint8_t *msg, size_t msg_len,
     if (!g_client_pin.pin_token_valid) {
         return CTAP2_ERR_PIN_AUTH_INVALID;
     }
-    // token_permissions == 0 denotes a legacy token that carries all permissions.
-    if (required_perm && g_client_pin.token_permissions != 0 &&
-        !(g_client_pin.token_permissions & required_perm)) {
+    // A legacy getPinToken (0x05) token carries every permission (0xFF).
+    if (required_perm && !(g_client_pin.token_permissions & required_perm)) {
         return CTAP2_ERR_PIN_AUTH_INVALID;
     }
     uint8_t expected[32];

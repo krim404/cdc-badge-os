@@ -97,9 +97,12 @@ static bool fkRng(uint8_t* buf, size_t len) {
     return true;
 }
 
+static bool g_touchOk = true;
+static bool fkTouchOk(uint16_t) { return g_touchOk; }
+
 static const oath_backend_t kBackend = {
     fkCapacity, fkRead, fkCalculate, fkAddRaw, fkRemove, fkWipeAll,
-    fkDevId, fkAkeyGet, fkAkeySet, fkAkeyClear, fkHmac, fkRng,
+    fkDevId, fkAkeyGet, fkAkeySet, fkAkeyClear, fkHmac, fkRng, fkTouchOk,
 };
 
 static const scard_applet_t* g_applet = nullptr;
@@ -108,6 +111,7 @@ static uint8_t g_rsp[512];
 void setUp() {
     memset(g_entries, 0, sizeof(g_entries));
     g_hasAkey = false;
+    g_touchOk = true;
     oath_set_backend(&kBackend);
     g_applet = oath_applet();
     g_applet->deselect();
@@ -201,6 +205,31 @@ static void test_calculate_truncated() {
     TEST_ASSERT_EQUAL_HEX8(0x76, g_rsp[0]);   // truncated response
     TEST_ASSERT_EQUAL_HEX8(0x05, g_rsp[1]);   // length 5
     TEST_ASSERT_EQUAL_HEX8(6, g_rsp[2]);      // digits
+}
+
+static void test_calculate_touch_requires_confirmation() {
+    selectApplet();
+    uint8_t secret[10]; memset(secret, 4, sizeof(secret));
+    putCred("Site:dave", 0x21, 6, secret, sizeof(secret));
+    for (auto& e : g_entries) {
+        if (e.used && strcmp(e.name, "dave") == 0) e.flags |= 0x01;  // touch required
+    }
+    const char* name = "Site:dave";
+    uint8_t data[64]; size_t p = 0;
+    data[p++] = 0x71; data[p++] = strlen(name); memcpy(data + p, name, strlen(name)); p += strlen(name);
+    uint8_t chal[8] = {0, 0, 0, 0, 0, 0, 0, 1};
+    data[p++] = 0x74; data[p++] = 8; memcpy(data + p, chal, 8); p += 8;
+    uint8_t apdu[80] = {0x00, 0xA2, 0x00, 0x01, static_cast<uint8_t>(p)};
+    memcpy(apdu + 5, data, p); apdu[5 + p] = 0x00;
+
+    g_touchOk = false;
+    int n = send(apdu, 5 + p + 1);
+    TEST_ASSERT_EQUAL_HEX16(0x6985, swOf(n));  // no code without confirmation
+
+    g_touchOk = true;
+    n = send(apdu, 5 + p + 1);
+    TEST_ASSERT_EQUAL_HEX16(0x9000, swOf(n));
+    TEST_ASSERT_EQUAL_HEX8(0x76, g_rsp[0]);
 }
 
 static void test_calculate_all_totp_and_hotp() {
@@ -317,6 +346,7 @@ int main(int, char**) {
     RUN_TEST(test_put_name_mapping_and_reject_long);
     RUN_TEST(test_list_framing);
     RUN_TEST(test_calculate_truncated);
+    RUN_TEST(test_calculate_touch_requires_confirmation);
     RUN_TEST(test_calculate_all_totp_and_hotp);
     RUN_TEST(test_delete_missing);
     RUN_TEST(test_send_remaining_chaining);

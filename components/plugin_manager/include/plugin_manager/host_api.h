@@ -907,8 +907,9 @@ int host_ui_view_markdown   (const uint8_t* data, uint32_t len);
 
 /**
  * \brief Open a URL in the badge browser (enters the browser and loads it).
- *        No capability required. \return HOST_OK, HOST_ERR_INVALID_ARG, or
- *        HOST_ERR_NOT_SUPPORTED when the browser module is not present.
+ *        Requires the `http` capability. \return HOST_OK, HOST_ERR_INVALID_ARG,
+ *        HOST_ERR_NO_CAPABILITY, or HOST_ERR_NOT_SUPPORTED when the browser
+ *        module is not present.
  * \param url Target URL (UTF-8, NUL-terminated).
  */
 int host_browser_open       (const char* url);
@@ -1067,6 +1068,8 @@ int host_ui_release_exclusive  (void);
 
 /**
  * \brief Arm an inactivity timer for the plugin's current view.
+ *        Independent of the system auto-lock timer; fires once per idle
+ *        period and re-arms when input resumes.
  * \param action_id Fired when no input arrives within `timeout_ms`.
  */
 int host_ui_set_inactivity     (uint32_t timeout_ms, uint32_t action_id);

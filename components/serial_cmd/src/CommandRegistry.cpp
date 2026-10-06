@@ -104,9 +104,14 @@ public:
     bool processCommand(const char* line) override {
         if (!line || !*line) return false;
 
-        // Check line interceptor first (multiline input modes)
-        if (lineInterceptor_ && lineInterceptor_(line)) {
-            return true;
+        // Multiline input modes consume raw lines, but only while the session
+        // that armed them is still authenticated; a logout or timeout ends the mode.
+        if (lineInterceptor_) {
+            if (authCheck_ && !authCheck_()) {
+                lineInterceptor_ = nullptr;
+            } else if (lineInterceptor_(line)) {
+                return true;
+            }
         }
 
         // Find command name (first word)

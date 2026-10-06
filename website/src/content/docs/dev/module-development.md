@@ -51,8 +51,13 @@ default no-op or empty implementations:
 
 The `onUnlock`, `onLock`, `onUsbConnect`, `onUsbDisconnect` and `onTick`
 callbacks are driven by the registry, which fans the corresponding events out
-to every registered module (`ModuleRegistry.h:140-144`). `onTick` is dispatched
-once per main-loop iteration (`main/main.cpp:581`).
+to every started module (`ModuleRegistry.h:140-144`) and also publishes
+`SYSTEM_UNLOCK` / `SYSTEM_LOCK` on the `EventBus`. `onUnlock` follows a
+successful PIN entry, `onLock` the auto-lock and the anti-block lock.
+`onUsbConnect` / `onUsbDisconnect` follow the TinyUSB mount and unmount
+callbacks, which publish `POWER_USB_CONNECTED` / `POWER_USB_DISCONNECTED` on
+the bus; the main loop forwards them to the registry. `onTick` is dispatched
+once per main-loop iteration.
 
 ## ModuleBase: lifecycle boilerplate
 

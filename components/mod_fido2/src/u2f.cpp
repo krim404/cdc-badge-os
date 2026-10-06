@@ -768,8 +768,13 @@ static uint16_t u2f_authenticate(uint8_t p1, const uint8_t *challenge,
         return u2f_response_error(response, U2F_SW_CONDITIONS_NOT_SATISFIED);
     }
 
-    // Request user presence (unless dont-enforce)
-    if (p1 == U2F_AUTH_ENFORCE) {
+    // Every signing mode requires user presence; dont-enforce (0x08) is
+    // refused because the response always asserts UP=1.
+    if (p1 != U2F_AUTH_ENFORCE) {
+        LOG_W(TAG, "Unsupported authenticate mode P1=0x%02X", p1);
+        return u2f_response_error(response, U2F_SW_WRONG_DATA);
+    }
+    {
         fido2_user_presence_result_t up_result = fido2_request_user_presence(
             cred.rp_id, FIDO2_ACTION_AUTHENTICATE, cred.user_name);
 

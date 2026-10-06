@@ -146,6 +146,34 @@ void ViewStack::pop_unlocked() {
     }
 }
 
+void ViewStack::remove_unlocked(IView* view) {
+    if (!view) return;
+    int idx = -1;
+    for (uint8_t i = 1; i < depth_; ++i) {
+        if (stack_[i] == view) { idx = i; break; }
+    }
+    if (idx < 0) return;
+
+    const bool wasTop = (idx == depth_ - 1);
+    view->onExit();
+    LOG_D(TAG, "Removing view '%s' (depth=%d)", view->getName(), depth_ - 1);
+    for (uint8_t i = static_cast<uint8_t>(idx); i + 1 < depth_; ++i) {
+        stack_[i] = stack_[i + 1];
+    }
+    depth_--;
+    stack_[depth_] = nullptr;
+    needsCompositeRepaint_ = true;
+    if (wasTop && depth_ > 0 && stack_[depth_ - 1]) {
+        stack_[depth_ - 1]->onResume();
+        escalatePending_unlocked(stack_[depth_ - 1]->preferredEnterRefresh());
+    }
+}
+
+void ViewStack::remove(IView* view) {
+    StackLock lock(mutex_);
+    remove_unlocked(view);
+}
+
 void ViewStack::hideModal_unlocked() {
     if (modalDepth_ == 0) return;
 
@@ -491,6 +519,11 @@ void ViewStack::setInactivityTimeout(InactivityCallback callback, uint32_t timeo
 void ViewStack::resetInactivityTimer() {
     StackLock lock(mutex_);
     lastActivityMs_ = 0;
+}
+
+uint32_t ViewStack::idleMs(uint32_t nowMs) const {
+    StackLock lock(mutex_);
+    return lastActivityMs_ ? nowMs - lastActivityMs_ : 0;
 }
 
 void ViewStack::checkInactivity(uint32_t nowMs) {

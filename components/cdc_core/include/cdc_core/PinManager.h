@@ -11,7 +11,7 @@ namespace cdc::core {
  * Storage Format (147 bytes):
  * [Magic 0xE0]           (1)  - Format identifier
  * [Badge/FIDO2 Hash]     (16) - LEFT(SHA256(PIN), 16)
- * [Badge Locked]         (1)  - 0x00 unlocked, 0x01 locked (recovery on next boot)
+ * [Badge Lockouts]       (1)  - Consecutive lockouts (0 = none); scales the recovery timer
  * [KDF Algorithm]        (1)  - 0x03 = KDF_ITERSALTED_S2K
  * [Hash Algorithm]       (1)  - 0x08 = SHA256
  * [Iteration Count]      (4)  - Default 100000
@@ -29,10 +29,12 @@ namespace cdc::core {
  * attestation signature, so tampering with the duress state invalidates the
  * record and forces a reset to defaults.
  *
- * Badge PIN: retry counter lives in RAM only. R-Memory persists just a binary
- * "locked" flag. Boot grants one attempt (or zero if locked) and starts the
- * 60-second recovery timer; on expiry the counter is restored to MAX_RETRIES
- * and the locked flag cleared. A crash mid-verify cannot brick the badge PIN.
+ * Badge PIN: retry counter lives in RAM only. R-Memory persists a count of
+ * consecutive lockouts. Boot grants one attempt (or zero while a lockout is
+ * recorded) and starts the recovery timer, whose length doubles with every
+ * recorded lockout (see lockoutDurationMs). On expiry the retry counter is
+ * restored to MAX_RETRIES; only a correct PIN clears the lockout count. The
+ * lockout is never terminal, so a crash mid-verify cannot brick the badge PIN.
  *
  * PW1/PW3: smartcard semantics. Pre-decrement is persisted synchronously
  * before the verify so a power-cycle cannot reset the counter, and reaching
@@ -84,6 +86,12 @@ public:
     bool setBadgePin(const char* newPin);
     bool getBadgePinHash(uint8_t* hashOut) const;
     bool verifyBadgePinHash(const uint8_t* hashIn) const;
+    /**
+     * \brief Verifies a badge PIN hash through the retry counter and lockout.
+     * \param hashIn Candidate LEFT(SHA256(PIN), 16) hash.
+     * \return `true` if the hash matches and the badge PIN is not blocked.
+     */
+    bool verifyBadgePinHashCounted(const uint8_t* hashIn);
     uint8_t getBadgeRetries() const { return badgeRetries_; }
     bool isBadgeBlocked() const;  // Checks retries=0 OR time lockout active
     void resetBadgeRetries();
@@ -96,8 +104,23 @@ public:
     void setMinPinLengthFloor(uint8_t minLen);
     uint8_t minPinLengthFloor() const { return minPinFloor_; }
 
-    // === Lockout Timer (RAM only, not persistent) ===
-    static constexpr uint32_t LOCKOUT_DURATION_MS = 60000;  // 60 seconds
+    // === Lockout Timer ===
+    // The recovery window doubles with every consecutive lockout. The count is
+    // persisted in the signed R-Memory record; a correct PIN clears it.
+    static constexpr uint32_t LOCKOUT_BASE_MS = 60000;  // 60 seconds
+    static constexpr uint8_t LOCKOUT_MAX_SHIFT = 10;    // cap: 60 s * 1024 (~17 h)
+
+    /**
+     * \brief Recovery window for a given consecutive-lockout count.
+     * \param lockoutCount Consecutive lockouts recorded so far (0 behaves like 1).
+     * \return Lockout duration in milliseconds.
+     */
+    static constexpr uint32_t lockoutDurationMs(uint8_t lockoutCount) {
+        uint8_t shift = lockoutCount > 0 ? static_cast<uint8_t>(lockoutCount - 1) : 0;
+        if (shift > LOCKOUT_MAX_SHIFT) shift = LOCKOUT_MAX_SHIFT;
+        return LOCKOUT_BASE_MS << shift;
+    }
+    uint8_t getBadgeLockoutCount() const { return badgeLockoutCount_; }
     void startLockout();
     uint32_t getLockoutRemainingMs() const;
     bool isLockoutActive() const;
@@ -189,10 +212,10 @@ private:
     // Stored buffer: [PAYLOAD_SIZE bytes payload][SIGNATURE_SIZE bytes ECDSA sig]
     static constexpr uint16_t STORAGE_SIZE = PAYLOAD_SIZE + SIGNATURE_SIZE;
 
-    // Badge/FIDO2 (retry counter is RAM-only)
+    // Badge/FIDO2 (retry counter is RAM-only, lockout count is persisted)
     uint8_t badgeHash_[BADGE_HASH_SIZE] = {};
     uint8_t badgeRetries_ = MAX_RETRIES;
-    bool    badgeLocked_  = false;
+    uint8_t badgeLockoutCount_ = 0;
     uint8_t minPinFloor_  = BADGE_PIN_MIN;
 
     // OpenPGP KDF data
@@ -213,17 +236,20 @@ private:
     // Mirrors of what is currently persisted in R-Memory. Updated by
     // saveToStorage() after a successful write. Used to skip redundant
     // writes when the in-RAM state already matches the on-chip value.
-    bool    persistedBadgeLocked_ = false;
+    uint8_t persistedBadgeLockoutCount_ = 0;
     uint8_t persistedPw1Retries_  = MAX_RETRIES;
     uint8_t persistedPw3Retries_  = MAX_RETRIES;
 
     bool pinLoaded_ = false;
     bool badgePinIsSet_ = false;
+    // Set by loadFromStorage when slot 0 could not be read or its signature
+    // failed; such a record is never replaced by defaults.
+    bool storageUnreadable_ = false;
 
     // Badge recovery timer (RAM only). Runs from boot and after every
-    // transition of badgeRetries_ to zero. On expiry: badgeRetries_ is
-    // restored to MAX_RETRIES and badgeLocked_ is cleared (and persisted
-    // if it was set).
+    // transition of badgeRetries_ to zero, for lockoutDurationMs(count).
+    // On expiry badgeRetries_ is restored to MAX_RETRIES; the lockout count
+    // stays until a correct PIN clears it.
     uint32_t lockoutStartMs_ = 0;
     bool lockoutActive_ = false;
 

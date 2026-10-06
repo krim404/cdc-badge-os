@@ -337,6 +337,10 @@ int cmd_calculate(const apdu_t* a, const uint8_t* data, size_t lc,
     uint16_t slot = 0;
     if (!find_by_yk_name(name, nameLen, &slot)) return sw(resp, SW_NO_SUCH_OBJECT);
 
+    oath_meta_t m;
+    if (!g_be->read(slot, &m)) return sw(resp, SW_NO_SUCH_OBJECT);
+    if ((m.flags & OFLAG_TOUCH) && !g_be->touchOk(slot)) return sw(resp, SW_NOT_SATISFIED);
+
     uint8_t trunc[4]; uint8_t digits = 6;
     if (!g_be->calculate(slot, chal, trunc, &digits)) return sw(resp, SW_NO_SUCH_OBJECT);
 

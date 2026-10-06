@@ -15,16 +15,23 @@
 
 #include "cdc_hal/IWifiController.h"
 #include "cdc_os_ui/WifiHandlers.h"
+#include "plugin_manager/Plugin.h"
 #include "plugin_manager/host_api.h"
 
 #include <cstring>
 
 extern "C" void plg_log_warn(const char* msg);
+extern "C" void* plg_get_active_plugin(void);
 
 namespace {
 
 cdc::hal::IWifiController* wifi() {
     return cdc::hal::getWifiControllerInstance();
+}
+
+bool wifiAllowed() {
+    auto* p = static_cast<cdc::plugin_manager::Plugin*>(plg_get_active_plugin());
+    return p && p->manifest().capabilities.wifi;
 }
 
 }  // namespace
@@ -33,6 +40,7 @@ extern "C" {
 
 int host_wifi_request(uint32_t /*timeout_ms*/)
 {
+    if (!wifiAllowed()) return HOST_ERR_NO_CAPABILITY;
     return cdc::ui::WifiHandlers::instance().acquire() ? HOST_OK : HOST_ERR_TIMEOUT;
 }
 
@@ -84,6 +92,7 @@ int host_wifi_mac(uint8_t* out)
 
 int host_wifi_start_scan(void)
 {
+    if (!wifiAllowed()) return HOST_ERR_NO_CAPABILITY;
     auto* w = wifi();
     if (!w) return HOST_ERR_NOT_FOUND;
     return w->startScan() ? HOST_OK : HOST_ERR_GENERIC;
@@ -97,6 +106,7 @@ bool host_wifi_scan_done(void)
 
 int host_wifi_scan_results(wifi_scan_result_t* out, size_t* count)
 {
+    if (!wifiAllowed()) return HOST_ERR_NO_CAPABILITY;
     if (!out || !count) return HOST_ERR_INVALID_ARG;
     auto* w = wifi();
     if (!w) return HOST_ERR_NOT_FOUND;

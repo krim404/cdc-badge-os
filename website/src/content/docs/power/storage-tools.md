@@ -104,6 +104,9 @@ drive. The chosen state persists across reboots. A status entry under
 
 ### Behaviour
 
+- The drive presents **no medium while the badge is locked**. It becomes
+  readable and writable after the PIN unlock and is withdrawn again when the
+  badge locks, so a locked badge never exposes its storage to the host.
 - The drive shows your files at the volume root, including the `system/` folder
   (installed plugins and language overlays). Marking that folder hidden and
   read-only for the host is an opt-in security feature, off by default

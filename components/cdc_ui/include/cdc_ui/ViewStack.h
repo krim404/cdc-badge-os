@@ -68,6 +68,14 @@ public:
     void popToDepth(uint8_t targetDepth);
 
     /**
+     * \brief Removes a view from anywhere in the stack (no-op if absent).
+     * The root view is never removed. Used by owners that retire a view
+     * object so the stack never references freed memory.
+     * \param view View to remove.
+     */
+    void remove(IView* view);
+
+    /**
      * Get current (top) view
      */
     IView* current() const;
@@ -221,6 +229,13 @@ public:
     void resetInactivityTimer();
 
     /**
+     * \brief Milliseconds since the last recorded input activity.
+     * \param nowMs Current time in milliseconds (same clock as checkInactivity).
+     * \return Idle time, or 0 if no activity has been recorded yet.
+     */
+    uint32_t idleMs(uint32_t nowMs) const;
+
+    /**
      * Check and handle inactivity (call in tick/loop)
      * @param nowMs Current time in milliseconds
      */
@@ -254,6 +269,7 @@ private:
     // Unlocked helpers used when the caller already holds mutex_.
     void push_unlocked(IView* view, void* context);
     void pop_unlocked();
+    void remove_unlocked(IView* view);
     void hideModal_unlocked();
     void removeModal_unlocked(IView* modal);
     void escalatePending_unlocked(hal::RefreshMode mode);

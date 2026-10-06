@@ -43,13 +43,17 @@ accept a PIN shorter than the minimum, and entry stops at the maximum length.
 
 The badge allows **3 attempts**. Each wrong PIN clears the entry and decrements
 the remaining retries (shown on screen). When the retries reach zero the badge
-enters a **60-second** lockout: PIN entry is blocked and the screen shows a
-countdown. After the lockout expires the retry counter is restored and you can
-try again.
+enters a lockout: PIN entry is blocked and the screen shows a countdown. The
+first lockout lasts **60 seconds**; every further lockout without a correct PIN
+in between doubles the wait (2 min, 4 min, 8 min, ... up to about 17 hours).
+After the lockout expires the retry counter is restored and you can try again.
+A correct PIN resets the schedule back to 60 seconds.
 
 :::note
-The retry counter is held in RAM and the lockout timer runs from boot, so a
-power-cycle during the lockout does not permanently brick the badge PIN.
+The retry counter is held in RAM; only the number of consecutive lockouts is
+stored on the secure element. A power-cycle restarts the current lockout with
+its full duration, and the wait is capped, so the badge PIN can never be
+permanently bricked.
 :::
 
 ## Automatic locking

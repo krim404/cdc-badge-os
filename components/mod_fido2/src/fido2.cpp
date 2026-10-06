@@ -12,6 +12,7 @@
 #include "cdc_log.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <esp_timer.h>
 #include <string.h>
 
 // USB transport hooks implemented by Fido2Module.cpp.
@@ -25,6 +26,20 @@ namespace cdc::mod_fido2 {
 using namespace cdc::mod_fido2;
 
 static const char* TAG = "FIDO2";
+
+// CTAP 2.1 6.4: reset only shortly after power-up; a USB attach counts as the
+// badge's power-up because it runs on battery.
+static constexpr int64_t RESET_WINDOW_US = 10LL * 1000 * 1000;
+static int64_t g_last_usb_connect_us = 0;
+
+void fido2_note_usb_connect(void) {
+    g_last_usb_connect_us = esp_timer_get_time();
+}
+
+bool fido2_reset_window_open(void) {
+    const int64_t now = esp_timer_get_time();
+    return now < RESET_WINDOW_US || (now - g_last_usb_connect_us) < RESET_WINDOW_US;
+}
 
 /** \brief Global FIDO2 runtime state. */
 

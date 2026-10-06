@@ -401,7 +401,7 @@ bool cbor_read_item(cbor_reader_t *r, cbor_item_t *item) {
 
     // For bytes/text, also read the data pointer
     if (type == CBOR_BYTES || type == CBOR_TEXT) {
-        if (r->offset + value > r->size) {
+        if (value > r->size - r->offset) {
             r->error = true;
             return false;
         }

@@ -24,7 +24,10 @@ For the generated code reference, see the
 | Max message size constant | 2048 bytes |
 
 `MSG` carries CTAP1 / U2F APDUs (`VERSION`, `REGISTER`, `AUTHENTICATE`); `CBOR`
-carries CTAP2 commands.
+carries CTAP2 commands. U2F `AUTHENTICATE` always asks for a touch: only
+`P1=0x03` (enforce user presence) signs, `P1=0x07` (check-only) answers `6985`
+without signing, and any other mode, including `P1=0x08` (dont-enforce), is
+rejected with `6A80`.
 
 ## authenticatorGetInfo
 
@@ -74,7 +77,7 @@ Keys are emitted in CTAP canonical order (by length, then bytewise).
 | clientPIN | 0x06 | Implemented |
 | reset | 0x07 | Implemented (requires on-device user presence) |
 | getNextAssertion | 0x08 | Implemented |
-| credentialManagement | 0x0A | Implemented |
+| credentialManagement | 0x0A | Implemented; every subcommand except the two `getNext` continuations requires `pinUvAuthParam` = HMAC(pinUvAuthToken, subCommand ‖ subCommandParams) from a token with the `cm` permission |
 | selection | 0x0B | Implemented (user presence only) |
 | largeBlobs | 0x0C | Implemented |
 | authenticatorConfig | 0x0D | Implemented (toggleAlwaysUv, setMinPINLength) |
@@ -153,19 +156,33 @@ The `credProtect` extension (levels 1-3) is parsed at registration, stored with
 the credential, echoed in the authenticator-data extensions, and reported by
 credential management (defaulting to level 1 when unset).
 
-:::caution[credProtect not enforced]
-`credProtect` is recorded and reported but **not enforced** at assertion time.
-Credential selection in `getAssertion` does not hide level-3 credentials when
-user verification has not been performed. Treat credProtect on this badge as
-advisory metadata, not an access control.
-:::
+`credProtect` is enforced in `getAssertion`: a level-3 credential
+(`userVerificationRequired`) is used only when the request carried a verified
+pinUvAuthParam, and a level-2 credential
+(`userVerificationOptionalWithCredentialIDList`) additionally needs an
+`allowList` entry when no user verification was performed. Without an
+`allowList` only discoverable (resident) credentials of the RP are considered.
 
 ## getAssertion and sign counters
 
 - With no `allowList`, all resident credentials for the RP are returned
   (discoverable flow), with `getNextAssertion` iterating the rest.
 - authData flags: `UP` (0x01) is set when user presence was requested; `UV`
-  (0x04) is set when a pinUvAuth token was verified for the request.
+  (0x04) is set when a pinUvAuth token was verified for that request. The
+  verification never carries over to a later request.
+- On a locked badge every prompt asks for the badge PIN unless the request
+  itself carried a verified pinUvAuth token. Lock state follows the lock screen
+  (`SYSTEM_LOCK` / `SYSTEM_UNLOCK`), not the view-stack depth.
+  `getNextAssertion` responses carry the same `UP` value as the request that
+  started the enumeration.
+- `authenticatorReset` is accepted only within 10 seconds after boot or after
+  the badge was attached to USB (`CTAP2_ERR_NOT_ALLOWED` otherwise). It shows a
+  dedicated "RESET FIDO2" prompt naming the consequence, asks for the badge PIN
+  when locked, and discards the current pinUvAuthToken.
+- A pinUvAuthToken is accepted for `makeCredential` / `getAssertion` only with
+  the matching `mc` / `ga` permission and, when the token was issued for an
+  `rpId`, only for that RP. `getPinUvAuthTokenUsingPinWithPermissions` rejects
+  a `permissions` value of 0 or above 0xFF.
 - When `alwaysUv` is enabled, an assertion without a verified pinUvAuth token is
   rejected with `CTAP2_ERR_PIN_REQUIRED`.
 - ECDSA assertions are DER-encoded; EdDSA assertions are raw 64-byte

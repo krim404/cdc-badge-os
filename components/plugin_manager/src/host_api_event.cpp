@@ -13,6 +13,7 @@
 #include "plugin_manager/host_api.h"
 #include "plugin_manager/Plugin.h"
 #include "plugin_manager/PluginManager.h"
+#include "plugin_manager/PluginUiState.h"
 #include "plugin_manager/SlotTable.h"
 
 extern "C" void* plg_get_active_plugin(void);
@@ -84,9 +85,15 @@ void update_long_press_defer() {
 
 void on_bus_event(const cdc::core::Event& evt) {
     const uint32_t bit = 1u << static_cast<uint8_t>(evt.type);
+    // Key events carry what the user types (including the lock-screen PIN), so
+    // they reach only the foreground plugin while one of its views has focus.
+    const bool key_event = evt.type == cdc::core::EventType::KEY_PRESSED ||
+                           evt.type == cdc::core::EventType::KEY_RELEASED ||
+                           evt.type == cdc::core::EventType::KEY_LONG_PRESS;
     for (auto& s : s_subs.slots) {
         if (!s.used || (s.mask & bit) == 0) continue;
         auto* plugin = static_cast<cdc::plugin_manager::Plugin*>(s.plugin);
+        if (key_event && !cdc::plugin_manager::PluginUiState::instance().hasInputFocus(plugin)) continue;
         cdc::plugin_manager::PluginManager::instance().dispatchActionTo(
             plugin,
             s.action_id,

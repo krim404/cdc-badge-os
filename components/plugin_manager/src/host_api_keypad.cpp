@@ -10,8 +10,17 @@
 // clobber the cdc::hal::Key enumerators during preprocessing.
 #include "cdc_hal/IKeypad.h"
 #include "plugin_manager/host_api.h"
+#include "plugin_manager/PluginUiState.h"
+
+extern "C" void* plg_get_active_plugin(void);
 
 namespace {
+
+// Keypad state is readable only by the foreground plugin while one of its
+// views has focus; otherwise a plugin could observe the lock-screen PIN.
+bool input_focus_ok() {
+    return cdc::plugin_manager::PluginUiState::instance().hasInputFocus(plg_get_active_plugin());
+}
 
 cdc::hal::Key code_to_key(uint8_t code) {
     using cdc::hal::Key;
@@ -35,6 +44,7 @@ extern "C" {
 
 bool host_key_pressed(uint8_t key)
 {
+    if (!input_focus_ok()) return false;
     auto* kp = cdc::hal::getKeypadInstance();
     if (!kp) return false;
     cdc::hal::Key k = code_to_key(key);
@@ -44,6 +54,7 @@ bool host_key_pressed(uint8_t key)
 int host_key_consume_next(uint8_t* out_key)
 {
     if (!out_key) return HOST_ERR_INVALID_ARG;
+    if (!input_focus_ok()) return HOST_ERR_NOT_FOUND;
     auto* kp = cdc::hal::getKeypadInstance();
     if (!kp) return HOST_ERR_GENERIC;
     cdc::hal::Key k = kp->getNextKey();

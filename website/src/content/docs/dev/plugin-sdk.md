@@ -151,16 +151,13 @@ There are two enforcement points.
    when the matching flag is missing: BLE (`host_api_ble.cpp:120,240`), socket
    (`host_api_socket.cpp:51,115`), vFAT (`host_api_fs.cpp:49`), low-level
    display (`host_api_display.cpp:28,51`), pixel strip
-   (`host_api_pixel_strip.cpp:45,112`), USB CDC (`host_api_usb.cpp:15,24`) and
-   message transfer (`host_api_msg.cpp:170,241`).
-
-:::note[HTTP and WiFi gating]
-The HTTP and WiFi host functions do not perform a per-call
-`HOST_ERR_NO_CAPABILITY` check in their implementation files; `host_wifi_request`
-acquires the shared radio handle directly (`host_api_wifi.cpp:34-36`). Declare
-`http` / `wifi` in the manifest as the documented contract, but do not rely on a
-runtime capability rejection for those two families.
-:::
+   (`host_api_pixel_strip.cpp:45,112`), USB CDC (`host_api_usb.cpp:15,24`),
+   message transfer (`host_api_msg.cpp`), HTTP and the browser (`http`,
+   `host_api_http.cpp` / `host_api_ui.cpp`), WiFi request and scan (`wifi`,
+   `host_api_wifi.cpp`) and the exclusive UI lock (`ui_exclusive`).
+3. **Start time.** A plugin whose NVS namespace, `rmem` or `ecc` names collide
+   with another installed plugin's declarations is refused
+   (`PluginManager::claimsCollide`).
 
 ## Lifecycle entry points
 

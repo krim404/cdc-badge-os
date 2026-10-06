@@ -43,6 +43,8 @@ constexpr ui::I18nEntry kStrings[] = {
     {"mod_fido2.no_entries",         "No entries"},
     {"mod_fido2.overwrite_key",      "OVERWRITE KEY!"},
     {"mod_fido2.overwrite_warning",  "Overwrite existing key?"},
+    {"mod_fido2.reset_keys",         "RESET FIDO2!"},
+    {"mod_fido2.reset_warning",      "Delete ALL passkeys on this badge?"},
 };
 
 static void registerStrings() {
@@ -69,6 +71,7 @@ static fido2_action_t s_promptAction = FIDO2_ACTION_AUTHENTICATE;
 static uint8_t s_promptReturnDepth = 0;
 static ui::IView* s_promptReturnView = nullptr;
 static bool s_promptWasLocked = false;
+static bool s_badgeLocked = true;  // lock screen is the root view at boot
 static bool s_promptBacklightWasOn = false;
 static volatile bool s_promptActive = false;
 
@@ -314,10 +317,18 @@ static void promptComplete(fido2_user_presence_result_t result) {
 
     stack.render();
 
+    // A verified pinUvAuthToken skips the badge PIN for exactly one prompt.
+    fido2_set_pin_verified(false);
+
     s_promptResult = result;
     if (s_promptSem) {
         xSemaphoreGive(s_promptSem);
     }
+}
+
+void fido2_ui_set_locked(bool locked) {
+    s_badgeLocked = locked;
+    if (locked) fido2_set_pin_verified(false);
 }
 
 /**
@@ -576,7 +587,7 @@ fido2_user_presence_result_t fido2_ui_user_presence_callback(
     }
     s_promptReturnDepth = stack.depth();
     s_promptReturnView = stack.current();
-    s_promptWasLocked = (s_promptReturnDepth <= 1) && (action != FIDO2_ACTION_SELECT);
+    s_promptWasLocked = s_badgeLocked && (action != FIDO2_ACTION_SELECT);
 
     // A WebAuthn request takes priority: dismiss any open modal (e.g. the
     // lock-screen actions menu), which would otherwise overlay the prompt and
@@ -595,6 +606,8 @@ fido2_user_presence_result_t fido2_ui_user_presence_callback(
         headline = ui::tr("mod_fido2.register_key");
     } else if (action == FIDO2_ACTION_OVERWRITE) {
         headline = ui::tr("mod_fido2.overwrite_key");
+    } else if (action == FIDO2_ACTION_RESET) {
+        headline = ui::tr("mod_fido2.reset_keys");
     } else {
         headline = ui::tr("mod_fido2.sign_in");
     }
@@ -611,6 +624,12 @@ fido2_user_presence_result_t fido2_ui_user_presence_callback(
                  headline,
                  s_promptRpId,
                  ui::tr("mod_fido2.overwrite_warning"),
+                 ui::tr("core.hint_approve_deny"));
+    } else if (action == FIDO2_ACTION_RESET) {
+        snprintf(prompt_text, sizeof(prompt_text),
+                 "!!! %s !!!\n\n%s\n\n%s",
+                 headline,
+                 ui::tr("mod_fido2.reset_warning"),
                  ui::tr("core.hint_approve_deny"));
     } else {
         snprintf(prompt_text, sizeof(prompt_text),

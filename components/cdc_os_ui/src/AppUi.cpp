@@ -456,6 +456,7 @@ static void onInactivityTimeout() {
     while (ViewStack::instance().depth() > 1) {
         ViewStack::instance().pop();
     }
+    core::ModuleRegistry::instance().dispatchLock();
     s_ignoreKeyUntilRelease = true;
     clearKeypadBuffer();
 }

@@ -39,23 +39,37 @@ duress PIN is internal-only and also uses S2K. See
 
 ### How the badge PIN lockout actually works
 
-The badge PIN does **not** use a persistent attempt counter on the chip. Only a
-binary "locked" flag is stored in R-Memory; the retry count lives in RAM. The
-behaviour is a self-recovering rate limit:
+The badge PIN does **not** use a persistent attempt counter on the chip. The
+retry count lives in RAM; R-Memory stores only the number of **consecutive
+lockouts**. The behaviour is a self-recovering rate limit whose recovery
+window grows with every lockout:
 
-1. On boot the firmware grants **one** attempt (or zero if the locked flag was
-   set) and starts a recovery timer.
-2. A correct PIN restores the counter to 3 and clears any lock.
-3. A wrong PIN decrements the counter. When it hits zero, the locked flag is
-   set and the recovery timer (re)starts.
-4. After the **60-second** recovery window expires, the counter is restored to
-   3 and the locked flag is cleared automatically.
+1. On boot the firmware grants **one** attempt (or zero while a lockout is
+   recorded) and starts the recovery timer.
+2. A correct PIN restores the counter to 3 and resets the lockout count to 0.
+3. A wrong PIN decrements the counter. When it hits zero, the lockout count is
+   incremented, persisted, and the recovery timer (re)starts.
+4. After the recovery window expires, the counter is restored to 3. The lockout
+   count stays until a correct PIN is entered.
+
+The recovery window is `60 s × 2^(lockouts − 1)`, capped at 1024 × 60 s (about
+17 hours): 60 s after the first lockout, 2 min after the second, 4 min after the
+third, and so on. A reboot does not shorten the window: the timer restarts with
+the full duration for the recorded lockout count.
+
+| Consecutive lockouts | Recovery window |
+| --- | --- |
+| 1 | 60 s |
+| 2 | 2 min |
+| 3 | 4 min |
+| 5 | 16 min |
+| 8 | ~2 h |
+| 11 or more | ~17 h (cap) |
 
 :::note[The badge PIN cannot be permanently bricked]
-Reaching zero attempts blocks entry only until the 60-second recovery timer
-expires; then attempts are restored. There is no persistent counter that
-exhausts forever. The verify path has no debug bypass either; the recovery is
-unconditional in source.
+Reaching zero attempts blocks entry only until the recovery timer expires; then
+attempts are restored. The window is capped and never terminal. The verify
+path has no debug bypass either; the recovery is unconditional in source.
 :::
 
 The serial console reuses the same badge PIN and the same lockout state: an
@@ -113,4 +127,4 @@ covered in the developer protocol docs.
 | Scope | device UI + serial | OpenPGP card user | OpenPGP card admin |
 | Length | 4-8 | 6-16 | 8-16 |
 | Counter | RAM, self-recovering | persistent, terminal | persistent, terminal |
-| After max attempts | 60 s recovery, then restored | blocked until PW3/RC reset | blocked, wipe to recover |
+| After max attempts | escalating recovery window (60 s, 2 min, 4 min, ... up to ~17 h), then restored | blocked until PW3/RC reset | blocked, wipe to recover |

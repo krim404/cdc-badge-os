@@ -1,6 +1,7 @@
 #include "plugin_manager/Plugin.h"
 #include "plugin_manager/PluginStorage.h"
 #include "cdc_core/Raii.h"
+#include "cdc_core/feature_flags.h"
 #include "cdc_ui/I18n.h"
 #include "cJSON.h"
 
@@ -84,6 +85,17 @@ bool Plugin::load(const std::string& id, const PluginManifest& manifest)
         plg_log_error("plugin: failed to read plugin binary into PSRAM");
         return false;
     }
+
+#if !FEATURE_PLUGIN_AOT
+    // WAMR auto-detects AOT images by header; without the AOT feature only
+    // sandboxed bytecode may run, whatever the file is called.
+    if (wasm_runtime_get_file_package_type(bytecode_.get(), static_cast<uint32_t>(bytecode_len_))
+        != Wasm_Module_Bytecode) {
+        plg_log_error("plugin: native AOT images are not accepted (FEATURE_PLUGIN_AOT=0)");
+        unload();
+        return false;
+    }
+#endif
 
     char err_buf[128] = {0};
     module_.reset(wasm_runtime_load(bytecode_.get(),

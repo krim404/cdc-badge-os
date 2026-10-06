@@ -37,6 +37,7 @@
 #include "freertos/task.h"
 #include "esp_memory_utils.h"
 #include <cstring>
+#include <strings.h>
 #include <cctype>
 #include <cstdlib>
 #include <sys/time.h>
@@ -87,10 +88,26 @@ static TextChangeCallback s_textCallback = nullptr;
 static TimeChangeCallback s_timeCallback = nullptr;
 
 /**
- * \brief Session authentication flags and timeout baseline.
+ * \brief Per-transport session authentication state (USB/UART and the
+ *        console input hook, e.g. BLE). A session opened on one transport never
+ *        authorises commands arriving on the other.
  */
-static bool s_authenticated = false;
-static uint64_t s_authTimestamp = 0;
+struct AuthSession {
+    bool authenticated = false;
+    uint64_t timestamp = 0;
+};
+static AuthSession s_auth[2];
+static uint8_t s_inputSource = 0;  // index into s_auth: 0 = USB/UART, 1 = hook
+static uint8_t s_lineSource  = 0;  // transport that started the pending line / armed an upload
+
+/**
+ * \brief Returns whether a command line is an `AUTH` login (never kept in history).
+ * \param cmd Null-terminated command line.
+ * \return `true` for `AUTH` with or without arguments.
+ */
+static bool isAuthLine(const char* cmd) {
+    return strncasecmp(cmd, "AUTH", 4) == 0 && (cmd[4] == '\0' || cmd[4] == ' ');
+}
 
 /**
  * \brief General-purpose helper functions.
@@ -102,8 +119,8 @@ static uint64_t s_authTimestamp = 0;
  * \return void
  */
 static void resetAuthTimer() {
-    if (s_authenticated) {
-        s_authTimestamp = esp_timer_get_time();
+    if (s_auth[s_inputSource].authenticated) {
+        s_auth[s_inputSource].timestamp = esp_timer_get_time();
     }
 }
 #endif
@@ -1763,8 +1780,11 @@ void SerialCmd::handleSpecialChar(int c, bool& commandReady) {
             Console::print("\r\n");
             s_cmdBuffer[s_cmdBufferPos] = '\0';
             if (s_cmdBufferPos > 0) {
-                historyAdd(s_cmdBuffer);
+                const bool authLine = isAuthLine(s_cmdBuffer);
+                if (!authLine) historyAdd(s_cmdBuffer);
                 executeCommand(s_cmdBuffer);
+                // The PIN must not linger in the line buffer after the login.
+                if (authLine) memset(s_cmdBuffer, 0, sizeof(s_cmdBuffer));
             }
             s_cmdBufferPos = 0;
             s_historyPos = 0;
@@ -1801,7 +1821,10 @@ void SerialCmd::handleSpecialChar(int c, bool& commandReady) {
             auto appendByte = [](uint8_t b) {
                 if (s_cmdBufferPos < CMD_BUFFER_SIZE - 1) {
                     s_cmdBuffer[s_cmdBufferPos++] = static_cast<char>(b);
-                    Console::putchar(static_cast<char>(b));
+                    // The AUTH argument is a PIN: never echo it in clear.
+                    const bool maskPin = s_cmdBufferPos > 5 &&
+                                         strncasecmp(s_cmdBuffer, "AUTH ", 5) == 0;
+                    Console::putchar(maskPin ? '*' : static_cast<char>(b));
                 }
             };
 
@@ -1858,12 +1881,31 @@ bool SerialCmd::process() {
         int c = Console::getchar();
         if (c < 0) break;
 
+        // Echo and command output go back only to the transport the byte came from.
+        s_inputSource = console_input_from_hook() ? 1 : 0;
+        console_set_output_route(s_inputSource ? CONSOLE_ROUTE_HOOK : CONSOLE_ROUTE_USB);
+
+        // A binary upload consumes bytes only from the transport that armed it.
+        if (getCommandRegistry().getByteInterceptor()) {
+            if (s_inputSource != s_lineSource) continue;
+        } else {
+            // A command line is built from one transport only: a byte from the
+            // other transport discards the partial line, so one console cannot
+            // plant text that the other executes under its own session.
+            if (s_cmdBufferPos > 0 && s_inputSource != s_lineSource) {
+                s_cmdBufferPos = 0;
+                s_historyPos = 0;
+            }
+            if (s_cmdBufferPos == 0) s_lineSource = s_inputSource;
+        }
+
         if (handleEscape(c)) continue;
 
         bool commandReady = false;
         handleSpecialChar(c, commandReady);
         if (commandReady) anyCommandReady = true;
     }
+    console_set_output_route(CONSOLE_ROUTE_ALL);
     return anyCommandReady;
 }
 
@@ -1897,11 +1939,11 @@ void SerialCmd::setTimeCallback(TimeChangeCallback callback) {
  */
 bool SerialCmd::isAuthenticated() {
 #if FEATURE_SECURE_SERIAL
-    if (!s_authenticated) return false;
+    if (!s_auth[s_inputSource].authenticated) return false;
 
     uint64_t now = esp_timer_get_time();
-    if ((now - s_authTimestamp) > (AUTH_TIMEOUT_MS * 1000ULL)) {
-        s_authenticated = false;
+    if ((now - s_auth[s_inputSource].timestamp) > (AUTH_TIMEOUT_MS * 1000ULL)) {
+        s_auth[s_inputSource].authenticated = false;
 #if !DEBUG_MODE
         log_set_level(CDC_LOG_LEVEL_WARN);
 #endif
@@ -1943,8 +1985,8 @@ bool SerialCmd::authenticate(const char* pin) {
         return false;
     }
 
-    s_authenticated = true;
-    s_authTimestamp = esp_timer_get_time();
+    s_auth[s_inputSource].authenticated = true;
+    s_auth[s_inputSource].timestamp = esp_timer_get_time();
 #if !DEBUG_MODE
     log_set_level(CDC_LOG_LEVEL_DEBUG);
 #endif
@@ -1957,8 +1999,8 @@ bool SerialCmd::authenticate(const char* pin) {
  */
 void SerialCmd::touchAuthSession() {
 #if FEATURE_SECURE_SERIAL
-    if (s_authenticated) {
-        s_authTimestamp = esp_timer_get_time();
+    if (s_auth[s_inputSource].authenticated) {
+        s_auth[s_inputSource].timestamp = esp_timer_get_time();
     }
 #endif
 }
@@ -1967,8 +2009,8 @@ void SerialCmd::touchAuthSession() {
  * \brief Logs out the current serial session.
  */
 void SerialCmd::logout() {
-    s_authenticated = false;
-    s_authTimestamp = 0;
+    s_auth[s_inputSource].authenticated = false;
+    s_auth[s_inputSource].timestamp = 0;
 #if !DEBUG_MODE
     log_set_level(CDC_LOG_LEVEL_WARN);
 #endif

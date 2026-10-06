@@ -99,7 +99,7 @@ bool pin_storage_get_fido2_hash(uint8_t* hash_out) {
 bool pin_storage_verify_fido2_hash(const uint8_t* hash_in) {
     auto& pm = cdc::core::PinManager::instance();
     pm.init();
-    return pm.verifyBadgePinHash(hash_in);
+    return pm.verifyBadgePinHashCounted(hash_in);
 }
 
 void pin_storage_set_min_pin_floor(uint8_t min_len) {
