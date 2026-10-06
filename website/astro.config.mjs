@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { unified } from '@astrojs/markdown-remark';
 
 // Host-agnostic deployment.
 // SITE_BASE   subpath the site is served from (project Pages on GitHub/Codeberg/GitLab
@@ -41,7 +42,7 @@ export default defineConfig({
   base: SITE_BASE,
   trailingSlash: 'always',
   markdown: {
-    rehypePlugins: [rehypeBaseLinks],
+    processor: unified({ rehypePlugins: [rehypeBaseLinks] }),
   },
   integrations: [
     starlight({
