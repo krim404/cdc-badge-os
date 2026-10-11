@@ -84,6 +84,6 @@ Two whitelist pins carry a secondary role. Pin 3 is an ESP32-S3 strapping pin (s
 
 ## Compatibility gate
 
-A plugin's manifest declares the host API level it targets. The firmware loads it only if the major level matches and the minor level is not newer than the firmware provides. This firmware provides host API level **0.7**.
+A plugin's manifest declares the host API level it targets. The firmware loads it only if the major level matches and the minor level is not newer than the firmware provides. This firmware provides host API level **0.8**.
 
 For the complete function signatures, error codes, and level constants, see the [host API reference](/dev/host-api/) and the [plugin SDK](/dev/plugin-sdk/).

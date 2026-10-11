@@ -22,6 +22,22 @@ extern "C" {
 #endif
 
 /* ------------------------------------------------------------------------- */
+/* Calling convention                                                        */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * The firmware implements every function with the native prototype below.
+ * The WASM imports under module "cdc" have the same name, parameters and
+ * return value except for functions with a `size_t*` in/out length parameter
+ * that is not accompanied by a separate capacity parameter
+ * (host_rmem_read_named, host_http_read_chunk, host_nvs_get_blob,
+ * host_fs_read, host_fs_size, host_fs_list): their import takes the capacity
+ * by value and returns the byte count (>= 0) or a negative HOST_ERR_* code.
+ * This header declares that form when compiled for a wasm32 target
+ * (`__wasm__`), so a C plugin can include it directly.
+ */
+
+/* ------------------------------------------------------------------------- */
 /* API Level                                                                 */
 /* ------------------------------------------------------------------------- */
 
@@ -248,6 +264,16 @@ int host_hex_decode   (const char* in, size_t in_len, uint8_t* out, size_t out_s
 
 #define HOST_RMEM_NAME_MAX 15
 
+#if defined(__wasm__)
+/**
+ * \brief Read a named retained-memory slot.
+ * \param name NUL-terminated name, max HOST_RMEM_NAME_MAX bytes.
+ * \param buf Output buffer.
+ * \param buf_size Capacity of buf.
+ * \return Bytes read (>= 0), or a negative HOST_ERR_* code.
+ */
+int      host_rmem_read_named  (const char* name, uint8_t* buf, size_t buf_size);
+#else
 /**
  * \brief Read a named retained-memory slot.
  * \param name NUL-terminated name, max HOST_RMEM_NAME_MAX bytes.
@@ -255,6 +281,7 @@ int host_hex_decode   (const char* in, size_t in_len, uint8_t* out, size_t out_s
  * \param len In: capacity of buf; out: bytes actually read.
  */
 int      host_rmem_read_named  (const char* name, uint8_t* buf, size_t* len);
+#endif
 
 /// \brief Write up to host_rmem_slot_size() bytes into a named rmem slot.
 int      host_rmem_write_named (const char* name, const uint8_t* buf, size_t len);
@@ -349,11 +376,19 @@ int    host_http_perform       (int handle);
 /// \brief HTTP response status code, or negative on error.
 int    host_http_status        (int handle);
 
+#if defined(__wasm__)
+/**
+ * \brief Stream one response chunk into `buf`.
+ * \return Bytes read (>= 0, 0 indicates end of response), or a negative HOST_ERR_* code.
+ */
+int    host_http_read_chunk    (int handle, uint8_t* buf, size_t buf_size);
+#else
 /**
  * \brief Stream one response chunk into `buf`.
  * \param out_len Bytes actually read; 0 indicates end of response.
  */
 int    host_http_read_chunk    (int handle, uint8_t* buf, size_t buf_size, size_t* out_len);
+#endif
 
 /// \brief Response Content-Length, or 0 when unknown / chunked.
 size_t host_http_content_length(int handle);
@@ -720,11 +755,20 @@ int     host_ble_on_write_complete(uint32_t action_id);
  * \{
  */
 
+#if defined(__wasm__)
+/**
+ * \brief Read a binary blob from NVS.
+ * \param buf_size Capacity of `buf`.
+ * \return Bytes read (>= 0), or a negative HOST_ERR_* code.
+ */
+int host_nvs_get_blob (const char* key, uint8_t* buf, size_t buf_size);
+#else
 /**
  * \brief Read a binary blob from NVS.
  * \param len In: capacity of `buf`; out: bytes actually read.
  */
 int host_nvs_get_blob (const char* key, uint8_t* buf, size_t* len);
+#endif
 
 /// \brief Write a binary blob to NVS.
 int host_nvs_set_blob (const char* key, const uint8_t* buf, size_t len);
@@ -749,7 +793,11 @@ int host_nvs_erase_all(void);
 
 /**
  * \brief Enumerate the keys in the plugin's namespace.
- * \param out_len In: capacity of `out`; out: bytes written (NUL-separated list).
+ *
+ * Each key is followed by '\n'. Only keys that fit entirely into `out` are
+ * written; the reported length always covers the complete list, so a caller
+ * can retry with a larger buffer when it exceeds the capacity.
+ * \param out_len In: capacity of `out`; out: bytes the complete list needs.
  */
 int host_nvs_list_keys(char* out, size_t* out_len);
 
@@ -769,24 +817,53 @@ int host_nvs_list_keys(char* out, size_t* out_len);
 /// \brief Create or overwrite `name` with `len` bytes. \return HOST_OK or HOST_ERR_*.
 int host_fs_write (const char* name, const uint8_t* data, size_t len);
 
+#if defined(__wasm__)
+/**
+ * \brief Read `name` into `buf`.
+ * \param buf_size Capacity of `buf`.
+ * \return Bytes read (>= 0), HOST_ERR_NOT_FOUND, or another negative HOST_ERR_*.
+ */
+int host_fs_read  (const char* name, uint8_t* buf, size_t buf_size);
+#else
 /**
  * \brief Read `name` into `buf`.
  * \param len In: capacity of `buf`; out: bytes actually read.
  * \return HOST_OK, HOST_ERR_NOT_FOUND, or another HOST_ERR_*.
  */
 int host_fs_read  (const char* name, uint8_t* buf, size_t* len);
+#endif
 
 /// \brief Delete `name`. \return HOST_OK or HOST_ERR_NOT_FOUND.
 int host_fs_remove(const char* name);
 
+#if defined(__wasm__)
+/// \brief Byte size of `name`. \return Size (>= 0) or HOST_ERR_NOT_FOUND.
+int host_fs_size  (const char* name);
+#else
 /// \brief Write the byte size of `name` to `*out`. \return HOST_OK or HOST_ERR_NOT_FOUND.
 int host_fs_size  (const char* name, size_t* out);
+#endif
 
+#if defined(__wasm__)
 /**
  * \brief Enumerate the plugin's own files.
- * \param out_len In: capacity of `out`; out: bytes written ('\n'-separated list).
+ *
+ * Each name is followed by '\n'. Only names that fit entirely into `out` are
+ * written; the returned length always covers the complete list.
+ * \param out_size Capacity of `out`.
+ * \return Bytes the complete list needs (>= 0), or a negative HOST_ERR_* code.
+ */
+int host_fs_list  (char* out, size_t out_size);
+#else
+/**
+ * \brief Enumerate the plugin's own files.
+ *
+ * Each name is followed by '\n'. Only names that fit entirely into `out` are
+ * written; the reported length always covers the complete list.
+ * \param out_len In: capacity of `out`; out: bytes the complete list needs.
  */
 int host_fs_list  (char* out, size_t* out_len);
+#endif
 
 /**
  * \brief Open one of the plugin's own files in a scrollable on-screen text

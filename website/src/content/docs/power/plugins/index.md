@@ -31,11 +31,11 @@ A plugin is only recognised when **both** `<id>.wasm` and `<id>.meta` are presen
 
 ## Sandbox and isolation model
 
-- **Memory isolation:** each plugin instance gets its own WASM linear memory in PSRAM. The size is set by the manifest's `linear_memory_kb` (default 64, clamped to the range 16 to 4096 KB). The operand and frame stack is a fixed 64 KB per instance.
+- **Memory isolation:** each plugin instance gets its own WASM linear memory in PSRAM, sized by the module's own memory declaration and grown on demand. The manifest's `linear_memory_kb` (default 64, validated to the range 16 to 4096 KB) is shown in the plugin info view and is not a limit. The operand and frame stack is a fixed 64 KB per instance.
 - **API-only access:** a plugin can only call the published host API. There is no shared address space with the firmware and no direct peripheral access.
 - **Capability gating:** every sensitive operation (WiFi, BLE, the secure element, GPIO, file access, and so on) is unlocked only if the manifest requests the matching capability. The firmware validates the manifest before the plugin is allowed to run.
 - **Hardware safety:** GPIO, PWM, ADC, and I2C requests are checked against a fixed allow and block list, so a plugin cannot drive a pin wired to the display, the secure element, the charger, USB, PSRAM, or flash. See [What plugins can do](/power/plugins/capabilities/).
-- **API-level compatibility:** the manifest declares the host API level it was built for. The firmware refuses to load a plugin whose major level differs, or whose minor level is newer than the firmware provides. This firmware exposes host API level **0.7**.
+- **API-level compatibility:** the manifest declares the host API level it was built for. The firmware refuses to load a plugin whose major level differs, or whose minor level is newer than the firmware provides. This firmware exposes host API level **0.8**.
 
 :::note
 Plugins are starting points for hardware bring-up and badge customisation, not a trusted-compute boundary for secrets. They run with the capabilities you grant via the manifest, so only install plugins you trust.

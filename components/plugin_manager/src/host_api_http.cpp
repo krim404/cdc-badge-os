@@ -12,6 +12,8 @@
  * not exposed. Connections are kept alive in a small per-origin pool and reused
  * across requests; a slot borrows a pooled connection (returned to the pool on
  * close) or, when the pool is full, owns a transient client freed on close.
+ * Request headers belong to the slot: they are removed from a pooled client
+ * when the slot closes, and the per-request timeout is applied on every reuse.
  */
 
 #include "plugin_manager/Plugin.h"
@@ -28,6 +30,7 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 extern "C" void* plg_get_active_plugin(void);
 
@@ -56,6 +59,7 @@ struct HttpSlot {
     // Request body copied out of plugin memory: WAMR may move linear memory on
     // memory.grow, so the client must never keep a pointer into it.
     cdc::plugin_manager::PsramUniquePtr<uint8_t> post_body;
+    std::vector<std::string> header_names;  // set via host_http_set_header
     HttpBody      body;
     size_t        body_len    = 0;
     size_t        body_cap    = 0;
@@ -66,6 +70,7 @@ struct HttpSlot {
 
 constexpr size_t MAX_HTTP_SLOTS = 4;
 constexpr size_t MAX_HTTP_BODY_BYTES = 1 * 1024 * 1024;
+constexpr int    DEFAULT_TIMEOUT_MS  = 5000;
 cdc::plugin_manager::SlotTable<HttpSlot, MAX_HTTP_SLOTS> s_slots{};
 
 // Keep-alive connection pool: clients are kept open across requests and reused
@@ -154,8 +159,12 @@ bool httpAllowed()
 void closeSlot(HttpSlot& slot)
 {
     if (slot.pool_idx >= 0 && static_cast<size_t>(slot.pool_idx) < MAX_HTTP_CONNS) {
-        // The pooled client outlives the slot: detach the body it may still reference.
+        // The pooled client outlives the slot: detach the body and headers it
+        // may still reference.
         esp_http_client_set_post_field(slot.client, nullptr, 0);
+        for (const std::string& name : slot.header_names) {
+            esp_http_client_delete_header(slot.client, name.c_str());
+        }
         s_pool[slot.pool_idx].in_use = false;
     }
     slot = HttpSlot{};
@@ -180,7 +189,7 @@ esp_http_client_handle_t makeClient(uint8_t method, const char* url, uint32_t ti
     esp_http_client_config_t cfg{};
     cfg.url            = url;
     cfg.method         = mapMethod(method);
-    cfg.timeout_ms     = timeout_ms ? static_cast<int>(timeout_ms) : 5000;
+    cfg.timeout_ms     = timeout_ms ? static_cast<int>(timeout_ms) : DEFAULT_TIMEOUT_MS;
     cfg.event_handler  = http_event_handler;
     cfg.disable_auto_redirect = false;
     cfg.crt_bundle_attach     = esp_crt_bundle_attach;
@@ -211,6 +220,9 @@ int host_http_open(uint8_t method, const char* url, uint32_t timeout_ms)
         if (s_pool[i].client && !s_pool[i].in_use && s_pool[i].origin == key) {
             esp_http_client_set_url(s_pool[i].client.get(), url);
             esp_http_client_set_method(s_pool[i].client.get(), mapMethod(method));
+            esp_http_client_set_timeout_ms(
+                s_pool[i].client.get(),
+                timeout_ms ? static_cast<int>(timeout_ms) : DEFAULT_TIMEOUT_MS);
             s_pool[i].in_use = true;
             slot->pool_idx   = static_cast<int>(i);
             slot->client     = s_pool[i].client.get();
@@ -254,8 +266,9 @@ int host_http_set_header(int handle, const char* key, const char* value)
 {
     auto* slot = slotFor(handle);
     if (!slot || !slot->client || !key || !value) return HOST_ERR_INVALID_ARG;
-    return esp_http_client_set_header(slot->client, key, value) == ESP_OK
-           ? HOST_OK : HOST_ERR_GENERIC;
+    if (esp_http_client_set_header(slot->client, key, value) != ESP_OK) return HOST_ERR_GENERIC;
+    slot->header_names.emplace_back(key);
+    return HOST_OK;
 }
 
 int host_http_set_body(int handle, const uint8_t* body, size_t len)

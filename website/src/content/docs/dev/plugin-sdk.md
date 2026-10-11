@@ -76,7 +76,7 @@ Every plugin ships a `meta.json` parsed into a `PluginManifest`
 | `host_api_level_min` | string `"major.minor"` | Required; parsed into major/minor (`PluginManifest.cpp:22-30,149`) |
 | `author` | string | Optional (`PluginManifest.cpp:137-141`) |
 | `icon` | string | Optional |
-| `linear_memory_kb` | number | Default 64; validated to the range 16..4096 (`PluginManifest.h:78`, `CapabilityChecker.cpp:20-21,51-57`) |
+| `linear_memory_kb` | number | Default 64; validated to the range 16..4096 (`PluginManifest.h:78`, `CapabilityChecker.cpp:20-21,51-57`); informational, the runtime does not cap the module's memory with it |
 | `i18n` | object | `default_language` (default `"en"`), `meta`, `strings` (`PluginManifest.cpp:160-164`) |
 | `capabilities` | object | See below (`PluginManifest.cpp:166`) |
 | `prerequisites` | object | Named prerequisite specs, each with an `on_fail` default of `"abort"` (`PluginManifest.cpp:103-127,167`) |

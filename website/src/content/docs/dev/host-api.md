@@ -56,6 +56,21 @@ Functions that return a count or handle return a non-negative value on success
 and a negative `HOST_ERR_*` on failure; handle-returning functions (HTTP, socket)
 return a handle greater than zero.
 
+## WASM import signatures
+
+The WASM imports match the native prototypes in `host_api.h` except for six
+functions whose native form has a `size_t*` in/out length parameter without a
+separate capacity parameter: `host_rmem_read_named`, `host_http_read_chunk`,
+`host_nvs_get_blob`, `host_fs_read`, `host_fs_size` and `host_fs_list`. Their
+import takes the capacity by value and returns the byte count (or the file
+size) as a non-negative value, or a negative `HOST_ERR_*` code. The header
+declares that form when it is compiled for a wasm32 target (`__wasm__`), so a
+C plugin includes it unchanged; the Rust SDK binds the import form directly.
+
+`host_nvs_list_keys` and `host_fs_list` terminate every entry with `\n`, write
+only entries that fit entirely into the buffer, and report the length the
+complete list needs, so a caller can retry with a larger buffer.
+
 ## UTF-8 boundary
 
 The whole host API speaks UTF-8. Text passed to UI, canvas and display functions
