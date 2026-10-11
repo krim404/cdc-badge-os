@@ -412,6 +412,8 @@ uint32_t host_ble_conn_handle(void) {
 int host_ble_conn_peer(uint32_t conn, uint8_t addr_out[6], uint8_t* addr_type_out) {
     if (!addr_out || !addr_type_out) return HOST_ERR_INVALID_ARG;
     if (!ble_allowed()) return HOST_ERR_NO_CAPABILITY;
+    // Only the plugin that started the central connect may resolve a peer.
+    if (s_cen.plugin != plg_get_active_plugin()) return HOST_ERR_NO_CAPABILITY;
     auto* b = ble();
     if (!b) return HOST_ERR_NOT_FOUND;
     return b->getPeerIdAddr(static_cast<uint16_t>(conn), addr_out, addr_type_out)

@@ -672,7 +672,8 @@ uint32_t host_ble_conn_handle     (void);
  * \brief Identity address of the peer on connection `conn`.
  * \param addr_out      Receives the 6-byte address, same byte order as ble_scan_result_t.
  * \param addr_type_out Receives the address type (0 = public, 1 = random).
- * \return HOST_OK, or HOST_ERR_NOT_FOUND when `conn` is not an open connection.
+ * \return HOST_OK, HOST_ERR_NOT_FOUND when `conn` is not an open connection, or
+ *         HOST_ERR_NO_CAPABILITY when the caller did not start the central connect.
  */
 int     host_ble_conn_peer        (uint32_t conn, uint8_t addr_out[6], uint8_t* addr_type_out);
 
