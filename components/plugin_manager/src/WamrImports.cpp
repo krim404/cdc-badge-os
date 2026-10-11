@@ -1234,6 +1234,11 @@ static int32_t  w_host_ble_connect(wasm_exec_env_t exec_env, const uint8_t* addr
     return host_ble_connect(addr, static_cast<uint8_t>(type));
 }
 static uint32_t w_host_ble_conn_handle(wasm_exec_env_t) { return host_ble_conn_handle(); }
+static int32_t  w_host_ble_conn_peer(wasm_exec_env_t exec_env, uint32_t conn, uint8_t* addr, uint8_t* type)
+{
+    if (!wbuf_ok(exec_env, addr, 6) || !wbuf_ok(exec_env, type, 1)) return HOST_ERR_INVALID_ARG;
+    return host_ble_conn_peer(conn, addr, type);
+}
 static int32_t  w_host_ble_disconnect(wasm_exec_env_t, uint32_t conn) { return host_ble_disconnect(conn); }
 static int32_t  w_host_ble_discover(wasm_exec_env_t exec_env, uint32_t conn, const uint8_t* uuid, uint32_t aid)
 {
@@ -1601,6 +1606,7 @@ static const NativeSymbol s_symbols[] = {
     W("host_ble_scan_results",      w_host_ble_scan_results,      "(**)i"),
     W("host_ble_connect",           w_host_ble_connect,           "(*i)i"),
     W("host_ble_conn_handle",       w_host_ble_conn_handle,       "()i"),
+    W("host_ble_conn_peer",         w_host_ble_conn_peer,         "(i**)i"),
     W("host_ble_disconnect",        w_host_ble_disconnect,        "(i)i"),
     W("host_ble_discover",          w_host_ble_discover,          "(i*i)i"),
     W("host_ble_consume_discovery", w_host_ble_consume_discovery, "(**)i"),

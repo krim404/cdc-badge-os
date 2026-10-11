@@ -141,7 +141,7 @@ The "Capability" column reflects what is enforced at the host-call boundary
 | Socket | `socket` | `host_socket_open`, `host_socket_write`, `host_socket_read`, `host_socket_close` |
 | Net listener (inbound TCP) | `net_listen` | `host_net_listen`, `host_net_accept`, `host_net_close` |
 | WiFi | `wifi` (manifest only, see note) | `host_wifi_request`, `host_wifi_is_connected`, `host_wifi_start_scan`, `host_wifi_scan_results` |
-| BLE | `ble` | `host_ble_register_service`, `host_ble_send_notification`, `host_ble_scan_start`, `host_ble_connect`, `host_ble_subscribe`, `host_ble_subscribe_char`, `host_ble_get_mtu`, `host_ble_on_write_complete` |
+| BLE | `ble` | `host_ble_register_service`, `host_ble_send_notification`, `host_ble_scan_start`, `host_ble_connect`, `host_ble_conn_peer`, `host_ble_subscribe`, `host_ble_subscribe_char`, `host_ble_get_mtu`, `host_ble_on_write_complete` |
 | NVS (plugin-namespaced) | none | `host_nvs_get_blob`, `host_nvs_set_blob`, `host_nvs_get_u32`, `host_nvs_erase_all` |
 | vFAT (sandboxed files) | `vfat` | `host_fs_write`, `host_fs_read`, `host_fs_remove`, `host_fs_list`, `host_fs_view`, `host_fs_view_image`, `host_fs_view_markdown` |
 | UI - Views | none | `host_ui_push_toast`, `host_ui_push_list`, `host_ui_push_t9_input`, `host_ui_push_confirm`, `host_ui_pop`, `host_ui_view_image`, `host_ui_view_markdown`, `host_browser_open` |

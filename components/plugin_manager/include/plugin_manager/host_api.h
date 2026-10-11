@@ -668,6 +668,14 @@ int     host_ble_connect          (const uint8_t addr[6], uint8_t addr_type);
 /// \brief Current connection handle (central or peripheral), or 0 when idle.
 uint32_t host_ble_conn_handle     (void);
 
+/**
+ * \brief Identity address of the peer on connection `conn`.
+ * \param addr_out      Receives the 6-byte address, same byte order as ble_scan_result_t.
+ * \param addr_type_out Receives the address type (0 = public, 1 = random).
+ * \return HOST_OK, or HOST_ERR_NOT_FOUND when `conn` is not an open connection.
+ */
+int     host_ble_conn_peer        (uint32_t conn, uint8_t addr_out[6], uint8_t* addr_type_out);
+
 /// \brief Disconnect a connection.
 int     host_ble_disconnect       (uint32_t conn);
 
