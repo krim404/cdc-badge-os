@@ -96,7 +96,7 @@ release:
 
 pages:
   stage: deploy
-  image: node:24
+  image: node:26
   needs:
     - job: build
       artifacts: true
